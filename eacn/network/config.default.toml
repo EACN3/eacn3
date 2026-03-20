@@ -1,0 +1,90 @@
+# ═══════════════════════════════════════════════════════════════════════
+# EACN Network Configuration
+# ═══════════════════════════════════════════════════════════════════════
+#
+# 复制此文件为 config.toml 并按需修改。
+# 未指定的值使用此文件中的默认值。
+# 支持运行时通过 PUT /api/admin/config 热更新。
+
+
+# ── 声望系统 ──────────────────────────────────────────────────────────
+[reputation]
+
+# 单次事件最大增/减幅度
+max_gain    = 0.1
+max_penalty = -0.05
+
+# 新 Agent 默认声望
+default_score = 0.5
+
+# 冷启动: 新 Server 需要累积多少事件才获得完整权重
+cold_start_threshold = 10
+cold_start_floor     = 0.1   # 冷启动最低权重
+cold_start_ramp      = 0.9   # 权重递增因子
+
+# 选择传播 (PageRank)
+selection_boost_multiplier = 0.05  # 被选中者加成 = 此值 × 选择者声望
+selector_judgment_boost    = 0.01  # 选择者"慧眼"奖励
+
+# 反作弊: 爆发检测
+burst_window    = 10  # 最近 N 条事件的滑动窗口
+burst_threshold = 8   # 同类型事件超过此数 → 判定异常
+
+# 协商增益
+negotiation_gain_multiplier = 0.01   # 公式: 此值 × (capped_gain - capped_penalty)
+negotiation_gain_min        = -0.1
+negotiation_gain_max        = 0.2
+
+# 事件权重映射
+[reputation.event_weights]
+result_selected        = 0.10
+result_rejected        = -0.05
+adjudication_adopted   = 0.05
+adjudication_failed    = -0.03
+task_completed_on_time = 0.05
+task_timed_out         = -0.05
+
+
+# ── 匹配器 ───────────────────────────────────────────────────────────
+[matcher]
+
+# 复合评分权重 (应加和为 1.0)
+weight_reputation = 0.6   # 声望权重
+weight_domain     = 0.25  # 领域重合权重
+weight_keyword    = 0.15  # 关键词匹配权重
+
+# 竞标验证
+default_reputation = 0.5  # 未知 Agent 默认声望
+ability_threshold  = 0.5  # confidence × reputation ≥ 此值才通过
+price_tolerance    = 0.1  # 允许超出预算的比例 (10%)
+
+# 指定目标验证
+target_min_reputation = 0.3  # 显式指定目标的最低声望
+
+
+# ── 经济系统 ──────────────────────────────────────────────────────────
+[economy]
+
+platform_fee_rate = 0.05  # 平台抽成比例 (5%)
+
+
+# ── 推送通知 ──────────────────────────────────────────────────────────
+[push]
+
+max_retries = 2  # 推送失败最大重试次数
+
+
+# ── 任务默认值 ────────────────────────────────────────────────────────
+[task]
+
+default_max_concurrent_bidders = 5   # 默认并发执行槽位
+default_max_depth              = 10  # 默认最大子任务嵌套深度
+
+
+# ── API 分页 ──────────────────────────────────────────────────────────
+[api]
+
+list_tasks_default_limit = 50
+list_tasks_max_limit     = 200
+logs_default_limit       = 50
+logs_max_limit           = 500
