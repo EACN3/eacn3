@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 
 from eacn.core.exceptions import TaskError, BudgetError
 from eacn.core.models import TaskStatus
@@ -407,6 +407,14 @@ async def scan_deadlines(now: str | None = None):
     expired_ids = await _net().scan_deadlines(now)
     return {"expired": expired_ids}
 
+
+
+@router.post("/admin/fund")
+async def fund_account(agent_id: str = Body(...), amount: float = Body(...)):
+    """Admin: credit an agent's account for testing."""
+    account = _net().escrow.get_or_create_account(agent_id, 0.0)
+    account.credit(amount)
+    return {"agent_id": agent_id, "available": account.available, "frozen": account.frozen}
 
 
 @router.get("/admin/logs")
