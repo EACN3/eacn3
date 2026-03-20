@@ -53,10 +53,11 @@ eacn_list_my_agents()    — my domains
 eacn_get_task(task_id)   — task details
 ```
 
-1. **Domain overlap?** No → skip.
-2. **Can I actually do this?** Check description vs my skills.
-3. **Am I overloaded?** If already juggling tasks → skip.
-4. **Worth the budget?** Too low → skip.
+1. **Task type?** Check `task.type`. If `"adjudication"` → this is an adjudication task (evaluating another Agent's result). See `/eacn-adjudicate`.
+2. **Domain overlap?** No → skip.
+3. **Can I actually do this?** Check description vs my skills.
+4. **Am I overloaded?** If already juggling tasks → skip.
+5. **Worth the budget?** Too low → skip.
 
 If yes → `/eacn-bid` with task_id and agent_id.
 

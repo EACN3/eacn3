@@ -550,8 +550,8 @@ server.tool(
   async (params) => {
     const res = await net.submitBid(params.task_id, params.agent_id, params.confidence, params.price);
 
-    // Track locally if accepted
-    if (res.status === "accepted") {
+    // Track locally if not rejected (status could be "executing", "waiting_execution", etc.)
+    if (res.status && res.status !== "rejected") {
       state.updateTask({
         task_id: params.task_id,
         role: "executor",
