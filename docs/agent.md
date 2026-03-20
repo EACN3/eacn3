@@ -86,8 +86,8 @@ Registry 负责：
    - get_task_status：查询你发布的任务的当前状态
    - close_task：主动叫停你发布的任务
    - update_deadline：更新你发布的任务的截止时间
-   - update_discussions：将澄清结果同步给其他竞标者
-   - select_result：从你发布的任务的结果中选定一个最终结果
+   - update_discussions：追加一条澄清消息给其他竞标者
+   - select_result：从你发布的任务的结果中选定某个 Agent 提交的结果
    - get_task_results：获取你发布的任务的结果和裁决
    - confirm_budget：响应预算确认请求（同意或拒绝调整预算）"
 ```
@@ -107,8 +107,8 @@ Registry 负责：
     ├── get_task_status(task_id)                    → 通信层 → Network（仅限自己发布的任务）
     ├── close_task(task_id)                         → 通信层 → Network（主动叫停任务）
     ├── update_deadline(task_id, new_deadline)      → 通信层 → Network
-    ├── update_discussions(task_id, discussions)    → 通信层 → Network（将澄清结果同步给其他竞标者）
-    ├── select_result(task_id, result_id)           → 通信层 → Network（选定最终结果，只允许选定一个）
+    ├── update_discussions(task_id, message)         → 通信层 → Network（追加一条澄清消息给其他竞标者）
+    ├── select_result(task_id, agent_id)            → 通信层 → Network（选定某个 Agent 的结果，只允许选定一个）
     ├── get_task_results(task_id)                   → 通信层 → Network（获取结果和裁决，首次调用触发任务完成）
     └── confirm_budget(task_id, approved, new_budget?) → 通信层 → Network（响应预算确认请求）
 ```

@@ -26,7 +26,7 @@
 | 文档概念 | 插件中的实现 | 谁在运行 |
 |---------|------------|---------|
 | 通信层（A2A） | MCP tools（`eacn_submit_bid`、`eacn_submit_result` 等） | 插件进程（被动响应） |
-| 规划层 | Skill markdown（`/work`、`/bid`、`/execute`）引导的推理流程 | 宿主 LLM（Claude） |
+| 规划层 | Skill markdown（`/eacn-bounty`、`/eacn-bid`、`/eacn-execute`）引导的推理流程 | 宿主 LLM（Claude） |
 | 执行层 | 宿主已有的工具 + 插件注入的 MCP tools | 宿主 LLM 调用 |
 
 **不存在独立的 `planning.ts` 或 `execution.ts`**。规划就是 Claude 读 Skill 后的推理，执行就是 Claude 调工具。
@@ -44,12 +44,12 @@
 
 服务端需要定期向网络端发心跳。两种方式并用：
 
-1. **Skill 循环内顺带发**：`/work` 每轮顺带调 `eacn_heartbeat()`
+1. **Skill 循环内顺带发**：`/eacn-bounty` 每轮顺带调 `eacn_heartbeat()`
 2. **MCP server 进程内 setInterval**：兜底，用户长时间不操作时保持在线
 
 ### bid 评估
 
-不是确定性代码，也不是插件内嵌 LLM。就是 Claude 自己在 `/bid` Skill 中判断：
+不是确定性代码，也不是插件内嵌 LLM。就是 Claude 自己在 `/eacn-bid` Skill 中判断：
 
 ```
 1. 调 eacn_get_task(task_id) 获取任务详情
@@ -87,18 +87,18 @@ eacn-dev/
 │   │   └── logger.ts              # 本地事件日志 + 上报网络端
 │   │
 │   ├── skills/                    # 12 个 Skills
-│   │   ├── join/SKILL.md          # /join — 连接网络
-│   │   ├── leave/SKILL.md         # /leave — 断开连接
-│   │   ├── register/SKILL.md      # /register — 注册 Agent
-│   │   ├── task/SKILL.md          # /task — 发布任务、跟踪
-│   │   ├── collect/SKILL.md       # /collect — 回收结果、选定、结算
-│   │   ├── work/SKILL.md          # /work — 接活主循环（感知+分发）
-│   │   ├── bid/SKILL.md           # /bid — 评估并竞标
-│   │   ├── execute/SKILL.md       # /execute — 执行已中标任务
-│   │   ├── clarify/SKILL.md       # /clarify — 澄清请求
-│   │   ├── adjudicate/SKILL.md    # /adjudicate — 裁决任务
-│   │   ├── browse/SKILL.md        # /browse — 浏览网络
-│   │   └── dashboard/SKILL.md     # /dashboard — 状态概览
+│   │   ├── eacn-join/SKILL.md          # /eacn-join — 连接网络
+│   │   ├── eacn-leave/SKILL.md         # /eacn-leave — 断开连接
+│   │   ├── eacn-register/SKILL.md      # /eacn-register — 注册 Agent
+│   │   ├── eacn-task/SKILL.md          # /eacn-task — 发布任务、跟踪
+│   │   ├── eacn-collect/SKILL.md       # /eacn-collect — 回收结果、选定、结算
+│   │   ├── eacn-bounty/SKILL.md          # /eacn-bounty — 接活主循环（感知+分发）
+│   │   ├── eacn-bid/SKILL.md           # /eacn-bid — 评估并竞标
+│   │   ├── eacn-execute/SKILL.md       # /eacn-execute — 执行已中标任务
+│   │   ├── eacn-clarify/SKILL.md       # /eacn-clarify — 澄清请求
+│   │   ├── eacn-adjudicate/SKILL.md    # /eacn-adjudicate — 裁决任务
+│   │   ├── eacn-browse/SKILL.md        # /eacn-browse — 浏览网络
+│   │   └── eacn-dashboard/SKILL.md     # /eacn-dashboard — 状态概览
 │   │
 │   └── agents/
 │       └── worker.md              # worker 子会话人设（可选）
@@ -174,7 +174,7 @@ abstract class Adapter {
 | WebSocket 推送 | 1 | `network.md` |
 | **合计** | **28** | |
 
-Economy 接口（get_balance、deposit 等）是网络端内部模块，未暴露 HTTP API。如需在 /dashboard 显示余额，需网络端补充。
+插件端已实现 `eacn_get_balance` 工具（调用 `GET /api/economy/balance`），用于创建任务前检查余额、Dashboard 显示资金状况。**网络端需补充此 API**（详见 network-api.md TODO 段）。
 
 ---
 

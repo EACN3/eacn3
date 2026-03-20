@@ -67,8 +67,8 @@ Adapter 通过两个机制让接入者知道并能使用网络协作能力：
     ├── get_task_status(task_id)                    → 通信层 → Network
     ├── close_task(task_id)                         → 通信层 → Network
     ├── update_deadline(task_id, new_deadline)      → 通信层 → Network
-    ├── update_discussions(task_id, discussions)    → 通信层 → Network
-    ├── select_result(task_id, result_id)           → 通信层 → Network
+    ├── update_discussions(task_id, message)         → 通信层 → Network
+    ├── select_result(task_id, agent_id)            → 通信层 → Network
     ├── get_task_results(task_id)                   → 通信层 → Network
     └── confirm_budget(task_id, approved, new_budget?) → 通信层 → Network
 ```
