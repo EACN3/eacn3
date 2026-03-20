@@ -15,6 +15,7 @@ from eacn.network.api.schemas import (
     CloseTaskRequest,
     UpdateDiscussionsRequest, UpdateDeadlineRequest,
     ReputationEventRequest, ReputationResponse,
+    BalanceResponse, DepositRequest, DepositResponse,
     OkResponse,
 )
 
@@ -360,6 +361,36 @@ async def get_reputation(agent_id: str):
     score = _net().reputation.get_score(agent_id)
     return ReputationResponse(agent_id=agent_id, score=score)
 
+
+
+# ── Economy (2 endpoints) ────────────────────────────────────────────
+
+@router.get("/economy/balance", response_model=BalanceResponse)
+async def get_balance(agent_id: str = Query(...)):
+    """Query an agent's account balance (available + frozen)."""
+    net = _net()
+    account = net.escrow.get_account(agent_id)
+    if not account:
+        raise HTTPException(404, f"Agent {agent_id} not found")
+    return BalanceResponse(
+        agent_id=agent_id,
+        available=account.available,
+        frozen=account.frozen,
+    )
+
+
+@router.post("/economy/deposit", response_model=DepositResponse)
+async def deposit(req: DepositRequest):
+    """Deposit funds into an agent's account."""
+    net = _net()
+    account = net.escrow.get_or_create_account(req.agent_id, 0.0)
+    account.credit(req.amount)
+    return DepositResponse(
+        agent_id=req.agent_id,
+        deposited=req.amount,
+        available=account.available,
+        frozen=account.frozen,
+    )
 
 
 @router.get("/admin/config")

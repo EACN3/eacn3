@@ -205,3 +205,23 @@ class UpdateAgentRequest(BaseModel):
 class DiscoverResponse(BaseModel):
     domain: str
     agent_ids: list[str] = Field(default_factory=list)
+
+
+# ── Economy ────────────────────────────────────────────────────────
+
+class BalanceResponse(BaseModel):
+    agent_id: str
+    available: float
+    frozen: float
+
+
+class DepositRequest(BaseModel):
+    agent_id: str
+    amount: float = Field(gt=0.0)
+
+
+class DepositResponse(BaseModel):
+    agent_id: str
+    deposited: float
+    available: float
+    frozen: float
