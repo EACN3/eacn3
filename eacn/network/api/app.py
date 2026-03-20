@@ -14,6 +14,7 @@ from eacn.network.app import Network
 from eacn.network.db import Database
 from eacn.network.api.routes import router, set_network
 from eacn.network.api.discovery_routes import discovery_router, set_discovery_network
+from eacn.network.api.peer_routes import peer_router, set_peer_cluster, set_peer_network
 from eacn.network.api.websocket import ws_router, manager
 
 
@@ -37,6 +38,8 @@ async def lifespan(app: FastAPI):
     app.state.network = network
     set_network(network)
     set_discovery_network(network)
+    set_peer_cluster(network.cluster)
+    set_peer_network(network)
 
     yield
 
@@ -54,5 +57,6 @@ def create_app(db_path: str = ":memory:") -> FastAPI:
     app.state.db_path = db_path
     app.include_router(router)
     app.include_router(discovery_router)
+    app.include_router(peer_router)
     app.include_router(ws_router)
     return app

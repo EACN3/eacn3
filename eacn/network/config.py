@@ -82,6 +82,17 @@ class APIConfig(BaseModel):
     logs_max_limit: int = 500
 
 
+class ClusterConfig(BaseModel):
+    seed_nodes: list[str] = Field(default_factory=list)
+    heartbeat_interval: int = 10
+    heartbeat_fan_out: int = 3
+    suspect_rounds: int = 3
+    offline_rounds: int = 6
+    node_id: str = ""
+    endpoint: str = ""
+    protocol_version: str = "0.1.0"
+
+
 class NetworkConfig(BaseModel):
     reputation: ReputationConfig = Field(default_factory=ReputationConfig)
     matcher: MatcherConfig = Field(default_factory=MatcherConfig)
@@ -89,6 +100,7 @@ class NetworkConfig(BaseModel):
     push: PushConfig = Field(default_factory=PushConfig)
     task: TaskConfig = Field(default_factory=TaskConfig)
     api: APIConfig = Field(default_factory=APIConfig)
+    cluster: ClusterConfig = Field(default_factory=ClusterConfig)
 
 
 # ── 加载/保存 ────────────────────────────────────────────────────────

@@ -1,0 +1,340 @@
+"""Peer-to-peer routes for cluster node communication.
+
+All endpoints use the /peer/ prefix and are NOT exposed to Servers.
+These handle inter-node operations: join, leave, heartbeat, DHT, gossip, task forwarding.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+peer_router = APIRouter(prefix="/peer", tags=["peer"])
+
+_cluster = None
+_network = None
+
+
+def set_peer_cluster(cluster) -> None:
+    global _cluster
+    _cluster = cluster
+
+
+def set_peer_network(network) -> None:
+    global _network
+    _network = network
+
+
+def _cs():
+    if _cluster is None:
+        raise HTTPException(503, "Cluster not initialized")
+    return _cluster
+
+
+def _net():
+    if _network is None:
+        raise HTTPException(503, "Network not initialized")
+    return _network
+
+
+# ── Request/Response schemas ─────────────────────────────────────────
+
+class JoinRequest(BaseModel):
+    node_card: dict[str, Any]
+
+
+class JoinResponse(BaseModel):
+    nodes: list[dict[str, Any]]
+
+
+class LeaveRequest(BaseModel):
+    node_id: str
+
+
+class HeartbeatRequest(BaseModel):
+    node_id: str
+    domains: list[str] = Field(default_factory=list)
+    timestamp: str
+
+
+class DHTStoreRequest(BaseModel):
+    domain: str
+    node_id: str
+
+
+class DHTRevokeRequest(BaseModel):
+    domain: str
+    node_id: str
+
+
+class DHTLookupResponse(BaseModel):
+    domain: str
+    node_ids: list[str]
+
+
+class GossipExchangeRequest(BaseModel):
+    from_node: dict[str, Any]
+    known: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class GossipExchangeResponse(BaseModel):
+    known: list[dict[str, Any]]
+
+
+class TaskBroadcastRequest(BaseModel):
+    task_id: str
+    origin: str
+    initiator_id: str
+    domains: list[str] = Field(default_factory=list)
+    type: str = "normal"
+    budget: float = 0.0
+    deadline: str | None = None
+    content: dict[str, Any] = Field(default_factory=dict)
+    max_concurrent_bidders: int = 5
+
+
+class TaskBidRequest(BaseModel):
+    task_id: str
+    agent_id: str
+    server_id: str = ""
+    confidence: float
+    price: float
+    from_node: str
+
+
+class TaskRejectRequest(BaseModel):
+    task_id: str
+    agent_id: str
+    from_node: str
+
+
+class TaskResultRequest(BaseModel):
+    task_id: str
+    agent_id: str
+    content: Any
+    from_node: str
+
+
+class TaskSubtaskRequest(BaseModel):
+    parent_task_id: str
+    subtask_data: dict[str, Any]
+    from_node: str
+
+
+class TaskStatusRequest(BaseModel):
+    task_id: str
+    status: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class PushRequest(BaseModel):
+    type: str
+    task_id: str
+    recipients: list[str] = Field(default_factory=list)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class OkResponse(BaseModel):
+    ok: bool = True
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Membership management (3 endpoints)
+# ══════════════════════════════════════════════════════════════════════
+
+@peer_router.post("/join", response_model=JoinResponse)
+async def peer_join(req: JoinRequest):
+    """New node joins the network."""
+    from eacn.network.cluster.node import NodeCard
+    try:
+        card = NodeCard.from_dict(req.node_card)
+        nodes = _cs().handle_join(card)
+        return JoinResponse(nodes=[n.to_dict() for n in nodes])
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@peer_router.post("/leave", response_model=OkResponse)
+async def peer_leave(req: LeaveRequest):
+    """Node gracefully leaves."""
+    _cs().handle_leave(req.node_id)
+    return OkResponse()
+
+
+@peer_router.post("/heartbeat", response_model=OkResponse)
+async def peer_heartbeat(req: HeartbeatRequest):
+    """Node heartbeat keepalive."""
+    cs = _cs()
+    if not cs.members.contains(req.node_id):
+        raise HTTPException(404, f"Node {req.node_id} not found")
+    cs.handle_heartbeat(req.node_id, req.domains, req.timestamp)
+    return OkResponse()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# DHT operations (3 endpoints)
+# ══════════════════════════════════════════════════════════════════════
+
+@peer_router.post("/dht/store", response_model=OkResponse)
+async def peer_dht_store(req: DHTStoreRequest):
+    """Store domain -> node_id mapping."""
+    await _cs().dht.handle_store(req.domain, req.node_id)
+    return OkResponse()
+
+
+@peer_router.delete("/dht/revoke", response_model=OkResponse)
+async def peer_dht_revoke(req: DHTRevokeRequest):
+    """Revoke domain -> node_id mapping."""
+    await _cs().dht.handle_revoke(req.domain, req.node_id)
+    return OkResponse()
+
+
+@peer_router.get("/dht/lookup", response_model=DHTLookupResponse)
+async def peer_dht_lookup(domain: str):
+    """Lookup nodes for a domain."""
+    node_ids = await _cs().dht.handle_lookup(domain)
+    return DHTLookupResponse(domain=domain, node_ids=node_ids)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Gossip operation (1 endpoint)
+# ══════════════════════════════════════════════════════════════════════
+
+@peer_router.post("/gossip/exchange", response_model=GossipExchangeResponse)
+async def peer_gossip_exchange(req: GossipExchangeRequest):
+    """Exchange known node lists."""
+    from eacn.network.cluster.node import NodeCard
+    from_node = NodeCard.from_dict(req.from_node)
+    known_cards = [NodeCard.from_dict(n) for n in req.known]
+    result_cards = await _cs().gossip.handle_exchange(from_node, known_cards)
+    return GossipExchangeResponse(known=[c.to_dict() for c in result_cards])
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Task forwarding (7 endpoints)
+# ══════════════════════════════════════════════════════════════════════
+
+@peer_router.post("/task/broadcast", response_model=OkResponse)
+async def peer_task_broadcast(req: TaskBroadcastRequest):
+    """Receive task broadcast from another node."""
+    cs = _cs()
+    task_summary = req.model_dump()
+
+    # Check idempotency
+    existing_route = cs.router.get_route(req.task_id)
+    if existing_route is not None:
+        # Already received this broadcast
+        return OkResponse()
+
+    # Store route and handle broadcast
+    cs.handle_broadcast(task_summary)
+
+    # Discover local agents for this task's domains and push to them
+    net = _net()
+    all_agent_ids: set[str] = set()
+    for domain in req.domains:
+        ids = await net.discovery.discover(domain)
+        all_agent_ids.update(ids)
+
+    if all_agent_ids:
+        from eacn.core.models import Task
+        # Create a lightweight task for pushing
+        task = Task(
+            id=req.task_id,
+            content=req.content,
+            initiator_id=req.initiator_id,
+            domains=req.domains,
+            budget=req.budget,
+            deadline=req.deadline,
+            max_concurrent_bidders=req.max_concurrent_bidders,
+        )
+        await net.push.broadcast_task(task, list(all_agent_ids))
+
+    return OkResponse()
+
+
+@peer_router.post("/task/bid")
+async def peer_task_bid(req: TaskBidRequest):
+    """Handle forwarded bid from a remote node."""
+    net = _net()
+    cs = _cs()
+
+    try:
+        bid_status = await net.submit_bid(
+            task_id=req.task_id,
+            agent_id=req.agent_id,
+            confidence=req.confidence,
+            price=req.price,
+            server_id=req.server_id or None,
+        )
+        # Track participating node
+        cs.router.add_participant(req.task_id, req.from_node)
+        return {"status": bid_status.value, "bid": {"agent_id": req.agent_id, "status": bid_status.value}}
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@peer_router.post("/task/reject", response_model=OkResponse)
+async def peer_task_reject(req: TaskRejectRequest):
+    """Handle forwarded task rejection."""
+    net = _net()
+    try:
+        await net.reject_task(
+            task_id=req.task_id,
+            agent_id=req.agent_id,
+        )
+        return OkResponse()
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@peer_router.post("/task/result", response_model=OkResponse)
+async def peer_task_result(req: TaskResultRequest):
+    """Handle forwarded result submission."""
+    net = _net()
+    try:
+        await net.submit_result(
+            task_id=req.task_id,
+            agent_id=req.agent_id,
+            content=req.content,
+        )
+        return OkResponse()
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@peer_router.post("/task/subtask")
+async def peer_task_subtask(req: TaskSubtaskRequest):
+    """Handle forwarded subtask creation."""
+    net = _net()
+    data = req.subtask_data
+    try:
+        subtask = await net.create_subtask(
+            parent_task_id=req.parent_task_id,
+            initiator_id=data.get("initiator_id", ""),
+            content=data.get("content", {}),
+            domains=data.get("domains", []),
+            budget=data.get("budget", 0.0),
+            deadline=data.get("deadline"),
+        )
+        return {"subtask_id": subtask.id, "status": subtask.status.value}
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@peer_router.post("/task/status", response_model=OkResponse)
+async def peer_task_status(req: TaskStatusRequest):
+    """Handle status change notification from owner node."""
+    cs = _cs()
+    await cs.handle_status_notification(req.task_id, req.status, req.payload)
+    return OkResponse()
+
+
+@peer_router.post("/peer/push")
+async def peer_push(req: PushRequest):
+    """Handle push event forwarding for local delivery."""
+    cs = _cs()
+    delivered = await cs.handle_push(req.type, req.task_id, req.recipients, req.payload)
+    return {"ok": True, "delivered": delivered}

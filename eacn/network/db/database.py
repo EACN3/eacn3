@@ -142,6 +142,44 @@ class Database:
                 PRIMARY KEY (agent_id, known_agent_id)
             );
             CREATE INDEX IF NOT EXISTS idx_gossip_agent ON gossip_known(agent_id);
+
+            -- ═══════════════════════════════════════════════════════
+            -- Cluster layer tables (node federation)
+            -- ═══════════════════════════════════════════════════════
+
+            CREATE TABLE IF NOT EXISTS cluster_nodes (
+                node_id     TEXT PRIMARY KEY,
+                endpoint    TEXT NOT NULL,
+                domains     TEXT NOT NULL DEFAULT '[]',
+                status      TEXT NOT NULL DEFAULT 'online',
+                version     TEXT NOT NULL,
+                joined_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                last_seen   TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS cluster_task_routes (
+                task_id     TEXT PRIMARY KEY,
+                origin_node TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS cluster_task_participants (
+                task_id     TEXT NOT NULL,
+                node_id     TEXT NOT NULL,
+                PRIMARY KEY (task_id, node_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS cluster_dht (
+                domain      TEXT NOT NULL,
+                node_id     TEXT NOT NULL,
+                PRIMARY KEY (domain, node_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cluster_dht_domain ON cluster_dht(domain);
+
+            CREATE TABLE IF NOT EXISTS cluster_gossip (
+                node_id       TEXT NOT NULL,
+                known_node_id TEXT NOT NULL,
+                PRIMARY KEY (node_id, known_node_id)
+            );
         """)
         await self.db.commit()
 
@@ -637,5 +675,191 @@ class Database:
         await self.db.execute(
             "DELETE FROM gossip_known WHERE agent_id = ? OR known_agent_id = ?",
             (agent_id, agent_id),
+        )
+        await self.db.commit()
+
+    # ══════════════════════════════════════════════════════════════════
+    # Cluster: Node store
+    # ══════════════════════════════════════════════════════════════════
+
+    async def cluster_save_node(self, node: dict[str, Any]) -> None:
+        await self.db.execute(
+            """INSERT INTO cluster_nodes
+               (node_id, endpoint, domains, status, version, joined_at, last_seen)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(node_id) DO UPDATE SET
+                 endpoint=excluded.endpoint, domains=excluded.domains,
+                 status=excluded.status, version=excluded.version,
+                 last_seen=excluded.last_seen""",
+            (
+                node["node_id"],
+                node["endpoint"],
+                json.dumps(node.get("domains", [])),
+                node.get("status", "online"),
+                node.get("version", "0.1.0"),
+                node.get("joined_at", ""),
+                node.get("last_seen", ""),
+            ),
+        )
+        await self.db.commit()
+
+    async def cluster_get_node(self, node_id: str) -> dict[str, Any] | None:
+        async with self.db.execute(
+            "SELECT node_id, endpoint, domains, status, version, joined_at, last_seen "
+            "FROM cluster_nodes WHERE node_id = ?",
+            (node_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "node_id": row[0], "endpoint": row[1],
+                "domains": json.loads(row[2]), "status": row[3],
+                "version": row[4], "joined_at": row[5], "last_seen": row[6],
+            }
+
+    async def cluster_get_all_nodes(self) -> list[dict[str, Any]]:
+        async with self.db.execute(
+            "SELECT node_id, endpoint, domains, status, version, joined_at, last_seen "
+            "FROM cluster_nodes"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "node_id": r[0], "endpoint": r[1],
+                    "domains": json.loads(r[2]), "status": r[3],
+                    "version": r[4], "joined_at": r[5], "last_seen": r[6],
+                }
+                for r in rows
+            ]
+
+    async def cluster_remove_node(self, node_id: str) -> None:
+        await self.db.execute(
+            "DELETE FROM cluster_nodes WHERE node_id = ?", (node_id,),
+        )
+        await self.db.commit()
+
+    async def cluster_update_node_status(self, node_id: str, status: str) -> None:
+        await self.db.execute(
+            "UPDATE cluster_nodes SET status = ? WHERE node_id = ?",
+            (status, node_id),
+        )
+        await self.db.commit()
+
+    # ══════════════════════════════════════════════════════════════════
+    # Cluster: Task routes
+    # ══════════════════════════════════════════════════════════════════
+
+    async def cluster_set_route(self, task_id: str, origin_node: str) -> None:
+        await self.db.execute(
+            """INSERT INTO cluster_task_routes (task_id, origin_node)
+               VALUES (?, ?)
+               ON CONFLICT(task_id) DO UPDATE SET origin_node=excluded.origin_node""",
+            (task_id, origin_node),
+        )
+        await self.db.commit()
+
+    async def cluster_get_route(self, task_id: str) -> str | None:
+        async with self.db.execute(
+            "SELECT origin_node FROM cluster_task_routes WHERE task_id = ?",
+            (task_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+    async def cluster_remove_route(self, task_id: str) -> None:
+        await self.db.execute(
+            "DELETE FROM cluster_task_routes WHERE task_id = ?", (task_id,),
+        )
+        await self.db.commit()
+
+    # ══════════════════════════════════════════════════════════════════
+    # Cluster: Task participants
+    # ══════════════════════════════════════════════════════════════════
+
+    async def cluster_add_participant(self, task_id: str, node_id: str) -> None:
+        await self.db.execute(
+            "INSERT OR IGNORE INTO cluster_task_participants (task_id, node_id) VALUES (?, ?)",
+            (task_id, node_id),
+        )
+        await self.db.commit()
+
+    async def cluster_get_participants(self, task_id: str) -> set[str]:
+        async with self.db.execute(
+            "SELECT node_id FROM cluster_task_participants WHERE task_id = ?",
+            (task_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return {r[0] for r in rows}
+
+    async def cluster_remove_participants(self, task_id: str) -> None:
+        await self.db.execute(
+            "DELETE FROM cluster_task_participants WHERE task_id = ?",
+            (task_id,),
+        )
+        await self.db.commit()
+
+    # ══════════════════════════════════════════════════════════════════
+    # Cluster: DHT (domain → node_id)
+    # ══════════════════════════════════════════════════════════════════
+
+    async def cluster_dht_store(self, domain: str, node_id: str) -> None:
+        await self.db.execute(
+            "INSERT OR IGNORE INTO cluster_dht (domain, node_id) VALUES (?, ?)",
+            (domain, node_id),
+        )
+        await self.db.commit()
+
+    async def cluster_dht_revoke(self, domain: str, node_id: str) -> None:
+        await self.db.execute(
+            "DELETE FROM cluster_dht WHERE domain = ? AND node_id = ?",
+            (domain, node_id),
+        )
+        await self.db.commit()
+
+    async def cluster_dht_revoke_all(self, node_id: str) -> None:
+        await self.db.execute(
+            "DELETE FROM cluster_dht WHERE node_id = ?", (node_id,),
+        )
+        await self.db.commit()
+
+    async def cluster_dht_lookup(self, domain: str) -> list[str]:
+        async with self.db.execute(
+            "SELECT node_id FROM cluster_dht WHERE domain = ?", (domain,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [r[0] for r in rows]
+
+    # ══════════════════════════════════════════════════════════════════
+    # Cluster: Gossip (node-level known lists)
+    # ══════════════════════════════════════════════════════════════════
+
+    async def cluster_gossip_add(self, node_id: str, known_node_id: str) -> None:
+        await self.db.execute(
+            "INSERT OR IGNORE INTO cluster_gossip (node_id, known_node_id) VALUES (?, ?)",
+            (node_id, known_node_id),
+        )
+        await self.db.commit()
+
+    async def cluster_gossip_add_many(self, node_id: str, known_ids: set[str]) -> None:
+        for kid in known_ids:
+            await self.db.execute(
+                "INSERT OR IGNORE INTO cluster_gossip (node_id, known_node_id) VALUES (?, ?)",
+                (node_id, kid),
+            )
+        await self.db.commit()
+
+    async def cluster_gossip_get_known(self, node_id: str) -> set[str]:
+        async with self.db.execute(
+            "SELECT known_node_id FROM cluster_gossip WHERE node_id = ?",
+            (node_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return {r[0] for r in rows}
+
+    async def cluster_gossip_remove(self, node_id: str) -> None:
+        await self.db.execute(
+            "DELETE FROM cluster_gossip WHERE node_id = ? OR known_node_id = ?",
+            (node_id, node_id),
         )
         await self.db.commit()

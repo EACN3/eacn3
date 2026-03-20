@@ -29,6 +29,7 @@ from eacn.network.logger import GlobalLogger, log_event
 from eacn.network.reputation import GlobalReputation
 from eacn.network.economy import EscrowService
 from eacn.network.economy.settlement import SettlementService
+from eacn.network.cluster.service import ClusterService
 
 _log = logging.getLogger(__name__)
 
@@ -78,9 +79,15 @@ class Network:
             platform_fee_rate=self.config.economy.platform_fee_rate,
         )
 
+        # Cluster layer (standalone when no seed nodes configured)
+        from eacn.network.cluster.config import ClusterConfig as CConfig
+        cluster_cfg = CConfig(**self.config.cluster.model_dump())
+        self.cluster = ClusterService(self.db, config=cluster_cfg)
+
     async def start(self) -> None:
         """Bootstrap the network node."""
         _log.info("EACN Network starting...")
+        await self.cluster.start()
 
     # ══════════════════════════════════════════════════════════════════
     # Task creation
@@ -127,6 +134,18 @@ class Network:
 
         # 4. Discover + match + push
         await self._broadcast_to_candidates(task)
+
+        # 5. Cluster: broadcast to peer nodes
+        await self.cluster.broadcast_task({
+            "task_id": task.id,
+            "initiator_id": initiator_id,
+            "domains": domains,
+            "type": task.type.value,
+            "budget": budget,
+            "deadline": deadline,
+            "content": content,
+            "max_concurrent_bidders": task.max_concurrent_bidders,
+        })
 
         return task
 
@@ -425,7 +444,10 @@ class Network:
         # 4. Reputation propagation
         self.reputation.propagate_selection(task.initiator_id, agent_id)
 
-        # 5. Log
+        # 5. Cluster: gossip exchange with participating nodes
+        await self.cluster.trigger_gossip(task_id)
+
+        # 6. Log
         self._log_event("select_result", task_id=task_id, agent_id=agent_id)
 
     # ══════════════════════════════════════════════════════════════════

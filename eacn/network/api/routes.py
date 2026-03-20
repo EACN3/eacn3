@@ -141,8 +141,22 @@ async def list_tasks(
 
 @router.post("/tasks/{task_id}/bid", response_model=BidResponse)
 async def submit_bid(task_id: str, req: SubmitBidRequest):
+    net = _net()
+    # Cluster: check if task is on a remote node
+    if not net.cluster.router.is_local(task_id):
+        try:
+            result = await net.cluster.router.forward_bid(
+                task_id, req.agent_id, req.server_id, req.confidence, req.price,
+            )
+            return BidResponse(
+                status=result.get("status", "rejected"),
+                task_id=task_id,
+                agent_id=req.agent_id,
+            )
+        except Exception as e:
+            raise HTTPException(502, f"Forward failed: {e}")
     try:
-        bid_status = await _net().submit_bid(
+        bid_status = await net.submit_bid(
             task_id=task_id,
             agent_id=req.agent_id,
             confidence=req.confidence,
@@ -159,8 +173,15 @@ async def submit_bid(task_id: str, req: SubmitBidRequest):
 @router.post("/tasks/{task_id}/reject", response_model=OkResponse)
 async def reject_task(task_id: str, req: RejectTaskRequest):
     """Agent rejects/withdraws from an assigned task for re-allocation."""
+    net = _net()
+    if not net.cluster.router.is_local(task_id):
+        try:
+            await net.cluster.router.forward_reject(task_id, req.agent_id)
+            return OkResponse(message="Task rejected (forwarded)")
+        except Exception as e:
+            raise HTTPException(502, f"Forward failed: {e}")
     try:
-        await _net().reject_task(
+        await net.reject_task(
             task_id=task_id,
             agent_id=req.agent_id,
             reason=req.reason,
@@ -176,8 +197,15 @@ async def reject_task(task_id: str, req: RejectTaskRequest):
 
 @router.post("/tasks/{task_id}/result", response_model=OkResponse)
 async def submit_result(task_id: str, req: SubmitResultRequest):
+    net = _net()
+    if not net.cluster.router.is_local(task_id):
+        try:
+            await net.cluster.router.forward_result(task_id, req.agent_id, req.content)
+            return OkResponse(message="Result submitted (forwarded)")
+        except Exception as e:
+            raise HTTPException(502, f"Forward failed: {e}")
     try:
-        await _net().submit_result(
+        await net.submit_result(
             task_id=task_id,
             agent_id=req.agent_id,
             content=req.content,
@@ -297,8 +325,30 @@ async def confirm_budget(task_id: str, req: ConfirmBudgetRequest):
 
 @router.post("/tasks/{task_id}/subtask", response_model=TaskResponse, status_code=201)
 async def create_subtask(task_id: str, req: CreateSubtaskRequest):
+    net = _net()
+    if not net.cluster.router.is_local(task_id):
+        try:
+            result = await net.cluster.router.forward_subtask(
+                task_id,
+                {
+                    "initiator_id": req.initiator_id,
+                    "content": req.content,
+                    "domains": req.domains,
+                    "budget": req.budget,
+                    "deadline": req.deadline,
+                },
+            )
+            return TaskResponse(
+                id=result.get("subtask_id", ""),
+                status=result.get("status", "unclaimed"),
+                initiator_id=req.initiator_id,
+                domains=req.domains,
+                budget=req.budget,
+            )
+        except Exception as e:
+            raise HTTPException(502, f"Forward failed: {e}")
     try:
-        sub = await _net().create_subtask(
+        sub = await net.create_subtask(
             parent_task_id=task_id,
             initiator_id=req.initiator_id,
             content=req.content,
