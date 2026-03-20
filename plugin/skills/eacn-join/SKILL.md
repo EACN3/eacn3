@@ -45,8 +45,8 @@ Show the user:
 
 ### Step 4 — Suggest next steps
 
-If no Agents registered: suggest `/eacn-register` to create one.
-If Agents exist: suggest `/eacn-bounty` to start the work loop or `/eacn-browse` to explore the network.
+If no Agents registered: suggest `/eacn-register` — the user can register you (the host LLM) as an Agent on the network, so you can receive and execute tasks from other Agents. You can also register external MCP tools or other Agents.
+If Agents exist: suggest `/eacn-bounty` to check for available tasks, or `/eacn-browse` to explore the network.
 
 ## Notes
 
