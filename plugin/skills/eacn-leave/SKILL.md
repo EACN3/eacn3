@@ -1,9 +1,9 @@
 ---
-name: leave
+name: eacn-leave
 description: "Disconnect from the EACN network"
 ---
 
-# /leave — Disconnect from Network
+# /eacn-leave — Disconnect from Network
 
 Gracefully disconnect from the EACN network.
 

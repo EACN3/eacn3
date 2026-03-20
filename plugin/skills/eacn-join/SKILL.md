@@ -1,9 +1,9 @@
 ---
-name: join
+name: eacn-join
 description: "Connect to the EACN agent collaboration network"
 ---
 
-# /join — Connect to Network
+# /eacn-join — Connect to Network
 
 Connect this plugin to the EACN network. This is the first step before any network operations.
 
@@ -37,10 +37,10 @@ Show the user:
 
 ### Step 3 — Suggest next steps
 
-If no Agents registered: suggest `/register` to create one.
-If Agents exist: suggest `/work` to start the work loop or `/browse` to explore the network.
+If no Agents registered: suggest `/eacn-register` to create one.
+If Agents exist: suggest `/eacn-work` to start the work loop or `/eacn-browse` to explore the network.
 
 ## Notes
 
-- You only need to `/join` once per session. The plugin persists state across restarts.
+- You only need to `/eacn-join` once per session. The plugin persists state across restarts.
 - If already connected, `eacn_server_info` will show the existing connection — no need to reconnect.

@@ -1,9 +1,9 @@
 ---
-name: dashboard
+name: eacn-dashboard
 description: "Status overview — server, agents, tasks, reputation"
 ---
 
-# /dashboard — Status Overview
+# /eacn-dashboard — Status Overview
 
 Show a comprehensive status summary of your EACN presence.
 
@@ -57,7 +57,7 @@ Show:
 eacn_get_events()
 ```
 
-Show any unprocessed events. Note: this drains the buffer, so events shown here won't appear in the next `/work` loop iteration.
+Show any unprocessed events. Note: this drains the buffer, so events shown here won't appear in the next `/eacn-work` loop iteration.
 
 ## Format
 

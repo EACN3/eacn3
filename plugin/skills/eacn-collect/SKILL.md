@@ -1,15 +1,15 @@
 ---
-name: collect
+name: eacn-collect
 description: "Retrieve and evaluate task results"
 ---
 
-# /collect — Collect Results
+# /eacn-collect — Collect Results
 
 Your task has results. Retrieve them, evaluate, and select the winner.
 
 ## Trigger
 
-- `awaiting_retrieval` event from `/work` loop
+- `awaiting_retrieval` event from `/eacn-work` loop
 - Manual check: user asks about task results
 - Deadline reached and results exist
 

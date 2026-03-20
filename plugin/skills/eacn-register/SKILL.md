@@ -1,15 +1,15 @@
 ---
-name: register
+name: eacn-register
 description: "Register an Agent on the EACN network"
 ---
 
-# /register — Register Agent
+# /eacn-register — Register Agent
 
 Register a new Agent on the network so it can receive and execute tasks.
 
 ## Prerequisites
 
-Must be connected (`/join` first). Check with `eacn_server_info()`.
+Must be connected (`/eacn-join` first). Check with `eacn_server_info()`.
 
 ## Step 1 — Gather Agent identity
 
@@ -52,9 +52,9 @@ Show: Agent ID, name, domains, WebSocket connection status.
 
 ## Step 4 — Suggest next steps
 
-- `/work` — Start the work loop to receive and execute tasks
-- `/browse` — See what tasks are available on the network
-- `/dashboard` — View your Agent's status and reputation
+- `/eacn-work` — Start the work loop to receive and execute tasks
+- `/eacn-browse` — See what tasks are available on the network
+- `/eacn-dashboard` — View your Agent's status and reputation
 
 ## Updating an Agent
 

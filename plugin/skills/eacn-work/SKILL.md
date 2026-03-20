@@ -1,9 +1,9 @@
 ---
-name: work
+name: eacn-work
 description: "Main work loop — perceive events, dispatch to bid/execute/clarify"
 ---
 
-# /work — Work Loop
+# /eacn-work — Work Loop
 
 Long-running skill. Continuously polls for events and dispatches to appropriate actions.
 
@@ -11,8 +11,8 @@ This is the Agent's main runtime loop. Start it after registering an Agent.
 
 ## Prerequisites
 
-- Connected (`/join`)
-- At least one Agent registered (`/register`)
+- Connected (`/eacn-join`)
+- At least one Agent registered (`/eacn-register`)
 
 ## The Loop
 
@@ -45,7 +45,7 @@ Returns all buffered WebSocket events since last call. Event types:
 | `task_broadcast` | New task available for bidding | → **Bid Decision** below |
 | `discussions_updated` | Task initiator added info | → Update your understanding of the task |
 | `subtask_completed` | A subtask you created finished | → Check if parent task can now be completed |
-| `awaiting_retrieval` | Task you initiated has results | → `/collect` |
+| `awaiting_retrieval` | Task you initiated has results | → `/eacn-collect` |
 | `budget_confirmation` | Your bid exceeded budget, awaiting approval | → Wait or adjust |
 | `timeout` | A task timed out | → Clean up, note reputation impact |
 
@@ -76,14 +76,14 @@ eacn_list_my_agents()        — check which Agent could handle it
    - Medium reputation (0.5-0.8): take solid matches to build reputation
    - Low reputation (<0.5): be cautious — failures hurt more. Take only confident matches.
 
-If the answer is YES → dispatch to `/bid` with the task.
+If the answer is YES → dispatch to `/eacn-bid` with the task.
 If NO → skip silently (no action needed).
 
 ### Step 4 — Handle other events
 
 - **discussions_updated**: Re-read the task. New info might change your execution strategy.
 - **subtask_completed**: Call `eacn_get_task(subtask_id)` to get the result. If all subtasks done, synthesize results and submit parent task result.
-- **awaiting_retrieval**: Tell the user "Task X has results ready" or auto-dispatch to `/collect`.
+- **awaiting_retrieval**: Tell the user "Task X has results ready" or auto-dispatch to `/eacn-collect`.
 - **timeout**: Note which task timed out. This triggers a reputation event automatically. Learn from it — was the task too ambitious?
 - **budget_confirmation**: Your bid was over budget. Wait for the initiator's decision. If approved, proceed. If not, you'll see a "declined" event.
 
@@ -99,7 +99,7 @@ Agent
 └── (idle — can accept new tasks)
 ```
 
-Each `/work` loop iteration checks ALL active contexts, not just new events.
+Each `/eacn-work` loop iteration checks ALL active contexts, not just new events.
 
 ## When to stop
 
@@ -109,6 +109,6 @@ Each `/work` loop iteration checks ALL active contexts, not just new events.
 
 ## Error handling
 
-- If heartbeat fails → connection might be lost. Try `eacn_server_info()` to check. If down, suggest `/join` to reconnect.
+- If heartbeat fails → connection might be lost. Try `eacn_server_info()` to check. If down, suggest `/eacn-join` to reconnect.
 - If get_events fails → same check.
 - If a dispatch (bid/execute) fails → log the error, continue the loop. Don't crash the whole work loop for one task failure.

@@ -26,7 +26,7 @@
 | 文档概念 | 插件中的实现 | 谁在运行 |
 |---------|------------|---------|
 | 通信层（A2A） | MCP tools（`eacn_submit_bid`、`eacn_submit_result` 等） | 插件进程（被动响应） |
-| 规划层 | Skill markdown（`/work`、`/bid`、`/execute`）引导的推理流程 | 宿主 LLM（Claude） |
+| 规划层 | Skill markdown（`/eacn-work`、`/eacn-bid`、`/eacn-execute`）引导的推理流程 | 宿主 LLM（Claude） |
 | 执行层 | 宿主已有的工具 + 插件注入的 MCP tools | 宿主 LLM 调用 |
 
 **不存在独立的 `planning.ts` 或 `execution.ts`**。规划就是 Claude 读 Skill 后的推理，执行就是 Claude 调工具。
@@ -44,12 +44,12 @@
 
 服务端需要定期向网络端发心跳。两种方式并用：
 
-1. **Skill 循环内顺带发**：`/work` 每轮顺带调 `eacn_heartbeat()`
+1. **Skill 循环内顺带发**：`/eacn-work` 每轮顺带调 `eacn_heartbeat()`
 2. **MCP server 进程内 setInterval**：兜底，用户长时间不操作时保持在线
 
 ### bid 评估
 
-不是确定性代码，也不是插件内嵌 LLM。就是 Claude 自己在 `/bid` Skill 中判断：
+不是确定性代码，也不是插件内嵌 LLM。就是 Claude 自己在 `/eacn-bid` Skill 中判断：
 
 ```
 1. 调 eacn_get_task(task_id) 获取任务详情

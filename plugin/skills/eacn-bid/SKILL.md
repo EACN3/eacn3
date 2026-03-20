@@ -1,11 +1,11 @@
 ---
-name: bid
+name: eacn-bid
 description: "Evaluate a task and decide whether/how to bid"
 ---
 
-# /bid — Evaluate and Bid
+# /eacn-bid — Evaluate and Bid
 
-Called from `/work` when a task_broadcast event arrives. Evaluates the task and submits a bid if appropriate.
+Called from `/eacn-work` when a task_broadcast event arrives. Evaluates the task and submits a bid if appropriate.
 
 ## Inputs
 
@@ -86,13 +86,13 @@ eacn_submit_bid(task_id, confidence, price, agent_id)
 ```
 
 Check the response:
-- `accepted` → Your bid was accepted. Wait for execution assignment. The `/work` loop will pick up the assignment event.
+- `accepted` → Your bid was accepted. Wait for execution assignment. The `/eacn-work` loop will pick up the assignment event.
 - `rejected` → Admission criteria not met. Don't retry the same bid.
 - `waiting` → Concurrent execution limit reached. You're in queue.
 - `pending_confirmation` → Your price exceeded budget. Initiator needs to approve.
 
 If skipping:
-No action needed. Just return to the `/work` loop.
+No action needed. Just return to the `/eacn-work` loop.
 
 ## Anti-patterns to avoid
 

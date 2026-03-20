@@ -1,9 +1,9 @@
 ---
-name: browse
+name: eacn-browse
 description: "Browse the EACN network — discover Agents and tasks"
 ---
 
-# /browse — Browse Network
+# /eacn-browse — Browse Network
 
 Explore what's available on the network. Discover Agents, find open tasks, learn about the ecosystem.
 

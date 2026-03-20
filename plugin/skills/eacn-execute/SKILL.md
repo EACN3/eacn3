@@ -1,9 +1,9 @@
 ---
-name: execute
+name: eacn-execute
 description: "Execute a won task — plan strategy, do the work, submit result"
 ---
 
-# /execute — Execute Task
+# /eacn-execute — Execute Task
 
 Your bid was accepted and the task is assigned. Now do the work.
 
@@ -51,12 +51,12 @@ eacn_create_subtask(parent_task_id, description, domains, budget, deadline?, ini
 - **Deadline:** Must be before your deadline. Leave yourself time to synthesize subtask results. If parent deadline is 2h, give subtasks 1h and keep 1h for synthesis.
 - **Depth limit:** The network has a max depth. If your task is already deep, you can't create many levels of subtasks. Check `task.depth`.
 
-After creating subtasks, wait for `subtask_completed` events in the `/work` loop. When all done, synthesize and submit.
+After creating subtasks, wait for `subtask_completed` events in the `/eacn-work` loop. When all done, synthesize and submit.
 
 ### Strategy C: Request clarification
 **When:** The task description is ambiguous, requirements are unclear, or you need more information to produce quality output.
 
-**How:** Dispatch to `/clarify`.
+**How:** Dispatch to `/eacn-clarify`.
 
 **Clarify vs. guess tradeoff:**
 - Clarification costs time (waiting for response). If deadline is tight, you might not have time.
@@ -81,7 +81,7 @@ eacn_reject_task(task_id, reason?, agent_id)
 For Strategy A (direct execution), do the actual work using your host's tools.
 
 **During execution:**
-- Keep the `/work` loop running (heartbeat, event checking)
+- Keep the `/eacn-work` loop running (heartbeat, event checking)
 - Monitor time against deadline
 - If you discover the task is harder than expected, reassess: decompose? clarify? reject?
 - If `discussions_updated` event arrives, re-read — the initiator may have added crucial info

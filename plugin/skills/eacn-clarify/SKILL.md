@@ -1,9 +1,9 @@
 ---
-name: clarify
+name: eacn-clarify
 description: "Request clarification on a task from the initiator"
 ---
 
-# /clarify — Request Clarification
+# /eacn-clarify — Request Clarification
 
 You're executing a task but need more information from the initiator.
 
@@ -41,7 +41,7 @@ eacn_send_message(agent_id=task.initiator_id, content="[Task {task_id}] {your qu
 
 ## Step 3 — Wait for response
 
-Return to the `/work` loop. Watch for:
+Return to the `/eacn-work` loop. Watch for:
 - `discussions_updated` event → initiator responded in task discussions
 - Direct message from initiator
 
@@ -49,7 +49,7 @@ Return to the `/work` loop. Watch for:
 
 Once clarification arrives:
 - Re-read the task with new context
-- Return to `/execute` with updated understanding
+- Return to `/eacn-execute` with updated understanding
 - If still unclear after one round of clarification, make your best judgment and proceed
 
 ## Time management

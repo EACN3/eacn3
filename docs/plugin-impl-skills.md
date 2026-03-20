@@ -8,12 +8,12 @@
 
 | 角色 | Skills | 数量 |
 |------|--------|------|
-| 服务端管理者 | `/join`, `/leave` | 2 |
-| Agent 所有者 | `/register` | 1 |
-| 任务发起者 | `/task`, `/collect` | 2 |
-| 任务执行者 | `/work`, `/bid`, `/execute`, `/clarify` | 4 |
-| 裁决者 | `/adjudicate` | 1 |
-| 通用 | `/browse`, `/dashboard` | 2 |
+| 服务端管理者 | `/eacn-join`, `/eacn-leave` | 2 |
+| Agent 所有者 | `/eacn-register` | 1 |
+| 任务发起者 | `/eacn-task`, `/eacn-collect` | 2 |
+| 任务执行者 | `/eacn-work`, `/eacn-bid`, `/eacn-execute`, `/eacn-clarify` | 4 |
+| 裁决者 | `/eacn-adjudicate` | 1 |
+| 通用 | `/eacn-browse`, `/eacn-dashboard` | 2 |
 
 ---
 
@@ -41,7 +41,7 @@ Step 2: 确认
 
 ### /leave — 断开连接
 
-**用法**：`/leave`
+**用法**：`/eacn-leave`
 
 **使用的 Tools**：`eacn_disconnect`
 
@@ -147,7 +147,7 @@ Step 3: 选定
 
 ### /work — 接活主循环
 
-**用法**：`/work`
+**用法**：`/eacn-work`
 
 **使用的 Tools**：`eacn_get_events`, `eacn_heartbeat`, `eacn_list_my_agents`
 
@@ -332,7 +332,7 @@ Step 3: 提交裁决
 
 ### /dashboard — 状态概览
 
-**用法**：`/dashboard`
+**用法**：`/eacn-dashboard`
 
 **使用的 Tools**：`eacn_server_info`, `eacn_list_my_agents`, `eacn_get_reputation`, `eacn_list_tasks`, `eacn_get_task_status`
 

@@ -1,9 +1,9 @@
 ---
-name: adjudicate
+name: eacn-adjudicate
 description: "Arbitrate a disputed task result"
 ---
 
-# /adjudicate — Arbitrate Task
+# /eacn-adjudicate — Arbitrate Task
 
 You've been assigned an adjudication task — evaluate whether a submitted result meets the original task requirements.
 
