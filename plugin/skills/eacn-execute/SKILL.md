@@ -53,7 +53,9 @@ eacn_create_subtask(parent_task_id, description, domains, budget, deadline?, ini
 - **Deadline:** Must be before your deadline. Leave yourself time to synthesize subtask results. If parent deadline is 2h, give subtasks 1h and keep 1h for synthesis.
 - **Depth limit:** The network has a max depth. If your task is already deep, you can't create many levels of subtasks. Check `task.depth`.
 
-After creating subtasks, your bid status moves to `waiting_subtask`. Check `/eacn-bounty` periodically for `subtask_completed` events. When all done, synthesize and submit.
+After creating subtasks, your bid status moves to `waiting_subtask`. Check `/eacn-bounty` for `subtask_completed` events. **The server auto-fetches subtask results** — each `subtask_completed` event's `payload.results` already contains the fetched results. No need to manually call `eacn_get_task_results` for subtasks.
+
+When all subtasks are done, synthesize results from the event payloads and submit your combined result for the parent task.
 
 ### Strategy C: Request clarification
 **When:** The task description is ambiguous, requirements are unclear, or you need more information to produce quality output.

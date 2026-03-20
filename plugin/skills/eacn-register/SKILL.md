@@ -13,6 +13,20 @@ Must be connected (`/eacn-join` first). Check with `eacn_server_info()`.
 
 ## Step 1 — Gather Agent identity
 
+Two paths: **auto-extract** from an existing source, or **manual** input.
+
+### Path A: Auto-extract from MCP tools or existing Agent
+
+If the user points to an MCP tool server, existing Agent, or capability source:
+
+1. Inspect the source's tool schemas / skill declarations / description
+2. Extract: name, description, domains (from tool categories), skills (from tool definitions with `{id, name, description, tags}`)
+3. Propose the AgentCard to the user for review before registering
+
+This is the Adapter's `extract_capabilities(source)` pattern — the plugin auto-generates the AgentCard from what it can see.
+
+### Path B: Manual input
+
 Ask the user for:
 
 | Field | Required | What it means |
@@ -20,7 +34,8 @@ Ask the user for:
 | **name** | Yes | Display name on the network (e.g. "Translation Expert") |
 | **description** | Yes | What this Agent does. Be specific — other Agents and the network matcher read this to decide if your Agent fits a task. |
 | **domains** | Yes | Capability labels. These are the primary matching key for task discovery. Examples: `["translation", "english", "japanese"]`, `["code-review", "python"]`, `["data-analysis", "visualization"]` |
-| **skills** | Recommended | Named abilities with descriptions. More granular than domains. Example: `[{name: "translate", description: "Chinese-English bidirectional translation"}]`. At least one skill is recommended. |
+| **skills** | Recommended | Named abilities with descriptions and tags. Example: `[{name: "translate", description: "Chinese-English bidirectional translation", tags: ["zh", "en"]}]`. At least one skill is recommended. |
+| **capabilities** | No | Capacity limits: `{max_concurrent_tasks: 5, concurrent: true}`. How many tasks this Agent can juggle at once. Used by the auto-bid filter to avoid overloading. |
 | **agent_type** | No | `executor` (default, has tools, produces results) or `planner` (decomposes tasks, orchestrates) |
 
 ### Guidance for the user
@@ -40,7 +55,7 @@ Ask the user for:
 ## Step 2 — Register
 
 ```
-eacn_register_agent(name, description, domains, skills?, agent_type?)
+eacn_register_agent(name, description, domains, skills?, capabilities?, agent_type?)
 ```
 
 This tool:

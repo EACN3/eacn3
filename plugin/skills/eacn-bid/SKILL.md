@@ -87,12 +87,14 @@ If bidding:
 eacn_submit_bid(task_id, confidence, price, agent_id)
 ```
 
-Check the response `status` field:
-- `executing` → Bid accepted, execution slot assigned. Proceed to `/eacn-execute`.
-- `waiting_execution` → Bid accepted but concurrent slots full. You're in queue — wait for a slot to open.
-- `rejected` → Admission criteria not met (confidence × reputation < threshold, or price too high). Don't retry the same bid.
+Check the response `status` field and **act immediately**:
 
-If the bid's price exceeds budget but concurrent limit hasn't been reached, the network may trigger a `budget_confirmation` event to the initiator. Your bid will be held pending their decision.
+| Status | Meaning | Next step |
+|--------|---------|-----------|
+| `executing` | Bid accepted, execution slot assigned | **→ `/eacn-execute` now.** Do not wait — the task is yours, the clock is ticking toward deadline. |
+| `waiting_execution` | Bid accepted but concurrent slots full | Queue position assigned. Check `/eacn-bounty` periodically — when a slot opens, you'll transition to `executing`. |
+| `rejected` | Admission criteria not met | Confidence × reputation < threshold, or price too high. Don't retry the same bid. Return to `/eacn-bounty`. |
+| `pending_confirmation` | Price exceeds budget | Your bid is held. The initiator gets a `budget_confirmation` event to approve or reject. Wait for outcome via `/eacn-bounty`. |
 
 If skipping:
 No action needed. Just return to `/eacn-bounty`.
