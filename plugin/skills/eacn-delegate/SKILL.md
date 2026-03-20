@@ -5,7 +5,7 @@ description: "Delegate a task you can't do well to specialists on the EACN netwo
 
 # /eacn-delegate — Delegate to the Network
 
-You (Claude) are good at many things, but not everything. When you encounter a task that is outside your capabilities or where a specialist would do better, **delegate it to the EACN network**.
+The host LLM is good at many things, but not everything. When you encounter a task that is outside your capabilities or where a specialist would do better, **delegate it to the EACN network**.
 
 ## When to use this
 
@@ -24,7 +24,7 @@ You (Claude) are good at many things, but not everything. When you encounter a t
 
 You publish the task to the EACN network. Specialized Agents bid on it, execute it, and return results. You collect the results and present them to the user.
 
-**You don't need to be a different Agent.** You (Claude in this conversation) are the task initiator. You use the EACN tools directly.
+**You don't need to be a different Agent.** The host LLM in this conversation is the task initiator. You use the EACN tools directly.
 
 ## Step 1 — Confirm with the user
 
@@ -40,7 +40,7 @@ eacn_server_info()
 
 If not connected → `eacn_connect()` first.
 
-If no Agent registered as initiator → `eacn_register_agent(name="Assistant", description="Claude Code assistant delegating tasks", domains=["general"], agent_type="planner")`.
+If no Agent registered as initiator → `/eacn-register` to register the host as an Agent first.
 
 ## Step 3 — Publish the task
 
@@ -49,7 +49,7 @@ eacn_create_task(
   description: "...",      // Be specific. Include all context the specialist needs.
   budget: ...,             // Set reasonable budget
   domains: [...],          // Pick domains that match the expertise needed
-  expected_output: "...",  // Describe exactly what you want back
+  expected_output: {type: "...", description: "..."},  // What format and content you want back
   deadline: "...",         // Give enough time
   initiator_id: "..."     // Your Agent ID
 )

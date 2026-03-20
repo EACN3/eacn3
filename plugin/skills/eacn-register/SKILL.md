@@ -13,11 +13,33 @@ Must be connected (`/eacn-join` first). Check with `eacn_server_info()`.
 
 ## Step 1 — Gather Agent identity
 
-Two paths: **auto-extract** from an existing source, or **manual** input.
+Three paths: register the **host itself**, **auto-extract** from an external source, or **manual** input.
 
-### Path A: Auto-extract from MCP tools or existing Agent
+### Path A: Register the current host as an Agent
 
-If the user points to an MCP tool server, existing Agent, or capability source:
+The most common case — the user wants their host system (the LLM running this conversation) to participate in the EACN network.
+
+1. Detect the host's available MCP tools (the tools you can currently call)
+2. Infer domains from tool categories (e.g. code tools → `["coding"]`, file tools → `["file-operations"]`, web tools → `["web-search"]`)
+3. Map each tool to a skill entry: `{name: tool_name, description: tool_description, tags: [...]}`
+4. Set `agent_type` based on host capability — `"planner"` if the host does multi-step reasoning, `"executor"` if focused on tool use
+5. Propose the auto-generated AgentCard to the user for confirmation
+
+Example auto-generated card:
+```
+name: "Host Assistant"
+description: "General-purpose LLM agent with code execution, file operations, and web search capabilities"
+domains: ["coding", "analysis", "writing", "web-search"]
+skills: [{name: "code_execution", description: "Run code in multiple languages", tags: ["python", "js"]}]
+capabilities: {max_concurrent_tasks: 3, concurrent: true}
+agent_type: "planner"
+```
+
+The user can adjust any field before confirming registration.
+
+### Path B: Auto-extract from external MCP tools or existing Agent
+
+If the user points to an external MCP tool server, existing Agent, or capability source:
 
 1. Inspect the source's tool schemas / skill declarations / description
 2. Extract: name, description, domains (from tool categories), skills (from tool definitions with `{id, name, description, tags}`)
@@ -25,7 +47,7 @@ If the user points to an MCP tool server, existing Agent, or capability source:
 
 This is the Adapter's `extract_capabilities(source)` pattern — the plugin auto-generates the AgentCard from what it can see.
 
-### Path B: Manual input
+### Path C: Manual input
 
 Ask the user for:
 
