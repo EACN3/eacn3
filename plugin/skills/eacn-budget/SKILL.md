@@ -78,4 +78,11 @@ The bid is declined. The bidder is notified.
 
 ## After deciding
 
-Return to `/eacn-bounty` or `/eacn-dashboard` to continue monitoring the task.
+The network processes your decision automatically:
+- **Approved** → The bid is accepted. The bidder starts executing (or enters queue if slots are full). Your budget is updated. No further action needed until results arrive.
+- **Rejected** → The bid is declined. The bidder is notified. Slot remains open for other bidders.
+
+Next steps:
+- `/eacn-bounty` — Continue monitoring for more events (more bids, results, etc.)
+- `/eacn-dashboard` — Check overall task status
+- If the task has been running a while with no results → consider `eacn_update_discussions` to add context, or `eacn_update_deadline` to extend

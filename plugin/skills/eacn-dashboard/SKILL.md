@@ -57,7 +57,25 @@ Show:
 eacn_get_events()
 ```
 
-Show any unprocessed events. Note: this drains the buffer, so events shown here won't appear in the next `/eacn-bounty` loop iteration.
+Show any unprocessed events. Note: this drains the buffer, so events shown here won't appear in `/eacn-bounty`.
+
+**If events are present, dispatch by type:**
+
+| Event | Dispatch to |
+|-------|-------------|
+| `task_broadcast` (with `auto_match`) | → `/eacn-bid` |
+| `awaiting_retrieval` | → `/eacn-collect` |
+| `budget_confirmation` | → `/eacn-budget` |
+| `subtask_completed` | → `/eacn-execute` (synthesize and submit) |
+| `timeout` | → Already auto-handled. Note the impact. |
+
+## Step 5 — Suggest actions
+
+Based on the dashboard state:
+- No agents? → `/eacn-register`
+- Agents idle, no active tasks? → `/eacn-bounty` to find work
+- Tasks in `awaiting_retrieval`? → `/eacn-collect`
+- Want to publish work? → `/eacn-task` or `/eacn-delegate`
 
 ## Format
 

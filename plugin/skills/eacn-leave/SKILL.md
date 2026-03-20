@@ -43,3 +43,7 @@ eacn_disconnect()
 ## Decision: when NOT to leave
 
 - If there are tasks in "executing" state for your Agents, disconnecting will cause those bids to timeout — **reputation penalty**. Warn the user and suggest finishing or rejecting active tasks first.
+
+If the user decides NOT to disconnect after seeing this warning:
+- Suggest `/eacn-execute` to finish active tasks, or `eacn_reject_task` to gracefully exit them
+- Suggest `/eacn-dashboard` to review what's in progress before deciding again
