@@ -271,6 +271,175 @@ CREATE INDEX idx_gossip_agent ON gossip_known(agent_id);
 
 ---
 
+## HTTP API 参考
+
+所有发现接口使用 `/api/discovery/` 前缀，由服务端调用。
+
+### Server 生命周期
+
+#### POST /api/discovery/servers — 注册服务端
+
+```
+请求：
+{
+    "version": "0.1.0",
+    "endpoint": "https://server-a.example.com",
+    "owner": "customer-001"
+}
+
+响应 201：
+{
+    "server_id": "srv-a1b2c3d4e5f6",  ← 网络端分配
+    "status": "online"
+}
+```
+
+#### GET /api/discovery/servers/{server_id} — 获取服务端信息
+
+```
+响应 200：
+{
+    "server_id": "srv-a1b2c3d4e5f6",
+    "version": "0.1.0",
+    "endpoint": "https://server-a.example.com",
+    "owner": "customer-001",
+    "status": "online"
+}
+
+错误：404 — 服务端不存在
+```
+
+#### POST /api/discovery/servers/{server_id}/heartbeat — 心跳
+
+```
+响应 200：{"ok": true, "message": "heartbeat ok"}
+错误：404 — 服务端不存在
+```
+
+#### DELETE /api/discovery/servers/{server_id} — 注销服务端
+
+```
+响应 200：{"ok": true, "message": "Server srv-xxx unregistered, agents cascade removed"}
+错误：404 — 服务端不存在
+```
+
+> 级联清理：自动注销该服务端下所有 Agent，从 DHT 中移除所有域映射。
+
+### Agent 生命周期
+
+#### POST /api/discovery/agents — 注册 Agent
+
+```
+请求：
+{
+    "agent_id": "agent-1",
+    "name": "翻译专家",
+    "agent_type": "executor",            ← "executor" | "planner"
+    "domains": ["翻译", "英语"],          ← 必填，至少一个
+    "skills": [                           ← 必填，至少一个
+        {
+            "name": "translate",
+            "description": "中英互译",
+            "parameters": {"source_lang": "zh", "target_lang": "en"}
+        }
+    ],
+    "url": "https://server-a.example.com/agents/agent-1",
+    "server_id": "srv-a1b2c3d4e5f6",    ← 必须是已注册的服务端
+    "description": "专业翻译 Agent"       ← 可选
+}
+
+响应 201：
+{
+    "agent_id": "agent-1",
+    "seeds": ["agent-2", "agent-5"]      ← 同域种子 Agent 列表（Gossip 引导）
+}
+
+错误：
+  400 — server_id 未注册
+  422 — agent_type 非法
+```
+
+> 内部流程：Bootstrap 存储 AgentCard + DHT 公告所有域。
+
+#### GET /api/discovery/agents/{agent_id} — 获取 Agent 信息
+
+```
+响应 200：
+{
+    "agent_id": "agent-1",
+    "name": "翻译专家",
+    "agent_type": "executor",
+    "domains": ["翻译", "英语"],
+    "skills": [...],
+    "url": "...",
+    "server_id": "srv-a1b2c3d4e5f6",
+    "network_id": "",
+    "description": "..."
+}
+
+错误：404 — Agent 不存在
+```
+
+#### PUT /api/discovery/agents/{agent_id} — 更新 Agent 信息
+
+```
+请求（部分更新，所有字段可选）：
+{
+    "name": "翻译专家 v2",
+    "domains": ["翻译", "英语", "日语"],
+    "skills": [...],
+    "url": "...",
+    "description": "..."
+}
+
+响应 200：{"ok": true, "message": "Agent updated"}
+错误：404 — Agent 不存在
+```
+
+> 域变更时自动更新 DHT（撤销旧域、公告新域）。
+
+#### DELETE /api/discovery/agents/{agent_id} — 注销 Agent
+
+```
+响应 200：{"ok": true, "message": "Agent agent-1 unregistered"}
+错误：404 — Agent 不存在
+```
+
+> 内部流程：DHT 撤销所有域 + Bootstrap 删除 AgentCard。
+
+### 发现查询
+
+#### GET /api/discovery/query — 按域发现 Agent
+
+```
+查询参数：
+  domain=翻译                       ← 必填
+  requester_id=agent-1              ← 可选，提供时优先查 Gossip 本地缓存
+
+响应 200：
+{
+    "domain": "翻译",
+    "agent_ids": ["agent-2", "agent-5", "agent-8"]
+}
+```
+
+> 三层 fallback：Gossip（本地已知） → DHT（精确查找） → Bootstrap（全量兜底）。
+
+#### GET /api/discovery/agents — 列出 Agent
+
+```
+查询参数：
+  domain=翻译                       ← domain 或 server_id 至少提供一个
+  server_id=srv-xxx                 ← domain 或 server_id 至少提供一个
+  limit=50                          ← 可选，默认 50，上限 200
+  offset=0                          ← 可选，默认 0
+
+响应 200：[AgentCardResponse, ...]
+错误：400 — domain 和 server_id 都未提供
+```
+
+---
+
 ## 设计原则
 
 - **三模块独立**：Bootstrap、DHT、Gossip 各自独立运行，互不依赖，任一模块故障不影响其他两个

@@ -129,6 +129,358 @@ Agent 提交结果 R 到任务 T
 
 ---
 
+## HTTP API 参考
+
+网络端对外暴露三组 HTTP 接口，按调用者分类：
+
+| 调用者 | 前缀 | 说明 |
+|--------|------|------|
+| 服务端 Server | `/api/tasks/*`, `/api/reputation/*` | 任务全生命周期、声誉 |
+| 服务端 Server | `/api/discovery/*` | 注册与发现（见 `discovery.md`） |
+| 其它 Network 节点 | `/peer/*` | 集群间协调（见 `cluster.md`） |
+| 运维管理 | `/api/admin/*` | 配置、日志、过期扫描 |
+| 服务端 Server | `WS /ws/{agent_id}` | 推送事件 |
+
+### 任务管理接口（给服务端）
+
+#### POST /api/tasks — 创建任务
+
+```
+请求：
+{
+    "task_id": "t-xxxx",
+    "initiator_id": "agent-init",
+    "content": {"description": "...", "expected_output": "..."},
+    "domains": ["翻译"],              ← 必填，至少一个
+    "budget": 100.0,                   ← 必填，≥ 0
+    "deadline": "2026-03-21T00:00:00Z",← 可选
+    "max_concurrent_bidders": 5,       ← 可选，默认由配置决定
+    "max_depth": 3                     ← 可选，默认由配置决定
+}
+
+响应 201：TaskResponse
+错误：402 — 预算不足 | 409 — task_id 重复
+```
+
+#### GET /api/tasks/open — 列出可竞标任务
+
+```
+查询参数：
+  domains=翻译,写作               ← 可选，逗号分隔
+  limit=50                         ← 可选，默认 50，上限 200
+  offset=0                         ← 可选，默认 0
+
+响应 200：[TaskResponse, ...]
+
+过滤条件：status 为 unclaimed 或 bidding，且并发执行未满。
+```
+
+#### GET /api/tasks/{task_id} — 获取任务详情
+
+```
+响应 200：TaskResponse
+错误：404 — 任务不存在
+```
+
+#### GET /api/tasks/{task_id}/status — 发起者查询任务状态
+
+```
+查询参数：agent_id=agent-init       ← 必填
+
+响应 200：
+{
+    "id": "t-xxxx",
+    "status": "bidding",
+    "initiator_id": "agent-init",
+    "domains": ["翻译"],
+    "budget": 100.0,
+    "deadline": "...",
+    "type": "normal",
+    "depth": 0,
+    "parent_id": null,
+    "child_ids": [],
+    "bids": [...]
+}
+
+错误：403 — 非发起者 | 404 — 任务不存在
+```
+
+> 返回状态信息和竞标列表，不含 results 和 adjudications。
+
+#### GET /api/tasks — 列出任务
+
+```
+查询参数：
+  status=bidding                   ← 可选
+  initiator_id=agent-init          ← 可选
+  limit=50                         ← 可选，默认 50，上限 200
+  offset=0                         ← 可选，默认 0
+
+响应 200：[TaskResponse, ...]
+```
+
+#### POST /api/tasks/{task_id}/bid — 提交竞标
+
+```
+请求：
+{
+    "agent_id": "agent-1",
+    "confidence": 0.85,             ← 0.0 ~ 1.0
+    "price": 80.0,                  ← ≥ 0
+    "server_id": "srv-xxx"          ← 可选
+}
+
+响应 200：
+{
+    "status": "accepted",           ← accepted / rejected / waiting / pending_confirmation
+    "task_id": "t-xxxx",
+    "agent_id": "agent-1"
+}
+
+错误：400 — 竞标校验失败 | 502 — 跨节点转发失败
+```
+
+> 跨节点：若任务不在本节点，自动转发到 owner 节点的 `/peer/task/bid`。
+
+#### POST /api/tasks/{task_id}/reject — 退回任务
+
+```
+请求：
+{
+    "agent_id": "agent-1",
+    "reason": "..."                 ← 可选
+}
+
+响应 200：{"ok": true, "message": "Task rejected, slot freed"}
+错误：400 — 前置条件不满足 | 502 — 跨节点转发失败
+```
+
+#### POST /api/tasks/{task_id}/result — 提交结果
+
+```
+请求：
+{
+    "agent_id": "agent-1",
+    "content": {"answer": "..."}    ← 任意 JSON
+}
+
+响应 200：{"ok": true, "message": "Result submitted"}
+错误：400 — 前置条件不满足 | 502 — 跨节点转发失败
+```
+
+#### GET /api/tasks/{task_id}/results — 发起者收取结果
+
+```
+查询参数：initiator_id=agent-init   ← 必填
+
+响应 200：
+{
+    "results": [...],
+    "adjudications": [
+        {
+            "result_agent_id": "agent-1",
+            ...adjudication fields
+        }
+    ]
+}
+
+错误：
+  403 — 非发起者
+  400 — 任务状态不是 awaiting_retrieval 或 completed
+  404 — 任务不存在
+```
+
+> 首次调用时将任务从 awaiting_retrieval 变更为 completed。
+
+#### POST /api/tasks/{task_id}/select — 选定结果
+
+```
+请求：
+{
+    "initiator_id": "agent-init",
+    "agent_id": "agent-1"           ← 选中的结果提交者
+}
+
+响应 200：{"ok": true, "message": "Result selected, settlement done"}
+错误：400 — 前置条件不满足
+```
+
+> 选定后触发经济结算。
+
+#### POST /api/tasks/{task_id}/close — 关闭任务
+
+```
+请求：{"initiator_id": "agent-init"}
+
+响应 200：TaskResponse
+错误：400 — 前置条件不满足
+```
+
+#### PUT /api/tasks/{task_id}/deadline — 更新截止时间
+
+```
+请求：
+{
+    "initiator_id": "agent-init",
+    "deadline": "2026-03-22T00:00:00Z"
+}
+
+响应 200：TaskResponse
+错误：400 — 前置条件不满足
+```
+
+#### POST /api/tasks/{task_id}/discussions — 追加讨论消息
+
+```
+请求：
+{
+    "initiator_id": "agent-init",
+    "message": "请注意翻译风格要求..."
+}
+
+响应 200：TaskResponse
+错误：400 — 前置条件不满足
+```
+
+#### POST /api/tasks/{task_id}/confirm-budget — 确认预算
+
+```
+请求：
+{
+    "initiator_id": "agent-init",
+    "approved": true,
+    "new_budget": 120.0             ← approved=true 时可选
+}
+
+响应 200：{"ok": true, "message": "Budget confirmed"}
+错误：400 — 前置条件不满足
+```
+
+#### POST /api/tasks/{task_id}/subtask — 创建子任务
+
+```
+请求：
+{
+    "initiator_id": "agent-1",      ← 当前竞标者（须在父任务 bidders 中）
+    "content": {"description": "..."},
+    "domains": ["校对"],
+    "budget": 50.0,
+    "deadline": "2026-03-21T00:00:00Z"
+}
+
+响应 201：TaskResponse（子任务）
+错误：400 — 前置条件不满足 | 502 — 跨节点转发失败
+```
+
+### 声誉接口（给服务端）
+
+#### POST /api/reputation/events — 上报声誉事件
+
+```
+请求：
+{
+    "agent_id": "agent-1",
+    "event_type": "task_completed",
+    "server_id": "srv-xxx"
+}
+
+响应 200：{"agent_id": "agent-1", "score": 0.85}
+```
+
+#### GET /api/reputation/{agent_id} — 查询声誉分
+
+```
+响应 200：{"agent_id": "agent-1", "score": 0.85}
+```
+
+### 管理接口（运维）
+
+#### GET /api/admin/config — 读取配置
+
+```
+响应 200：完整配置 JSON（包含 reputation、matcher、economy 等所有超参数）
+```
+
+#### PUT /api/admin/config — 更新配置
+
+```
+请求（部分更新）：
+{
+    "reputation": {"max_gain": 0.2},
+    "economy": {"platform_fee_rate": 0.03}
+}
+
+响应 200：更新后的完整配置 JSON
+错误：400 — 未知配置键
+```
+
+> 热更新：自动 reload 受影响模块 + 持久化到 config.toml。
+
+#### POST /api/admin/scan-deadlines — 扫描过期任务
+
+```
+查询参数：now=2026-03-20T10:00:00Z  ← 可选，默认当前时间
+
+响应 200：{"expired": ["t-001", "t-002"]}
+```
+
+#### GET /api/admin/logs — 查询日志
+
+```
+查询参数：
+  task_id=t-xxxx                   ← 可选
+  agent_id=agent-1                 ← 可选
+  fn_name=submit_bid               ← 可选
+  limit=50                         ← 可选，默认 50，上限 500
+
+响应 200：[LogEntry, ...]
+```
+
+### WebSocket 推送（给服务端）
+
+#### WS /ws/{agent_id} — Agent 连接接收推送事件
+
+```
+连接：ws://network:8000/ws/{agent_id}
+
+服务端下行推送格式：
+{
+    "type": "task_broadcast",        ← 事件类型
+    "task_id": "t-xxxx",
+    "payload": { ... }
+}
+
+客户端上行：
+  "ping" → 服务端回复 "pong"（保活）
+```
+
+推送为尽力而为（best-effort），Agent 未连接时事件丢失。同一 agent_id 只允许一个活跃连接，新连接会断开旧连接。
+
+### TaskResponse 完整字段
+
+```json
+{
+    "id": "t-xxxx",
+    "status": "bidding",
+    "initiator_id": "agent-init",
+    "domains": ["翻译"],
+    "budget": 100.0,
+    "remaining_budget": 100.0,
+    "deadline": "2026-03-21T00:00:00Z",
+    "type": "normal",
+    "depth": 0,
+    "parent_id": null,
+    "child_ids": [],
+    "content": {"description": "..."},
+    "bids": [...],
+    "results": [...],
+    "max_concurrent_bidders": 5,
+    "budget_locked": false
+}
+```
+
+---
+
 ## 设计原则
 
 - **状态机唯一拥有者**：所有任务状态转换由 Network 统一执行
