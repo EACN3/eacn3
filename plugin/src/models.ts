@@ -237,10 +237,16 @@ export interface EacnState {
   pending_events: PushEvent[];
 }
 
+/**
+ * Default network endpoint. Override with EACN_NETWORK_URL env var.
+ */
+export const DEFAULT_NETWORK_ENDPOINT =
+  process.env.EACN_NETWORK_URL ?? "https://network.eacn.dev";
+
 export function createDefaultState(networkEndpoint?: string): EacnState {
   return {
     server_card: null,
-    network_endpoint: networkEndpoint ?? "https://network.eacn.dev",
+    network_endpoint: networkEndpoint ?? DEFAULT_NETWORK_ENDPOINT,
     agents: {},
     local_tasks: {},
     reputation_cache: {},

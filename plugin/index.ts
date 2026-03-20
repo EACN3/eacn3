@@ -5,7 +5,7 @@
  * All logic delegates to the same src/ modules.
  */
 
-import { type AgentCard, type PushEvent } from "./src/models.js";
+import { type AgentCard, type PushEvent, DEFAULT_NETWORK_ENDPOINT } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
 import * as ws from "./src/ws-manager.js";
@@ -130,11 +130,11 @@ export default function (api: any) {
     parameters: {
       type: "object",
       properties: {
-        network_endpoint: { type: "string", description: "Network URL. Defaults to https://network.eacn.dev" },
+        network_endpoint: { type: "string", description: `Network URL. Defaults to ${DEFAULT_NETWORK_ENDPOINT}` },
       },
     },
     async execute(_id: string, params: any) {
-      const endpoint = params.network_endpoint ?? "https://network.eacn.dev";
+      const endpoint = params.network_endpoint ?? DEFAULT_NETWORK_ENDPOINT;
       const s = state.getState();
       s.network_endpoint = endpoint;
       const res = await net.registerServer("0.1.0", "plugin://local", "plugin-user");
