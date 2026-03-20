@@ -20,7 +20,7 @@ function check(label, fn) {
   }
 }
 
-console.log('\neacn-plugin postinstall\n');
+console.log('\neacn postinstall\n');
 
 let ok = true;
 
@@ -54,9 +54,9 @@ if (ok) {
   console.log('\n  All checks passed.\n');
 } else {
   console.log('\n  Some checks failed — the plugin may not work correctly.');
-  console.log('  Run "npx eacn-plugin diagnose" for details.\n');
+  console.log('  Run "npx eacn diagnose" for details.\n');
 }
 
 console.log('Next steps:');
-console.log('  npx eacn-plugin setup    — install into OpenClaw');
-console.log('  npx eacn-plugin diagnose — run full diagnostics\n');
+console.log('  npx eacn setup    — install into OpenClaw');
+console.log('  npx eacn diagnose — run full diagnostics\n');

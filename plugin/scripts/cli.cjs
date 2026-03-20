@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * cli.js — `eacn-plugin` CLI entry point
+ * cli.js — `eacn` CLI entry point
  * Usage:
- *   npx eacn-plugin setup     — configure OpenClaw native plugin
- *   npx eacn-plugin diagnose  — run diagnostics
+ *   npx eacn setup     — configure OpenClaw native plugin
+ *   npx eacn diagnose  — run diagnostics
  */
 
 const { spawnSync, execFileSync } = require('child_process');
@@ -60,7 +60,7 @@ function fail(msg){ console.log(`  ✗ ${msg}`); }
 // ── diagnose ──────────────────────────────────────────────────────────────────
 
 function diagnose() {
-  console.log('\neacn-plugin diagnostics\n');
+  console.log('\neacn diagnostics\n');
   let allOk = true;
 
   function check(label, fn) {
@@ -113,13 +113,13 @@ function diagnose() {
   // 3. OpenClaw installation
   console.log('\n── OpenClaw Integration ──');
   check('extensions directory', () => {
-    if (!fs.existsSync(EXT_DIR)) throw new Error(`${EXT_DIR} not found — run "npx eacn-plugin setup"`);
+    if (!fs.existsSync(EXT_DIR)) throw new Error(`${EXT_DIR} not found — run "npx eacn setup"`);
     const files = fs.readdirSync(EXT_DIR);
     return `${files.length} entries in ${EXT_DIR}`;
   });
   check('dist/index.js in extensions', () => {
     const p = path.join(EXT_DIR, 'dist', 'index.js');
-    if (!fs.existsSync(p)) throw new Error('not found — run "npx eacn-plugin setup" to copy');
+    if (!fs.existsSync(p)) throw new Error('not found — run "npx eacn setup" to copy');
     return 'exists';
   });
   check('openclaw.json plugin entry', () => {
@@ -140,7 +140,7 @@ function diagnose() {
   check('plugins.installs metadata', () => {
     const config = readJSON(CONFIG_PATH);
     const inst = config?.plugins?.installs?.[PLUGIN_ID];
-    if (!inst) throw new Error('no install entry — run "npx eacn-plugin setup"');
+    if (!inst) throw new Error('no install entry — run "npx eacn setup"');
     return `source=${inst.source} v=${inst.version} @ ${inst.installedAt}`;
   });
   check('skills.entries registration', () => {
@@ -176,7 +176,7 @@ function diagnose() {
     console.log('  All checks passed.\n');
   } else {
     console.log('  Some checks failed. Fix the issues above and re-run:\n');
-    console.log('    npx eacn-plugin diagnose\n');
+    console.log('    npx eacn diagnose\n');
   }
 
   return allOk;
@@ -185,7 +185,7 @@ function diagnose() {
 // ── setup ─────────────────────────────────────────────────────────────────────
 
 function setupOpenclaw() {
-  console.log('\neacn-plugin setup\n');
+  console.log('\neacn setup\n');
 
   // 1. Check dist exists
   const distSrc = path.join(PKG_ROOT, 'dist', 'index.js');
@@ -237,10 +237,10 @@ function setupOpenclaw() {
   }
 
   // Clean up stale extension directory from previous installs (used wrong name)
-  const staleDir = path.join(os.homedir(), '.openclaw', 'extensions', 'eacn-plugin');
+  const staleDir = path.join(os.homedir(), '.openclaw', 'extensions', 'eacn');
   if (staleDir !== EXT_DIR && fs.existsSync(staleDir)) {
     fs.rmSync(staleDir, { recursive: true, force: true });
-    ok('removed stale extensions/eacn-plugin directory');
+    ok('removed stale extensions/eacn directory');
   }
 
   // 3. Discover skills
@@ -259,12 +259,12 @@ function setupOpenclaw() {
   const config = readJSON(CONFIG_PATH);
   const pkg = readJSON(path.join(PKG_ROOT, 'package.json'));
 
-  // plugins — clean stale "eacn-plugin" entries from previous installs
+  // plugins — clean stale "eacn" entries from previous installs
   if (!config.plugins) config.plugins = {};
   if (!Array.isArray(config.plugins.allow)) config.plugins.allow = [];
-  config.plugins.allow = config.plugins.allow.filter(id => id !== 'eacn-plugin');
-  if (config.plugins.entries) delete config.plugins.entries['eacn-plugin'];
-  if (config.plugins.installs) delete config.plugins.installs['eacn-plugin'];
+  config.plugins.allow = config.plugins.allow.filter(id => id !== 'eacn');
+  if (config.plugins.entries) delete config.plugins.entries['eacn'];
+  if (config.plugins.installs) delete config.plugins.installs['eacn'];
 
   // plugins.allow
   if (!config.plugins.allow.includes(PLUGIN_ID)) {
@@ -326,7 +326,7 @@ switch (cmd) {
     break;
   default:
     console.log('Usage:');
-    console.log('  npx eacn-plugin setup     — install plugin into OpenClaw');
-    console.log('  npx eacn-plugin diagnose  — run full diagnostics');
+    console.log('  npx eacn setup     — install plugin into OpenClaw');
+    console.log('  npx eacn diagnose  — run full diagnostics');
     process.exit(0);
 }
