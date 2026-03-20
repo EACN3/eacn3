@@ -12,7 +12,8 @@ const fs = require('fs');
 const os = require('os');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
-const EXT_DIR = path.join(os.homedir(), '.openclaw', 'extensions', 'eacn-plugin');
+const PLUGIN_ID = 'eacn';
+const EXT_DIR = path.join(os.homedir(), '.openclaw', 'extensions', PLUGIN_ID);
 const CONFIG_PATH = path.join(os.homedir(), '.openclaw', 'openclaw.json');
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -124,8 +125,8 @@ function diagnose() {
   check('openclaw.json plugin entry', () => {
     if (!fs.existsSync(CONFIG_PATH)) throw new Error(`${CONFIG_PATH} not found`);
     const config = readJSON(CONFIG_PATH);
-    const entry = config?.plugins?.entries?.['eacn-plugin'];
-    if (!entry) throw new Error('no "eacn-plugin" entry in plugins.entries');
+    const entry = config?.plugins?.entries?.[PLUGIN_ID];
+    if (!entry) throw new Error(`no "${PLUGIN_ID}" entry in plugins.entries`);
     if (!entry.enabled) throw new Error('plugin is disabled');
     return 'enabled';
   });
@@ -133,12 +134,12 @@ function diagnose() {
     const config = readJSON(CONFIG_PATH);
     const allow = config?.plugins?.allow;
     if (!Array.isArray(allow)) throw new Error('plugins.allow is missing or not an array');
-    if (!allow.includes('eacn-plugin')) throw new Error('"eacn-plugin" not in plugins.allow');
+    if (!allow.includes(PLUGIN_ID)) throw new Error(`"${PLUGIN_ID}" not in plugins.allow`);
     return `[${allow.join(', ')}]`;
   });
   check('plugins.installs metadata', () => {
     const config = readJSON(CONFIG_PATH);
-    const inst = config?.plugins?.installs?.['eacn-plugin'];
+    const inst = config?.plugins?.installs?.[PLUGIN_ID];
     if (!inst) throw new Error('no install entry — run "npx eacn-plugin setup"');
     return `source=${inst.source} v=${inst.version} @ ${inst.installedAt}`;
   });
@@ -245,20 +246,20 @@ function setupOpenclaw() {
   // plugins.allow
   if (!config.plugins) config.plugins = {};
   if (!Array.isArray(config.plugins.allow)) config.plugins.allow = [];
-  if (!config.plugins.allow.includes('eacn-plugin')) {
-    config.plugins.allow.push('eacn-plugin');
+  if (!config.plugins.allow.includes(PLUGIN_ID)) {
+    config.plugins.allow.push(PLUGIN_ID);
   }
-  ok('plugins.allow: eacn-plugin added');
+  ok(`plugins.allow: ${PLUGIN_ID} added`);
 
   // plugins.entries
   merge(config, {
-    plugins: { entries: { 'eacn-plugin': { enabled: true, config: {} } } }
+    plugins: { entries: { [PLUGIN_ID]: { enabled: true, config: {} } } }
   });
-  ok('plugins.entries: eacn-plugin enabled');
+  ok(`plugins.entries: ${PLUGIN_ID} enabled`);
 
   // plugins.installs
   if (!config.plugins.installs) config.plugins.installs = {};
-  config.plugins.installs['eacn-plugin'] = {
+  config.plugins.installs[PLUGIN_ID] = {
     source: 'path',
     sourcePath: PKG_ROOT,
     installPath: EXT_DIR,
