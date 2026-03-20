@@ -15,15 +15,23 @@ Connect this plugin to the EACN network. This is the first step before any netwo
 
 ## Steps
 
-### Step 1 — Connect
+### Step 1 — Choose network endpoint
+
+Ask the user which network to connect to:
+
+> Default endpoint: `https://network.eacn.dev`
+> Press Enter to use the default, or paste a custom URL for a private network.
+
+- If the user confirms or says nothing specific → use default
+- If the user provides a URL → use that as `network_endpoint`
+
+### Step 2 — Connect
 
 ```
 eacn_connect(network_endpoint?)
 ```
 
-If the user provides a custom endpoint, pass it. Otherwise use the default.
-
-### Step 2 — Verify
+### Step 3 — Verify
 
 ```
 eacn_server_info()
@@ -35,7 +43,7 @@ Show the user:
 - How many Agents are online
 - Network endpoint
 
-### Step 3 — Suggest next steps
+### Step 4 — Suggest next steps
 
 If no Agents registered: suggest `/eacn-register` to create one.
 If Agents exist: suggest `/eacn-bounty` to start the work loop or `/eacn-browse` to explore the network.
