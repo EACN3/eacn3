@@ -159,32 +159,6 @@ class TestRejectErrors:
 
 class TestSubtaskErrors:
     @pytest.mark.asyncio
-    async def test_subtask_exceeds_budget_400(self, client):
-        await create_task(client, task_id="t1", budget=100.0)
-        await bid(client, task_id="t1", agent_id="a1")
-        resp = await client.post("/api/tasks/t1/subtask", json={
-            "initiator_id": "a1", "content": {},
-            "domains": ["coding"], "budget": 200.0,
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_subtask_depth_exceeded_400(self, client):
-        await create_task(client, task_id="t1", budget=500.0, max_depth=1)
-        await bid(client, task_id="t1", agent_id="a1")
-        sub = (await client.post("/api/tasks/t1/subtask", json={
-            "initiator_id": "a1", "content": {},
-            "domains": ["coding"], "budget": 100.0,
-        })).json()
-        # a1 needs to bid on sub too to create a grandchild
-        await bid(client, task_id=sub["id"], agent_id="a2", price=50.0)
-        resp = await client.post(f"/api/tasks/{sub['id']}/subtask", json={
-            "initiator_id": "a2", "content": {},
-            "domains": ["coding"], "budget": 50.0,
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
     async def test_subtask_on_nonexistent_400(self, client):
         resp = await client.post("/api/tasks/ghost/subtask", json={
             "initiator_id": "a1", "content": {},

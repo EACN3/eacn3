@@ -15,11 +15,6 @@ Covers:
 
 import pytest
 
-
-# ══════════════════════════════════════════════════════════════════════
-# Server lifecycle
-# ══════════════════════════════════════════════════════════════════════
-
 class TestServerRegistration:
     @pytest.mark.asyncio
     async def test_register_server(self, api):
@@ -85,20 +80,13 @@ class TestServerRegistration:
         resp = await api.delete("/api/discovery/servers/ghost")
         assert resp.status_code == 404
 
-
-# ══════════════════════════════════════════════════════════════════════
-# Agent lifecycle
-# ══════════════════════════════════════════════════════════════════════
-
 SAMPLE_SKILL = {"name": "translate", "description": "EN-CN translation"}
-
 
 async def _register_server(api) -> str:
     resp = await api.post("/api/discovery/servers", json={
         "version": "0.1.0", "endpoint": "http://srv1:8000", "owner": "alice",
     })
     return resp.json()["server_id"]
-
 
 class TestAgentRegistration:
     @pytest.mark.asyncio
@@ -213,11 +201,6 @@ class TestAgentRegistration:
         data = resp.json()
         assert "a1" in data["seeds"]
 
-
-# ══════════════════════════════════════════════════════════════════════
-# Server cascade unregister
-# ══════════════════════════════════════════════════════════════════════
-
 class TestServerCascade:
     @pytest.mark.asyncio
     async def test_unregister_server_removes_agents_from_discovery(self, api):
@@ -240,11 +223,6 @@ class TestServerCascade:
         # Agent should no longer be discoverable via DHT
         resp2 = await api.get("/api/discovery/query", params={"domain": "coding"})
         assert "agent1" not in resp2.json()["agent_ids"]
-
-
-# ══════════════════════════════════════════════════════════════════════
-# Discovery queries
-# ══════════════════════════════════════════════════════════════════════
 
 class TestDiscoveryQuery:
     @pytest.mark.asyncio

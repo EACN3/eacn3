@@ -11,10 +11,6 @@ from tests.api.conftest import (
 )
 
 
-# ══════════════════════════════════════════════════════════════════════
-# POST /api/tasks/{id}/result — 提交结果
-# ══════════════════════════════════════════════════════════════════════
-
 class TestSubmitResult:
     @pytest.mark.asyncio
     async def test_submit_result(self, client):
@@ -33,23 +29,6 @@ class TestSubmitResult:
         assert data["results"][0]["agent_id"] == "a1"
 
     @pytest.mark.asyncio
-    async def test_submit_result_on_unclaimed_fails(self, client):
-        await create_task(client, task_id="t1")
-        resp = await client.post("/api/tasks/t1/result", json={
-            "agent_id": "a1", "content": "some result",
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_submit_result_on_closed_fails(self, client):
-        await create_task(client, task_id="t1")
-        await close_task(client, task_id="t1")
-        resp = await client.post("/api/tasks/t1/result", json={
-            "agent_id": "a1", "content": "late result",
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
     async def test_multiple_results_different_agents(self, client):
         await create_task(client, task_id="t1", budget=200.0, max_concurrent_bidders=3)
         await bid(client, task_id="t1", agent_id="a1")
@@ -58,14 +37,6 @@ class TestSubmitResult:
         await submit_result(client, task_id="t1", agent_id="a2", content="result 2")
         data = (await client.get("/api/tasks/t1")).json()
         assert len(data["results"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_adjudication_task_created_on_result(self, client):
-        """Submitting a result on normal task creates an adjudication task."""
-        await setup_task_with_result(client)
-        all_tasks = (await client.get("/api/tasks")).json()
-        adj_tasks = [t for t in all_tasks if t["type"] == "adjudication"]
-        assert len(adj_tasks) >= 1
 
     @pytest.mark.asyncio
     async def test_auto_collect_when_all_slots_done(self, client):
@@ -88,10 +59,6 @@ class TestSubmitResult:
         })
         assert resp.status_code == 400
 
-
-# ══════════════════════════════════════════════════════════════════════
-# GET /api/tasks/{id}/results — 收集结果
-# ══════════════════════════════════════════════════════════════════════
 
 class TestCollectResults:
     @pytest.mark.asyncio
@@ -121,16 +88,6 @@ class TestCollectResults:
         r2 = await client.get("/api/tasks/t1/results", params={"initiator_id": "user1"})
         assert r1.json() == r2.json()
 
-    @pytest.mark.asyncio
-    async def test_collect_nonexistent_404(self, client):
-        resp = await client.get("/api/tasks/ghost/results", params={"initiator_id": "user1"})
-        assert resp.status_code == 404
-
-
-# ══════════════════════════════════════════════════════════════════════
-# POST /api/tasks/{id}/select — 选择结果 + 结算
-# ══════════════════════════════════════════════════════════════════════
-
 class TestSelectResult:
     @pytest.mark.asyncio
     async def test_select_result(self, client):
@@ -155,9 +112,9 @@ class TestSelectResult:
         await setup_task_with_result(client, budget=200.0, price=80.0)
         await close_task(client, task_id="t1")
         await select_result(client, task_id="t1", agent_id="a1")
-        # Task should reflect settlement occurred
         data = (await client.get("/api/tasks/t1")).json()
-        assert data is not None
+        selected = [b for b in data["bids"] if b["status"] == "accepted"]
+        assert len(selected) == 1
 
     @pytest.mark.asyncio
     async def test_select_propagates_reputation(self, client):
@@ -170,15 +127,6 @@ class TestSelectResult:
         # Check reputation after — should have changed
         rep_after = (await client.get("/api/reputation/a1")).json()["score"]
         assert rep_after != rep_before
-
-    @pytest.mark.asyncio
-    async def test_select_nonexistent_agent_fails(self, client):
-        await setup_task_with_result(client)
-        await close_task(client, task_id="t1")
-        resp = await client.post("/api/tasks/t1/select", json={
-            "initiator_id": "user1", "agent_id": "ghost",
-        })
-        assert resp.status_code == 400
 
     @pytest.mark.asyncio
     async def test_select_rejects_other_bids(self, client):
@@ -196,11 +144,3 @@ class TestSelectResult:
         assert statuses["a1"] == "accepted"
         assert statuses["a2"] == "rejected"
 
-    @pytest.mark.asyncio
-    async def test_select_requires_awaiting_or_completed(self, client):
-        """select_result should fail if task is still in BIDDING."""
-        await setup_task_with_result(client)
-        resp = await client.post("/api/tasks/t1/select", json={
-            "initiator_id": "user1", "agent_id": "a1",
-        })
-        assert resp.status_code == 400

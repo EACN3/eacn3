@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from eacn.core.exceptions import TaskError, BudgetError
+from eacn.core.models import TaskStatus
 from eacn.network.api.schemas import (
     CreateTaskRequest, TaskResponse,
     SubmitBidRequest, BidResponse,
@@ -37,9 +38,6 @@ def _task_to_response(task) -> TaskResponse:
     return TaskResponse(**task.model_dump())
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Task CRUD
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/tasks", response_model=TaskResponse, status_code=201)
 async def create_task(req: CreateTaskRequest):
@@ -135,14 +133,25 @@ async def list_tasks(
     return [_task_to_response(t) for t in tasks]
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Bidding
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/tasks/{task_id}/bid", response_model=BidResponse)
 async def submit_bid(task_id: str, req: SubmitBidRequest):
+    net = _net()
+    # Cluster: check if task is on a remote node
+    if not net.cluster.router.is_local(task_id):
+        try:
+            result = await net.cluster.router.forward_bid(
+                task_id, req.agent_id, req.server_id, req.confidence, req.price,
+            )
+            return BidResponse(
+                status=result.get("status", "rejected"),
+                task_id=task_id,
+                agent_id=req.agent_id,
+            )
+        except Exception as e:
+            raise HTTPException(502, f"Forward failed: {e}")
     try:
-        bid_status = await _net().submit_bid(
+        bid_status = await net.submit_bid(
             task_id=task_id,
             agent_id=req.agent_id,
             confidence=req.confidence,
@@ -159,8 +168,15 @@ async def submit_bid(task_id: str, req: SubmitBidRequest):
 @router.post("/tasks/{task_id}/reject", response_model=OkResponse)
 async def reject_task(task_id: str, req: RejectTaskRequest):
     """Agent rejects/withdraws from an assigned task for re-allocation."""
+    net = _net()
+    if not net.cluster.router.is_local(task_id):
+        try:
+            await net.cluster.router.forward_reject(task_id, req.agent_id)
+            return OkResponse(message="Task rejected (forwarded)")
+        except Exception as e:
+            raise HTTPException(502, f"Forward failed: {e}")
     try:
-        await _net().reject_task(
+        await net.reject_task(
             task_id=task_id,
             agent_id=req.agent_id,
             reason=req.reason,
@@ -170,14 +186,18 @@ async def reject_task(task_id: str, req: RejectTaskRequest):
         raise HTTPException(400, str(e))
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Results
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/tasks/{task_id}/result", response_model=OkResponse)
 async def submit_result(task_id: str, req: SubmitResultRequest):
+    net = _net()
+    if not net.cluster.router.is_local(task_id):
+        try:
+            await net.cluster.router.forward_result(task_id, req.agent_id, req.content)
+            return OkResponse(message="Result submitted (forwarded)")
+        except Exception as e:
+            raise HTTPException(502, f"Forward failed: {e}")
     try:
-        await _net().submit_result(
+        await net.submit_result(
             task_id=task_id,
             agent_id=req.agent_id,
             content=req.content,
@@ -217,7 +237,6 @@ async def get_task_results(task_id: str, initiator_id: str):
     if task.initiator_id != initiator_id:
         raise HTTPException(403, "Only the task initiator can collect results")
 
-    from eacn.core.models import TaskStatus
     if task.status not in (TaskStatus.AWAITING_RETRIEVAL, TaskStatus.COMPLETED):
         raise HTTPException(
             400,
@@ -242,9 +261,6 @@ async def get_task_results(task_id: str, initiator_id: str):
     }
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Task control
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/tasks/{task_id}/close", response_model=TaskResponse)
 async def close_task(task_id: str, req: CloseTaskRequest):
@@ -291,14 +307,33 @@ async def confirm_budget(task_id: str, req: ConfirmBudgetRequest):
         raise HTTPException(400, str(e))
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Subtasks
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/tasks/{task_id}/subtask", response_model=TaskResponse, status_code=201)
 async def create_subtask(task_id: str, req: CreateSubtaskRequest):
+    net = _net()
+    if not net.cluster.router.is_local(task_id):
+        try:
+            result = await net.cluster.router.forward_subtask(
+                task_id,
+                {
+                    "initiator_id": req.initiator_id,
+                    "content": req.content,
+                    "domains": req.domains,
+                    "budget": req.budget,
+                    "deadline": req.deadline,
+                },
+            )
+            return TaskResponse(
+                id=result.get("subtask_id", ""),
+                status=result.get("status", "unclaimed"),
+                initiator_id=req.initiator_id,
+                domains=req.domains,
+                budget=req.budget,
+            )
+        except Exception as e:
+            raise HTTPException(502, f"Forward failed: {e}")
     try:
-        sub = await _net().create_subtask(
+        sub = await net.create_subtask(
             parent_task_id=task_id,
             initiator_id=req.initiator_id,
             content=req.content,
@@ -311,9 +346,6 @@ async def create_subtask(task_id: str, req: CreateSubtaskRequest):
         raise HTTPException(400, str(e))
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Reputation
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/reputation/events", response_model=ReputationResponse)
 async def receive_reputation_event(req: ReputationEventRequest):
@@ -329,9 +361,6 @@ async def get_reputation(agent_id: str):
     return ReputationResponse(agent_id=agent_id, score=score)
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Admin: config
-# ══════════════════════════════════════════════════════════════════════
 
 @router.get("/admin/config")
 async def get_config():
@@ -360,8 +389,8 @@ async def update_config(patch: dict):
     new_config = NetworkConfig(**current)
     net.config = new_config
 
-    # Reload affected modules
-    net.reputation = type(net.reputation)(config=new_config.reputation)
+    # Reload affected modules (preserve state, update config)
+    net.reputation.update_config(new_config.reputation)
     net.matcher = type(net.matcher)(config=new_config.matcher)
     net.push.MAX_RETRIES = new_config.push.max_retries
     net.settlement.platform_fee_rate = new_config.economy.platform_fee_rate
@@ -372,9 +401,6 @@ async def update_config(patch: dict):
     return new_config.model_dump()
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Admin: deadline scan
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/admin/scan-deadlines")
 async def scan_deadlines(now: str | None = None):
@@ -382,9 +408,6 @@ async def scan_deadlines(now: str | None = None):
     return {"expired": expired_ids}
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Admin: logs
-# ══════════════════════════════════════════════════════════════════════
 
 @router.get("/admin/logs")
 async def query_logs(

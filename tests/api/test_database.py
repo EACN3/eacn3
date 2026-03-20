@@ -7,18 +7,12 @@ import pytest
 
 from eacn.network.db import Database
 
-
 @pytest.fixture
 async def db():
     d = Database(":memory:")
     await d.connect()
     yield d
     await d.close()
-
-
-# ══════════════════════════════════════════════════════════════════════
-# Task store
-# ══════════════════════════════════════════════════════════════════════
 
 class TestTaskStore:
     @pytest.mark.asyncio
@@ -85,11 +79,6 @@ class TestTaskStore:
         assert len(page2) == 3
         assert page1[0]["id"] != page2[0]["id"]
 
-
-# ══════════════════════════════════════════════════════════════════════
-# Account store
-# ══════════════════════════════════════════════════════════════════════
-
 class TestAccountStore:
     @pytest.mark.asyncio
     async def test_upsert_and_get(self, db):
@@ -109,11 +98,6 @@ class TestAccountStore:
         acc = await db.get_account("a1")
         assert acc["available"] == 80.0
         assert acc["frozen"] == 20.0
-
-
-# ══════════════════════════════════════════════════════════════════════
-# Escrow store
-# ══════════════════════════════════════════════════════════════════════
 
 class TestEscrowStore:
     @pytest.mark.asyncio
@@ -139,11 +123,6 @@ class TestEscrowStore:
         result = await db.get_escrow("t1")
         assert result == ("u1", 200.0)
 
-
-# ══════════════════════════════════════════════════════════════════════
-# Reputation store
-# ══════════════════════════════════════════════════════════════════════
-
 class TestReputationStore:
     @pytest.mark.asyncio
     async def test_upsert_and_get(self, db):
@@ -165,11 +144,6 @@ class TestReputationStore:
     @pytest.mark.asyncio
     async def test_server_reputation_nonexistent(self, db):
         assert await db.get_server_reputation("ghost") is None
-
-
-# ══════════════════════════════════════════════════════════════════════
-# Log store
-# ══════════════════════════════════════════════════════════════════════
 
 class TestLogStore:
     @pytest.mark.asyncio
@@ -210,11 +184,6 @@ class TestLogStore:
         assert logs[0]["error"] == "something broke"
         assert logs[0]["result"] == {"ok": False}
 
-
-# ══════════════════════════════════════════════════════════════════════
-# DHT store
-# ══════════════════════════════════════════════════════════════════════
-
 class TestDHTStore:
     @pytest.mark.asyncio
     async def test_announce_and_lookup(self, db):
@@ -245,11 +214,6 @@ class TestDHTStore:
     @pytest.mark.asyncio
     async def test_empty_lookup(self, db):
         assert await db.dht_lookup("nonexistent") == []
-
-
-# ══════════════════════════════════════════════════════════════════════
-# Push history store
-# ══════════════════════════════════════════════════════════════════════
 
 class TestPushStore:
     @pytest.mark.asyncio

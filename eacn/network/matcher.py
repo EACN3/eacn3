@@ -171,5 +171,3 @@ class BidCheckResult:
         self.needs_budget_confirmation = needs_budget_confirmation
         self.excess_amount = excess_amount
 
-    def __bool__(self) -> bool:
-        return self.passed

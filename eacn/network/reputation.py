@@ -44,6 +44,23 @@ class GlobalReputation:
         # Anomaly tracking: recent events per agent for burst detection
         self._recent_events: dict[str, list[str]] = {}
 
+    def update_config(self, config: "ReputationConfig") -> None:
+        """Update config parameters without resetting accumulated state."""
+        self.MAX_GAIN = config.max_gain
+        self.MAX_PENALTY = config.max_penalty
+        self.DEFAULT_SCORE = config.default_score
+        self.COLD_START_THRESHOLD = config.cold_start_threshold
+        self._cold_start_floor = config.cold_start_floor
+        self._cold_start_ramp = config.cold_start_ramp
+        self.EVENT_WEIGHTS = dict(config.event_weights)
+        self._selection_boost_multiplier = config.selection_boost_multiplier
+        self._selector_judgment_boost = config.selector_judgment_boost
+        self.BURST_WINDOW = config.burst_window
+        self.BURST_THRESHOLD = config.burst_threshold
+        self._neg_gain_multiplier = config.negotiation_gain_multiplier
+        self._neg_gain_min = config.negotiation_gain_min
+        self._neg_gain_max = config.negotiation_gain_max
+
     # ── Core API ─────────────────────────────────────────────────────
 
     def aggregate(

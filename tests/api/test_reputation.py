@@ -11,11 +11,6 @@ from tests.api.conftest import (
     setup_task_with_result,
 )
 
-
-# ══════════════════════════════════════════════════════════════════════
-# POST /api/reputation/events — 声望事件
-# ══════════════════════════════════════════════════════════════════════
-
 class TestReputationEvents:
     @pytest.mark.asyncio
     async def test_positive_event_increases_score(self, client):
@@ -73,11 +68,6 @@ class TestReputationEvents:
         assert "score" in data
         assert data["agent_id"] == "check_agent"
 
-
-# ══════════════════════════════════════════════════════════════════════
-# GET /api/reputation/{agent_id} — 查询声望
-# ══════════════════════════════════════════════════════════════════════
-
 class TestGetReputation:
     @pytest.mark.asyncio
     async def test_known_agent(self, client):
@@ -90,11 +80,6 @@ class TestGetReputation:
         resp = await client.get("/api/reputation/unknown_agent")
         assert resp.status_code == 200
         assert resp.json()["score"] == 0.5
-
-
-# ══════════════════════════════════════════════════════════════════════
-# Reputation propagation through task flow
-# ══════════════════════════════════════════════════════════════════════
 
 class TestReputationPropagation:
     @pytest.mark.asyncio
@@ -115,11 +100,6 @@ class TestReputationPropagation:
         await create_task(client, task_id="t1")
         data = await bid(client, task_id="t1", agent_id="low_rep", confidence=0.3, price=50.0)
         assert data["status"] == "rejected"
-
-
-# ══════════════════════════════════════════════════════════════════════
-# POST /api/tasks/{id}/confirm-budget — 确认预算增加
-# ══════════════════════════════════════════════════════════════════════
 
 class TestConfirmBudget:
     @pytest.mark.asyncio
@@ -174,11 +154,6 @@ class TestConfirmBudget:
         statuses = {b["agent_id"]: b["status"] for b in data["bids"]}
         assert statuses.get("a1") == "rejected"
 
-
-# ══════════════════════════════════════════════════════════════════════
-# Budget escrow verified through task flows
-# ══════════════════════════════════════════════════════════════════════
-
 class TestBudgetEscrow:
     @pytest.mark.asyncio
     async def test_create_task_freezes_budget(self, client):
@@ -207,9 +182,9 @@ class TestBudgetEscrow:
         await setup_task_with_result(client, budget=200.0, price=80.0)
         await close_task(client, task_id="t1")
         await select_result(client, task_id="t1", agent_id="a1")
-        # Task should be in a settled state
         data = (await client.get("/api/tasks/t1")).json()
-        assert data is not None
+        accepted = [b for b in data["bids"] if b["status"] == "accepted"]
+        assert len(accepted) == 1
 
     @pytest.mark.asyncio
     async def test_deadline_expiry_refunds(self, client):

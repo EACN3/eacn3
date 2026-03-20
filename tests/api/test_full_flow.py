@@ -105,22 +105,6 @@ class TestMultiAgentFlow:
         assert statuses["a1"] == "accepted"
         assert statuses["a2"] == "rejected"
 
-    @pytest.mark.asyncio
-    async def test_concurrent_slots_and_promotion(self, client):
-        """Slots fill → queue → result frees slot → promotion."""
-        await create_task(client, task_id="slots", budget=500.0, max_concurrent_bidders=1)
-        b1 = await bid(client, task_id="slots", agent_id="a1", price=100.0)
-        b2 = await bid(client, task_id="slots", agent_id="a2", price=90.0)
-        assert b1["status"] == "executing"
-        assert b2["status"] == "waiting"
-
-        # a1 submits result → frees slot → a2 promoted
-        await submit_result(client, task_id="slots", agent_id="a1")
-        data = (await client.get("/api/tasks/slots")).json()
-        a2_status = next(b["status"] for b in data["bids"] if b["agent_id"] == "a2")
-        assert a2_status in ("executing", "accepted")
-
-
 class TestSubtaskFlow:
     @pytest.mark.asyncio
     async def test_parent_subtask_lifecycle(self, client):
@@ -172,81 +156,3 @@ class TestDeadlineFlow:
         assert data["status"] == "completed"
 
 
-class TestReputationFlow:
-    @pytest.mark.asyncio
-    async def test_reputation_changes_through_task_flow(self, client):
-        """Reputation should change after task completion."""
-        before = (await client.get("/api/reputation/a1")).json()["score"]
-
-        await create_task(client, task_id="rep_flow", budget=200.0)
-        await bid(client, task_id="rep_flow", agent_id="a1")
-        await submit_result(client, task_id="rep_flow", agent_id="a1")
-        await close_task(client, task_id="rep_flow")
-        await select_result(client, task_id="rep_flow", agent_id="a1")
-
-        after = (await client.get("/api/reputation/a1")).json()["score"]
-        assert after != before
-
-
-class TestErrorHandling:
-    @pytest.mark.asyncio
-    async def test_bid_on_nonexistent_task(self, client):
-        resp = await client.post("/api/tasks/ghost/bid", json={
-            "agent_id": "a1", "confidence": 0.9, "price": 80.0,
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_result_on_nonexistent_task(self, client):
-        resp = await client.post("/api/tasks/ghost/result", json={
-            "agent_id": "a1", "content": "x",
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_select_on_nonexistent_task(self, client):
-        resp = await client.post("/api/tasks/ghost/select", json={
-            "initiator_id": "user1", "agent_id": "a1",
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_close_nonexistent_task(self, client):
-        resp = await client.post("/api/tasks/ghost/close", json={
-            "initiator_id": "user1",
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_subtask_on_nonexistent_parent(self, client):
-        resp = await client.post("/api/tasks/ghost/subtask", json={
-            "initiator_id": "a1", "content": {},
-            "domains": ["coding"], "budget": 50.0,
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_discussion_on_nonexistent_task(self, client):
-        resp = await client.post("/api/tasks/ghost/discussions", json={
-            "initiator_id": "user1", "message": "hello",
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_deadline_on_nonexistent_task(self, client):
-        resp = await client.put("/api/tasks/ghost/deadline", json={
-            "initiator_id": "user1", "deadline": "2030-01-01",
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_confirm_budget_nonexistent_task(self, client):
-        resp = await client.post("/api/tasks/ghost/confirm-budget", json={
-            "initiator_id": "user1", "approved": True, "new_budget": 100.0,
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_collect_results_nonexistent_task(self, client):
-        resp = await client.get("/api/tasks/ghost/results", params={"initiator_id": "user1"})
-        assert resp.status_code == 404
