@@ -360,7 +360,7 @@ server.tool(
   },
 );
 
-// #12 eacn_get_task_status
+// #13 eacn_get_task_status
 server.tool(
   "eacn_get_task_status",
   "Query task status and bid list (initiator only, no results).",
@@ -374,7 +374,7 @@ server.tool(
   },
 );
 
-// #13 eacn_list_open_tasks
+// #14 eacn_list_open_tasks
 server.tool(
   "eacn_list_open_tasks",
   "List tasks open for bidding. Optionally filter by domains.",
@@ -389,7 +389,7 @@ server.tool(
   },
 );
 
-// #14 eacn_list_tasks
+// #15 eacn_list_tasks
 server.tool(
   "eacn_list_tasks",
   "List tasks with optional filters (status, initiator).",
@@ -409,7 +409,7 @@ server.tool(
 // Task Operations — Initiator (7)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #15 eacn_create_task
+// #16 eacn_create_task
 // Inlines matcher: check local agents before hitting network
 server.tool(
   "eacn_create_task",
@@ -478,7 +478,7 @@ server.tool(
   },
 );
 
-// #16 eacn_get_task_results
+// #17 eacn_get_task_results
 server.tool(
   "eacn_get_task_results",
   "Retrieve task results and adjudications. First call transitions task from awaiting_retrieval to completed.",
@@ -492,7 +492,7 @@ server.tool(
   },
 );
 
-// #17 eacn_select_result
+// #18 eacn_select_result
 server.tool(
   "eacn_select_result",
   "Select the winning result. Triggers economic settlement.",
@@ -507,7 +507,7 @@ server.tool(
   },
 );
 
-// #18 eacn_close_task
+// #19 eacn_close_task
 server.tool(
   "eacn_close_task",
   "Manually close a task (stop accepting bids/results).",
@@ -521,7 +521,7 @@ server.tool(
   },
 );
 
-// #19 eacn_update_deadline
+// #20 eacn_update_deadline
 server.tool(
   "eacn_update_deadline",
   "Update task deadline.",
@@ -536,7 +536,7 @@ server.tool(
   },
 );
 
-// #20 eacn_update_discussions
+// #21 eacn_update_discussions
 server.tool(
   "eacn_update_discussions",
   "Add a discussion message to a task. Synced to all bidders.",
@@ -551,7 +551,7 @@ server.tool(
   },
 );
 
-// #21 eacn_confirm_budget
+// #22 eacn_confirm_budget
 server.tool(
   "eacn_confirm_budget",
   "Respond to a budget confirmation request (when a bid exceeds current budget).",
@@ -573,7 +573,7 @@ server.tool(
 // Task Operations — Executor (5)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #22 eacn_submit_bid
+// #23 eacn_submit_bid
 server.tool(
   "eacn_submit_bid",
   "Submit a bid on a task (confidence + price).",
@@ -602,7 +602,7 @@ server.tool(
   },
 );
 
-// #23 eacn_submit_result
+// #24 eacn_submit_result
 // Inlines logger: auto-report reputation event
 server.tool(
   "eacn_submit_result",
@@ -624,7 +624,7 @@ server.tool(
   },
 );
 
-// #24 eacn_reject_task
+// #25 eacn_reject_task
 // Inlines logger: auto-report reputation event
 server.tool(
   "eacn_reject_task",
@@ -646,7 +646,7 @@ server.tool(
   },
 );
 
-// #25 eacn_create_subtask
+// #26 eacn_create_subtask
 server.tool(
   "eacn_create_subtask",
   "Create a subtask under a parent task. Budget is carved from parent's escrow.",
@@ -677,7 +677,7 @@ server.tool(
   },
 );
 
-// #26 eacn_send_message
+// #27 eacn_send_message
 server.tool(
   "eacn_send_message",
   "Send a direct message to another Agent (A2A point-to-point).",
@@ -702,7 +702,7 @@ server.tool(
 // Reputation (2)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #27 eacn_report_event
+// #28 eacn_report_event
 server.tool(
   "eacn_report_event",
   "Report a reputation event. Usually called automatically by other tools, but exposed for special cases.",
@@ -717,7 +717,7 @@ server.tool(
   },
 );
 
-// #28 eacn_get_reputation
+// #29 eacn_get_reputation
 server.tool(
   "eacn_get_reputation",
   "Query an Agent's global reputation score.",
