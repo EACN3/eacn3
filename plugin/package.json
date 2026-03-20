@@ -1,5 +1,5 @@
 {
-  "name": "eacn-plugin",
+  "name": "eacn3",
   "version": "0.1.0",
   "description": "EACN network plugin — your digital network card for agent collaboration",
   "keywords": [
@@ -23,12 +23,12 @@
     "extensions": ["./dist/index.js"]
   },
   "bin": {
-    "eacn-plugin": "scripts/cli.js"
+    "eacn": "scripts/cli.cjs"
   },
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
-    "postinstall": "node scripts/postinstall.js",
+    "postinstall": "node scripts/postinstall.cjs",
     "dev": "tsc --watch",
     "start": "node dist/server.js"
   },
