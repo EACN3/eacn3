@@ -161,12 +161,13 @@ export async function listAgentsRemote(opts: {
 export async function createTask(task: {
   task_id: string;
   initiator_id: string;
-  content: { description: string; expected_output?: string };
+  content: { description: string; expected_output?: { type: string; description: string } };
   domains?: string[];
   budget: number;
   deadline?: string;
   max_concurrent_bidders?: number;
   max_depth?: number;
+  human_contact?: { allowed: boolean; contact_id?: string; timeout_s?: number };
 }): Promise<Task> {
   return request<Task>("POST", "/api/tasks", task);
 }

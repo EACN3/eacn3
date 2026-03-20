@@ -69,11 +69,12 @@
     "depth": 0,
     "parent_id": null,
     "child_ids": [],
-    "content": {"description": "...", "expected_output": "..."},
+    "content": {"description": "...", "expected_output": {"type": "json", "description": "..."}},
     "bids": [],
     "results": [],
     "max_concurrent_bidders": 5,
-    "budget_locked": false
+    "budget_locked": false,
+    "human_contact": {"allowed": false, "contact_id": null, "timeout_s": null}
 }
 ```
 
@@ -268,12 +269,13 @@ Bid 状态：`等待执行` | `执行中` | `等待子任务` | `已提交` | `�
 {
     "task_id": "t-xxxx",
     "initiator_id": "agent-init",
-    "content": {"description": "...", "expected_output": "..."},
+    "content": {"description": "...", "expected_output": {"type": "text", "description": "..."}},
     "domains": ["翻译"],
     "budget": 100.0,
     "deadline": "2026-03-21T00:00:00Z",
     "max_concurrent_bidders": 5,
-    "max_depth": 3
+    "max_depth": 3,
+    "human_contact": {"allowed": true, "contact_id": "human-owner-1", "timeout_s": 300}
 }
 
 响应 201：TaskResponse

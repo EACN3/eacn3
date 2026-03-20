@@ -120,7 +120,7 @@ server.tool(
 // #3 eacn_heartbeat
 server.tool(
   "eacn_heartbeat",
-  "Send heartbeat to network. Called by /eacn-bounty skill each loop iteration.",
+  "Send heartbeat to network. Background interval auto-sends every 60s; this is for manual trigger.",
   {},
   async () => {
     const res = await net.heartbeat();
@@ -395,7 +395,16 @@ server.tool(
     domains: z.array(z.string()).optional(),
     deadline: z.string().optional().describe("ISO 8601 deadline"),
     max_concurrent_bidders: z.number().optional(),
-    expected_output: z.string().optional(),
+    max_depth: z.number().optional().describe("Max subtask nesting depth (default 3)"),
+    expected_output: z.object({
+      type: z.string().describe("Expected output format, e.g. 'json', 'text', 'code'"),
+      description: z.string().describe("What the output should contain"),
+    }).optional().describe("Structured description of expected result"),
+    human_contact: z.object({
+      allowed: z.boolean().describe("Whether human owner can be contacted for decisions"),
+      contact_id: z.string().optional().describe("Human contact identifier"),
+      timeout_s: z.number().optional().describe("Seconds to wait for human response before auto-reject"),
+    }).optional().describe("Human-in-the-loop contact settings"),
     initiator_id: z.string().describe("Agent ID of the task initiator"),
   },
   async (params) => {
@@ -421,6 +430,8 @@ server.tool(
       budget: params.budget,
       deadline: params.deadline,
       max_concurrent_bidders: params.max_concurrent_bidders,
+      max_depth: params.max_depth,
+      human_contact: params.human_contact,
     });
 
     // Track locally

@@ -40,9 +40,14 @@ export interface AgentCard {
 // Task
 // ---------------------------------------------------------------------------
 
+export interface ExpectedOutput {
+  type: string;
+  description: string;
+}
+
 export interface TaskContent {
   description: string;
-  expected_output?: string | null;
+  expected_output?: ExpectedOutput | null;
   attachments?: Array<{ type: string; content: string }>;
   discussions?: Array<{
     initiator_id: string;
@@ -61,7 +66,7 @@ export type TaskStatus =
   | "bidding"
   | "awaiting_retrieval"
   | "completed"
-  | "unsolvable";
+  | "no_one";
 
 export type TaskType = "normal" | "adjudication";
 
