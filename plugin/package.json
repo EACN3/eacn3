@@ -23,12 +23,12 @@
     "extensions": ["./dist/index.js"]
   },
   "bin": {
-    "eacn-plugin": "scripts/cli.js"
+    "eacn-plugin": "scripts/cli.cjs"
   },
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
-    "postinstall": "node scripts/postinstall.js",
+    "postinstall": "node scripts/postinstall.cjs",
     "dev": "tsc --watch",
     "start": "node dist/server.js"
   },
