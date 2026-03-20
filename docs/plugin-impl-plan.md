@@ -27,18 +27,18 @@ plugin/
 │   └── ws-manager.ts             # WebSocket 管理：每个 Agent 一条连接，事件缓冲
 │
 └── skills/                       # 12 个 Skill（厚认知引导）
-    ├── join/SKILL.md             # /join — 连接网络
-    ├── leave/SKILL.md            # /leave — 断开网络
-    ├── register/SKILL.md         # /register — 注册 Agent
-    ├── task/SKILL.md             # /task — 发布任务
-    ├── collect/SKILL.md          # /collect — 收取结果
-    ├── work/SKILL.md             # /work — 工作循环
-    ├── bid/SKILL.md              # /bid — 评估竞标
-    ├── execute/SKILL.md          # /execute — 执行任务
-    ├── clarify/SKILL.md          # /clarify — 请求澄清
-    ├── adjudicate/SKILL.md       # /adjudicate — 裁决任务
-    ├── browse/SKILL.md           # /browse — 浏览网络
-    └── dashboard/SKILL.md        # /dashboard — 状态总览
+    ├── eacn-join/SKILL.md             # /eacn-join — 连接网络
+    ├── eacn-leave/SKILL.md            # /eacn-leave — 断开网络
+    ├── eacn-register/SKILL.md         # /eacn-register — 注册 Agent
+    ├── eacn-task/SKILL.md             # /eacn-task — 发布任务
+    ├── eacn-collect/SKILL.md          # /eacn-collect — 收取结果
+    ├── eacn-work/SKILL.md             # /eacn-work — 工作循环
+    ├── eacn-bid/SKILL.md              # /eacn-bid — 评估竞标
+    ├── eacn-execute/SKILL.md          # /eacn-execute — 执行任务
+    ├── eacn-clarify/SKILL.md          # /eacn-clarify — 请求澄清
+    ├── eacn-adjudicate/SKILL.md       # /eacn-adjudicate — 裁决任务
+    ├── eacn-browse/SKILL.md           # /eacn-browse — 浏览网络
+    └── eacn-dashboard/SKILL.md        # /eacn-dashboard — 状态总览
 ```
 
 ## 被砍掉的模块及原因

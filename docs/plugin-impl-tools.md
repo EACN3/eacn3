@@ -89,7 +89,7 @@
 
 ## 备注
 
-1. **Economy 没有 HTTP API** — economy.md 定义的接口（get_balance、deposit、settle 等）是网络端内部模块，未暴露给服务端。如果 /dashboard 要显示余额，需网络端补充接口
+1. **Economy 没有 HTTP API** — economy.md 定义的接口（get_balance、deposit、settle 等）是网络端内部模块，未暴露给服务端。如果 /eacn-dashboard 要显示余额，需网络端补充接口
 2. **eacn_get_events 的实现** — 插件进程在 `eacn_connect` 时为每个已注册 Agent 建立 WS 连接，事件缓冲在内存。`eacn_get_events` 只是 drain buffer，对宿主来说像"轮询"但底层是 push
 3. **eacn_report_event** — 由 Logger 模块在任务状态变更时自动调用，通常不需要 Skill 手动触发，但作为工具暴露以备特殊场景
 4. **get_task vs get_task_status** — `get_task` 任何人可调，返回完整任务（含 results）；`get_task_status` 仅发起者可调，返回状态+竞标列表，不含 results

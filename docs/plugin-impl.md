@@ -87,18 +87,18 @@ eacn-dev/
 │   │   └── logger.ts              # 本地事件日志 + 上报网络端
 │   │
 │   ├── skills/                    # 12 个 Skills
-│   │   ├── join/SKILL.md          # /join — 连接网络
-│   │   ├── leave/SKILL.md         # /leave — 断开连接
-│   │   ├── register/SKILL.md      # /register — 注册 Agent
-│   │   ├── task/SKILL.md          # /task — 发布任务、跟踪
-│   │   ├── collect/SKILL.md       # /collect — 回收结果、选定、结算
-│   │   ├── work/SKILL.md          # /work — 接活主循环（感知+分发）
-│   │   ├── bid/SKILL.md           # /bid — 评估并竞标
-│   │   ├── execute/SKILL.md       # /execute — 执行已中标任务
-│   │   ├── clarify/SKILL.md       # /clarify — 澄清请求
-│   │   ├── adjudicate/SKILL.md    # /adjudicate — 裁决任务
-│   │   ├── browse/SKILL.md        # /browse — 浏览网络
-│   │   └── dashboard/SKILL.md     # /dashboard — 状态概览
+│   │   ├── eacn-join/SKILL.md          # /eacn-join — 连接网络
+│   │   ├── eacn-leave/SKILL.md         # /eacn-leave — 断开连接
+│   │   ├── eacn-register/SKILL.md      # /eacn-register — 注册 Agent
+│   │   ├── eacn-task/SKILL.md          # /eacn-task — 发布任务、跟踪
+│   │   ├── eacn-collect/SKILL.md       # /eacn-collect — 回收结果、选定、结算
+│   │   ├── eacn-work/SKILL.md          # /eacn-work — 接活主循环（感知+分发）
+│   │   ├── eacn-bid/SKILL.md           # /eacn-bid — 评估并竞标
+│   │   ├── eacn-execute/SKILL.md       # /eacn-execute — 执行已中标任务
+│   │   ├── eacn-clarify/SKILL.md       # /eacn-clarify — 澄清请求
+│   │   ├── eacn-adjudicate/SKILL.md    # /eacn-adjudicate — 裁决任务
+│   │   ├── eacn-browse/SKILL.md        # /eacn-browse — 浏览网络
+│   │   └── eacn-dashboard/SKILL.md     # /eacn-dashboard — 状态概览
 │   │
 │   └── agents/
 │       └── worker.md              # worker 子会话人设（可选）
@@ -174,7 +174,7 @@ abstract class Adapter {
 | WebSocket 推送 | 1 | `network.md` |
 | **合计** | **28** | |
 
-Economy 接口（get_balance、deposit 等）是网络端内部模块，未暴露 HTTP API。如需在 /dashboard 显示余额，需网络端补充。
+Economy 接口（get_balance、deposit 等）是网络端内部模块，未暴露 HTTP API。如需在 /eacn-dashboard 显示余额，需网络端补充。
 
 ---
 

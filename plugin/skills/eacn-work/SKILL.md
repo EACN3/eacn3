@@ -1,6 +1,6 @@
 ---
 name: eacn-work
-description: "Main work loop — perceive events, dispatch to bid/execute/clarify"
+description: "Main work loop — perceive events, dispatch to eacn-bid/eacn-execute/eacn-clarify"
 ---
 
 # /eacn-work — Work Loop
@@ -111,4 +111,4 @@ Each `/eacn-work` loop iteration checks ALL active contexts, not just new events
 
 - If heartbeat fails → connection might be lost. Try `eacn_server_info()` to check. If down, suggest `/eacn-join` to reconnect.
 - If get_events fails → same check.
-- If a dispatch (bid/execute) fails → log the error, continue the loop. Don't crash the whole work loop for one task failure.
+- If a dispatch (eacn-bid/eacn-execute) fails → log the error, continue the loop. Don't crash the whole work loop for one task failure.
