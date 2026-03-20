@@ -332,7 +332,7 @@ async def peer_task_status(req: TaskStatusRequest):
     return OkResponse()
 
 
-@peer_router.post("/peer/push")
+@peer_router.post("/push")
 async def peer_push(req: PushRequest):
     """Handle push event forwarding for local delivery."""
     cs = _cs()

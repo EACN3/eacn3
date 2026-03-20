@@ -5,7 +5,7 @@ from eacn.network.cluster.discovery import ClusterDiscovery
 from eacn.network.cluster.bootstrap import ClusterBootstrap
 from eacn.network.cluster.dht import ClusterDHT
 from eacn.network.cluster.gossip import ClusterGossip
-from eacn.network.cluster.config import ClusterConfig
+from eacn.network.config import ClusterConfig
 from eacn.network.cluster.node import NodeCard, MembershipList
 
 
@@ -21,17 +21,16 @@ async def discovery_setup(db):
     config = ClusterConfig(node_id="local", endpoint="http://local:8000")
     bootstrap = ClusterBootstrap(local, members, config)
     dht = ClusterDHT(db)
-    gossip = ClusterGossip(db, members)
+    gossip = ClusterGossip(db, members, local_node_id="local")
     disc = ClusterDiscovery("local", gossip, dht, bootstrap)
 
     return disc, gossip, dht, bootstrap, members
 
 
-class TestClusterDiscovery:
-    async def test_discover_via_gossip(self, discovery_setup):
+class TestDiscoverViaGossip:
+    async def test_returns_gossip_results(self, discovery_setup):
         disc, gossip, dht, bootstrap, members = discovery_setup
 
-        # Add a peer that knows about coding
         peer = NodeCard(node_id="peer", endpoint="http://peer:8000", domains=["coding"])
         members.add(peer)
         await gossip.add_known("local", "peer")
@@ -39,50 +38,31 @@ class TestClusterDiscovery:
         result = await disc.discover("coding")
         assert result == ["peer"]
 
-    async def test_discover_via_dht_fallback(self, discovery_setup):
+    async def test_gossip_takes_priority_over_dht(self, discovery_setup):
         disc, gossip, dht, bootstrap, members = discovery_setup
 
-        # Nothing in gossip, but DHT has it
+        # Gossip has gossip-peer for domain "x"
+        peer_g = NodeCard(node_id="gossip-peer", endpoint="http://gp:8000", domains=["x"])
+        members.add(peer_g)
+        await gossip.add_known("local", "gossip-peer")
+
+        # DHT also has dht-peer for domain "x"
+        await dht.announce("x", "dht-peer")
+
+        result = await disc.discover("x")
+        # Must return gossip result only (first layer wins)
+        assert result == ["gossip-peer"]
+        assert "dht-peer" not in result
+
+
+class TestDiscoverViaDHT:
+    async def test_dht_fallback_when_gossip_empty(self, discovery_setup):
+        disc, gossip, dht, bootstrap, members = discovery_setup
+
         await dht.announce("design", "node-x")
 
         result = await disc.discover("design")
         assert result == ["node-x"]
-
-    async def test_discover_via_bootstrap_fallback(self, discovery_setup):
-        disc, gossip, dht, bootstrap, members = discovery_setup
-
-        # Nothing in gossip or DHT, but a node in membership has the domain
-        peer = NodeCard(node_id="peer-b", endpoint="http://pb:8000", domains=["research"])
-        members.add(peer)
-
-        result = await disc.discover("research")
-        assert result == ["peer-b"]
-
-    async def test_discover_excludes_local(self, discovery_setup):
-        disc, gossip, dht, bootstrap, members = discovery_setup
-
-        # Local node has "coding" but should not be returned
-        await dht.announce("coding", "local")
-        result = await disc.discover("coding")
-        assert "local" not in result
-
-    async def test_discover_no_results(self, discovery_setup):
-        disc, gossip, dht, bootstrap, members = discovery_setup
-
-        result = await disc.discover("nonexistent-domain")
-        assert result == []
-
-    async def test_gossip_takes_priority_over_dht(self, discovery_setup):
-        disc, gossip, dht, bootstrap, members = discovery_setup
-
-        peer_g = NodeCard(node_id="gossip-peer", endpoint="http://gp:8000", domains=["x"])
-        members.add(peer_g)
-        await gossip.add_known("local", "gossip-peer")
-        await dht.announce("x", "dht-peer")
-
-        result = await disc.discover("x")
-        # Gossip hit returns first, DHT is not consulted
-        assert result == ["gossip-peer"]
 
     async def test_dht_takes_priority_over_bootstrap(self, discovery_setup):
         disc, gossip, dht, bootstrap, members = discovery_setup
@@ -92,20 +72,52 @@ class TestClusterDiscovery:
         members.add(peer_bs)
 
         result = await disc.discover("y")
-        # DHT hit returns first
         assert result == ["dht-node"]
+        assert "bs-node" not in result
 
-    async def test_discover_excludes_local_from_all_layers(self, discovery_setup):
+
+class TestDiscoverViaBootstrap:
+    async def test_bootstrap_fallback(self, discovery_setup):
         disc, gossip, dht, bootstrap, members = discovery_setup
 
-        # Add local to gossip known and DHT
-        await gossip.add_known("local", "local")
-        await dht.announce("coding", "local")
-
-        peer = NodeCard(node_id="other", endpoint="http://other:8000", domains=["coding"])
+        peer = NodeCard(node_id="peer-b", endpoint="http://pb:8000", domains=["research"])
         members.add(peer)
+
+        result = await disc.discover("research")
+        assert result == ["peer-b"]
+
+
+class TestDiscoverExclusion:
+    async def test_excludes_local_from_gossip(self, discovery_setup):
+        disc, gossip, dht, bootstrap, members = discovery_setup
+
+        # Add local to its own gossip known list
+        await gossip.add_known("local", "local")
+        other = NodeCard(node_id="other", endpoint="http://other:8000", domains=["coding"])
+        members.add(other)
         await gossip.add_known("local", "other")
 
         result = await disc.discover("coding")
         assert "local" not in result
         assert "other" in result
+
+    async def test_excludes_local_from_dht(self, discovery_setup):
+        disc, gossip, dht, bootstrap, members = discovery_setup
+
+        await dht.announce("coding", "local")
+        await dht.announce("coding", "remote")
+
+        result = await disc.discover("coding")
+        assert "local" not in result
+        assert "remote" in result
+
+    async def test_excludes_local_from_bootstrap(self, discovery_setup):
+        disc, gossip, dht, bootstrap, members = discovery_setup
+        # local already has "coding" in domains
+        result = await disc.discover("coding")
+        assert "local" not in result
+
+    async def test_no_results_returns_empty_list(self, discovery_setup):
+        disc, gossip, dht, bootstrap, members = discovery_setup
+        result = await disc.discover("nonexistent-domain")
+        assert result == []

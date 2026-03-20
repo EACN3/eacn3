@@ -10,13 +10,15 @@ import logging
 import uuid
 from typing import Any, TYPE_CHECKING
 
+import httpx
+
 from eacn.network.cluster.node import NodeCard, MembershipList
 from eacn.network.cluster.bootstrap import ClusterBootstrap
 from eacn.network.cluster.dht import ClusterDHT
 from eacn.network.cluster.gossip import ClusterGossip
 from eacn.network.cluster.discovery import ClusterDiscovery
 from eacn.network.cluster.router import ClusterRouter
-from eacn.network.cluster.config import ClusterConfig
+from eacn.network.config import ClusterConfig
 
 if TYPE_CHECKING:
     from eacn.network.db.database import Database
@@ -56,7 +58,7 @@ class ClusterService:
         # Sub-modules
         self.bootstrap = ClusterBootstrap(self.local_node, self.members, self.config)
         self.dht = ClusterDHT(db)
-        self.gossip = ClusterGossip(db, self.members)
+        self.gossip = ClusterGossip(db, self.members, local_node_id=node_id)
         self.discovery = ClusterDiscovery(
             node_id, self.gossip, self.dht, self.bootstrap,
         )
@@ -161,7 +163,6 @@ class ClusterService:
                     continue
 
             try:
-                import httpx
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     resp = await client.post(
                         f"{endpoint}/peer/task/broadcast",

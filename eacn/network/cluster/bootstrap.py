@@ -13,7 +13,7 @@ import httpx
 from eacn.network.cluster.node import NodeCard, MembershipList
 
 if TYPE_CHECKING:
-    from eacn.network.cluster.config import ClusterConfig
+    from eacn.network.config import ClusterConfig
 
 _log = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 """Tests for ClusterConfig."""
 
-from eacn.network.cluster.config import ClusterConfig
+from eacn.network.config import ClusterConfig
 
 
 class TestClusterConfig:

@@ -2,7 +2,7 @@
 
 import pytest
 from eacn.network.db.database import Database
-from eacn.network.cluster.config import ClusterConfig
+from eacn.network.config import ClusterConfig
 from eacn.network.cluster.node import NodeCard, MembershipList
 from eacn.network.cluster.service import ClusterService
 

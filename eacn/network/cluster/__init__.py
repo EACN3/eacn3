@@ -7,6 +7,6 @@ with all operations being no-ops.
 
 from eacn.network.cluster.service import ClusterService
 from eacn.network.cluster.node import NodeCard, MembershipList
-from eacn.network.cluster.config import ClusterConfig
+from eacn.network.config import ClusterConfig
 
 __all__ = ["ClusterService", "NodeCard", "MembershipList", "ClusterConfig"]

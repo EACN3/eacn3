@@ -80,8 +80,7 @@ class Network:
         )
 
         # Cluster layer (standalone when no seed nodes configured)
-        from eacn.network.cluster.config import ClusterConfig as CConfig
-        cluster_cfg = CConfig(**self.config.cluster.model_dump())
+        cluster_cfg = self.config.cluster
         self.cluster = ClusterService(self.db, config=cluster_cfg)
 
     async def start(self) -> None:

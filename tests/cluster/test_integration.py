@@ -46,8 +46,6 @@ async def integrated_client():
 
 
 class TestNetworkWithCluster:
-    """Verify that the existing Network flows still work with cluster integrated."""
-
     async def test_create_task_with_cluster(self, integrated_client):
         client, net = integrated_client
         resp = await client.post("/api/tasks", json={
@@ -58,11 +56,17 @@ class TestNetworkWithCluster:
             "budget": 100.0,
         })
         assert resp.status_code == 201
-        assert resp.json()["id"] == "ct1"
+        data = resp.json()
+        assert data["id"] == "ct1"
+        assert data["status"] == "unclaimed"
+        assert data["initiator_id"] == "user1"
+        assert data["domains"] == ["coding"]
+        assert data["budget"] == 100.0
 
-    async def test_full_task_lifecycle_with_cluster(self, integrated_client):
+    async def test_full_task_lifecycle(self, integrated_client):
         client, net = integrated_client
-        # Create
+
+        # 1. Create
         resp = await client.post("/api/tasks", json={
             "task_id": "lifecycle-1",
             "initiator_id": "user1",
@@ -71,36 +75,47 @@ class TestNetworkWithCluster:
             "budget": 100.0,
         })
         assert resp.status_code == 201
+        assert resp.json()["status"] == "unclaimed"
 
-        # Bid
+        # 2. Bid
         resp = await client.post("/api/tasks/lifecycle-1/bid", json={
             "agent_id": "a1", "confidence": 0.9, "price": 80.0,
         })
         assert resp.status_code == 200
         assert resp.json()["status"] == "executing"
+        assert resp.json()["agent_id"] == "a1"
 
-        # Submit result
+        # 3. Submit result
         resp = await client.post("/api/tasks/lifecycle-1/result", json={
             "agent_id": "a1", "content": "done",
         })
         assert resp.status_code == 200
+        assert resp.json()["ok"] is True
 
-        # Close
+        # Verify result is stored
+        task = net.task_manager.get("lifecycle-1")
+        assert len(task.results) == 1
+        assert task.results[0].content == "done"
+
+        # 4. Close
         resp = await client.post("/api/tasks/lifecycle-1/close", json={
             "initiator_id": "user1",
         })
         assert resp.status_code == 200
+        assert resp.json()["status"] == "awaiting_retrieval"
 
-        # Select result
+        # 5. Select result
         resp = await client.post("/api/tasks/lifecycle-1/select", json={
             "initiator_id": "user1", "agent_id": "a1",
         })
         assert resp.status_code == 200
+        assert resp.json()["ok"] is True
 
-    async def test_cluster_standalone_does_not_affect_local(self, integrated_client):
+    async def test_cluster_standalone_preserves_local_behavior(self, integrated_client):
         client, net = integrated_client
-        assert net.cluster.standalone
-        # All operations should work exactly as before
+        assert net.cluster.standalone is True
+
+        # Create + bid + result should work exactly as before
         resp = await client.post("/api/tasks", json={
             "task_id": "standalone-1",
             "initiator_id": "user1",
@@ -110,9 +125,16 @@ class TestNetworkWithCluster:
         })
         assert resp.status_code == 201
 
-    async def test_route_forwarding_check_on_local_task(self, integrated_client):
-        """Tasks created locally should be handled locally (not forwarded)."""
+        resp = await client.post("/api/tasks/standalone-1/bid", json={
+            "agent_id": "a1", "confidence": 0.9, "price": 40.0,
+        })
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "executing"
+
+    async def test_local_task_not_forwarded(self, integrated_client):
         client, net = integrated_client
+
+        # Create a local task
         resp = await client.post("/api/tasks", json={
             "task_id": "local-check",
             "initiator_id": "user1",
@@ -122,11 +144,16 @@ class TestNetworkWithCluster:
         })
         assert resp.status_code == 201
 
-        # Bid should be handled locally
+        # Router should consider it local (no remote route)
+        assert net.cluster.router.is_local("local-check") is True
+        assert net.cluster.router.get_route("local-check") is None
+
+        # Bid handled locally
         resp = await client.post("/api/tasks/local-check/bid", json={
             "agent_id": "a1", "confidence": 0.9, "price": 80.0,
         })
         assert resp.status_code == 200
+        assert resp.json()["status"] == "executing"
 
         # Result handled locally
         resp = await client.post("/api/tasks/local-check/result", json={
@@ -134,11 +161,14 @@ class TestNetworkWithCluster:
         })
         assert resp.status_code == 200
 
+        # Verify result actually stored
+        task = net.task_manager.get("local-check")
+        assert len(task.results) == 1
+        assert task.results[0].content == "result"
+
 
 class TestPeerBroadcastAndLocalDiscovery:
-    """Test that peer broadcasts trigger local agent discovery."""
-
-    async def test_peer_broadcast_stores_route(self, integrated_client):
+    async def test_peer_broadcast_stores_correct_route(self, integrated_client):
         client, net = integrated_client
         resp = await client.post("/peer/task/broadcast", json={
             "task_id": "remote-task-1",
@@ -149,12 +179,13 @@ class TestPeerBroadcastAndLocalDiscovery:
             "content": {"desc": "remote task"},
         })
         assert resp.status_code == 200
-        assert net.cluster.router.get_route("remote-task-1") == "remote-node-x"
 
-    async def test_peer_join_and_discover(self, integrated_client):
+        assert net.cluster.router.get_route("remote-task-1") == "remote-node-x"
+        assert net.cluster.router.is_local("remote-task-1") is False
+
+    async def test_peer_join_updates_discovery(self, integrated_client):
         client, net = integrated_client
 
-        # A peer joins
         resp = await client.post("/peer/join", json={
             "node_card": {
                 "node_id": "peer-node-1",
@@ -165,40 +196,42 @@ class TestPeerBroadcastAndLocalDiscovery:
         })
         assert resp.status_code == 200
 
-        # Peer should be in members
-        assert net.cluster.members.contains("peer-node-1")
+        assert net.cluster.members.contains("peer-node-1") is True
+        assert net.cluster.members.get("peer-node-1").domains == ["design"]
 
-        # Store domain in cluster DHT
+        # Announce in cluster DHT
         await net.cluster.dht.announce("design", "peer-node-1")
-
-        # Discovery should find this peer for design domain
         nodes = await net.cluster.discovery.discover("design")
         assert "peer-node-1" in nodes
 
 
 class TestClusterDomainAnnouncement:
-    async def test_announce_domain_via_cluster(self, integrated_client):
+    async def test_announce_and_revoke(self, integrated_client):
         client, net = integrated_client
+
         await net.cluster.announce_domain("writing")
         assert "writing" in net.cluster.local_node.domains
         nodes = await net.cluster.dht.lookup("writing")
         assert net.cluster.node_id in nodes
 
-    async def test_revoke_domain_via_cluster(self, integrated_client):
-        client, net = integrated_client
-        await net.cluster.announce_domain("temp-domain")
-        await net.cluster.revoke_domain("temp-domain")
-        assert "temp-domain" not in net.cluster.local_node.domains
-        nodes = await net.cluster.dht.lookup("temp-domain")
+        await net.cluster.revoke_domain("writing")
+        assert "writing" not in net.cluster.local_node.domains
+        nodes = await net.cluster.dht.lookup("writing")
         assert net.cluster.node_id not in nodes
 
 
 class TestConfigIntegration:
-    async def test_cluster_config_in_network_config(self, integrated_client):
+    async def test_cluster_config_in_admin_endpoint(self, integrated_client):
         client, net = integrated_client
         resp = await client.get("/api/admin/config")
         assert resp.status_code == 200
         config = resp.json()
+
         assert "cluster" in config
-        assert "seed_nodes" in config["cluster"]
-        assert "heartbeat_interval" in config["cluster"]
+        cluster = config["cluster"]
+        assert cluster["seed_nodes"] == []
+        assert cluster["heartbeat_interval"] == 10
+        assert cluster["heartbeat_fan_out"] == 3
+        assert cluster["suspect_rounds"] == 3
+        assert cluster["offline_rounds"] == 6
+        assert cluster["protocol_version"] == "0.1.0"
