@@ -37,9 +37,6 @@ def _task_to_response(task) -> TaskResponse:
     return TaskResponse(**task.model_dump())
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Task CRUD
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/tasks", response_model=TaskResponse, status_code=201)
 async def create_task(req: CreateTaskRequest):
@@ -135,9 +132,6 @@ async def list_tasks(
     return [_task_to_response(t) for t in tasks]
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Bidding
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/tasks/{task_id}/bid", response_model=BidResponse)
 async def submit_bid(task_id: str, req: SubmitBidRequest):
@@ -191,9 +185,6 @@ async def reject_task(task_id: str, req: RejectTaskRequest):
         raise HTTPException(400, str(e))
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Results
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/tasks/{task_id}/result", response_model=OkResponse)
 async def submit_result(task_id: str, req: SubmitResultRequest):
@@ -270,9 +261,6 @@ async def get_task_results(task_id: str, initiator_id: str):
     }
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Task control
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/tasks/{task_id}/close", response_model=TaskResponse)
 async def close_task(task_id: str, req: CloseTaskRequest):
@@ -319,9 +307,6 @@ async def confirm_budget(task_id: str, req: ConfirmBudgetRequest):
         raise HTTPException(400, str(e))
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Subtasks
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/tasks/{task_id}/subtask", response_model=TaskResponse, status_code=201)
 async def create_subtask(task_id: str, req: CreateSubtaskRequest):
@@ -361,9 +346,6 @@ async def create_subtask(task_id: str, req: CreateSubtaskRequest):
         raise HTTPException(400, str(e))
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Reputation
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/reputation/events", response_model=ReputationResponse)
 async def receive_reputation_event(req: ReputationEventRequest):
@@ -379,9 +361,6 @@ async def get_reputation(agent_id: str):
     return ReputationResponse(agent_id=agent_id, score=score)
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Admin: config
-# ══════════════════════════════════════════════════════════════════════
 
 @router.get("/admin/config")
 async def get_config():
@@ -422,9 +401,6 @@ async def update_config(patch: dict):
     return new_config.model_dump()
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Admin: deadline scan
-# ══════════════════════════════════════════════════════════════════════
 
 @router.post("/admin/scan-deadlines")
 async def scan_deadlines(now: str | None = None):
@@ -432,9 +408,6 @@ async def scan_deadlines(now: str | None = None):
     return {"expired": expired_ids}
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Admin: logs
-# ══════════════════════════════════════════════════════════════════════
 
 @router.get("/admin/logs")
 async def query_logs(

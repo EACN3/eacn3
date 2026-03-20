@@ -7,11 +7,6 @@ Covers: POST /api/tasks/{id}/subtask
 import pytest
 from tests.api.conftest import create_task, bid
 
-
-# ══════════════════════════════════════════════════════════════════════
-# POST /api/tasks/{id}/subtask — 子任务创建
-# ══════════════════════════════════════════════════════════════════════
-
 class TestCreateSubtask:
     @pytest.mark.asyncio
     async def test_basic_subtask(self, client):
@@ -71,7 +66,6 @@ class TestCreateSubtask:
         })
         assert resp.status_code == 400
 
-
 class TestSubtaskInheritance:
     @pytest.mark.asyncio
     async def test_inherits_type(self, client):
@@ -90,7 +84,6 @@ class TestSubtaskInheritance:
             "initiator_id": "a1", "content": {}, "domains": ["design"], "budget": 50.0,
         })).json()
         assert sub["domains"] == ["design"]
-
 
 class TestSubtaskDepthLimits:
     @pytest.mark.asyncio
@@ -139,7 +132,6 @@ class TestSubtaskDepthLimits:
         assert resp.status_code == 201
         parent = (await client.get("/api/tasks/t1")).json()
         assert parent["remaining_budget"] == 0.0
-
 
 class TestSubtaskLifecycle:
     @pytest.mark.asyncio

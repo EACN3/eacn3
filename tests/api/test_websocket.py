@@ -11,11 +11,6 @@ import pytest
 from eacn.core.models import PushEvent, PushEventType
 from eacn.network.api.websocket import ConnectionManager
 
-
-# ══════════════════════════════════════════════════════════════════════
-# ConnectionManager unit tests (it IS an external interface)
-# ══════════════════════════════════════════════════════════════════════
-
 class TestConnectionManager:
     @pytest.fixture
     def mgr(self):
@@ -51,11 +46,6 @@ class TestConnectionManager:
         )
         delivered = await mgr.broadcast_event(event)
         assert delivered == 0
-
-
-# ══════════════════════════════════════════════════════════════════════
-# PushEvent types (all event types that flow through the WS interface)
-# ══════════════════════════════════════════════════════════════════════
 
 class TestPushEventTypes:
     """Verify all event types can be serialized for WS delivery."""

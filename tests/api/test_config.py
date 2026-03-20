@@ -11,11 +11,6 @@ from tests.api.conftest import create_task, bid, submit_result
 
 from eacn.network.config import NetworkConfig, load_config, save_config
 
-
-# ══════════════════════════════════════════════════════════════════════
-# GET /api/admin/config — 读取当前配置
-# ══════════════════════════════════════════════════════════════════════
-
 class TestGetConfig:
     @pytest.mark.asyncio
     async def test_get_config_returns_all_sections(self, client):
@@ -66,11 +61,6 @@ class TestGetConfig:
         assert data["task"]["default_max_concurrent_bidders"] == 5
         assert data["task"]["default_max_depth"] == 10
 
-
-# ══════════════════════════════════════════════════════════════════════
-# PUT /api/admin/config — 热更新配置
-# ══════════════════════════════════════════════════════════════════════
-
 class TestUpdateConfig:
     @pytest.mark.asyncio
     async def test_update_reputation_config(self, client):
@@ -118,11 +108,6 @@ class TestUpdateConfig:
         assert data["reputation"]["max_gain"] == 0.15
         assert data["matcher"]["price_tolerance"] == 0.2
 
-
-# ══════════════════════════════════════════════════════════════════════
-# Config actually affects behavior
-# ══════════════════════════════════════════════════════════════════════
-
 class TestConfigAffectsBehavior:
     @pytest.mark.asyncio
     async def test_lowered_ability_threshold_accepts_weaker_bids(self, client, funded_network):
@@ -159,11 +144,6 @@ class TestConfigAffectsBehavior:
         assert net.reputation.DEFAULT_SCORE == 0.7
         assert net.matcher._ability_threshold == 0.2
         assert net.settlement.platform_fee_rate == 0.10
-
-
-# ══════════════════════════════════════════════════════════════════════
-# TOML 文件加载/保存
-# ══════════════════════════════════════════════════════════════════════
 
 class TestTOMLConfig:
     def test_load_default_toml(self):

@@ -23,15 +23,11 @@ class ClusterRouter:
     def __init__(self, db: "Database", local_node_id: str) -> None:
         self._db = db
         self._local_node_id = local_node_id
-        # In-memory route cache (task_id -> origin_node_id)
         self._routes: dict[str, str] = {}
-        # In-memory participating nodes (task_id -> set of node_ids)
         self._participants: dict[str, set[str]] = {}
-        # Peer endpoint cache (node_id -> endpoint)
         self._endpoints: dict[str, str] = {}
 
     def set_endpoint(self, node_id: str, endpoint: str) -> None:
-        """Register a peer's endpoint for forwarding."""
         self._endpoints[node_id] = endpoint
 
     def get_endpoint(self, node_id: str) -> str | None:
@@ -40,27 +36,21 @@ class ClusterRouter:
     # ── Route management ─────────────────────────────────────────────
 
     def is_local(self, task_id: str) -> bool:
-        """Check if a task is owned by this node."""
         origin = self._routes.get(task_id)
-        if origin is None:
-            return True  # Not in routing table → assume local
-        return origin == self._local_node_id
+        return origin is None or origin == self._local_node_id
 
     def set_route(self, task_id: str, origin_node: str) -> None:
-        """Store a route: task_id -> origin_node."""
         self._routes[task_id] = origin_node
 
     def get_route(self, task_id: str) -> str | None:
-        """Get the origin node for a task."""
         return self._routes.get(task_id)
 
     def remove_route(self, task_id: str) -> None:
         self._routes.pop(task_id, None)
 
-    # ── Participant tracking (owner-side) ────────────────────────────
+    # ── Participant tracking ─────────────────────────────────────────
 
     def add_participant(self, task_id: str, node_id: str) -> None:
-        """Record that a remote node participated in a task."""
         self._participants.setdefault(task_id, set()).add(node_id)
 
     def get_participants(self, task_id: str) -> set[str]:
@@ -71,170 +61,82 @@ class ClusterRouter:
 
     # ── Forwarding ───────────────────────────────────────────────────
 
-    async def forward_bid(
-        self,
-        task_id: str,
-        agent_id: str,
-        server_id: str | None,
-        confidence: float,
-        price: float,
-    ) -> dict[str, Any]:
-        """Forward a bid to the owner node."""
+    def _resolve(self, task_id: str) -> str:
+        """Resolve task_id → peer endpoint URL. Raises ValueError on failure."""
         origin = self._routes.get(task_id)
         if not origin:
             raise ValueError(f"No route for task {task_id}")
-
         endpoint = self._endpoints.get(origin)
         if not endpoint:
             raise ValueError(f"No endpoint for node {origin}")
+        return endpoint
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{endpoint}/peer/task/bid",
-                json={
-                    "task_id": task_id,
-                    "agent_id": agent_id,
-                    "server_id": server_id or "",
-                    "confidence": confidence,
-                    "price": price,
-                    "from_node": self._local_node_id,
-                },
-            )
+    async def _post(self, url: str, body: dict, timeout: float = 10.0) -> dict:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, json=body)
             resp.raise_for_status()
             return resp.json()
 
-    async def forward_result(
-        self,
-        task_id: str,
-        agent_id: str,
-        content: Any,
-    ) -> dict[str, Any]:
-        """Forward a result submission to the owner node."""
-        origin = self._routes.get(task_id)
-        if not origin:
-            raise ValueError(f"No route for task {task_id}")
+    async def forward_bid(self, task_id: str, agent_id: str,
+                          server_id: str | None, confidence: float,
+                          price: float) -> dict[str, Any]:
+        ep = self._resolve(task_id)
+        return await self._post(f"{ep}/peer/task/bid", {
+            "task_id": task_id, "agent_id": agent_id,
+            "server_id": server_id or "", "confidence": confidence,
+            "price": price, "from_node": self._local_node_id,
+        })
 
-        endpoint = self._endpoints.get(origin)
-        if not endpoint:
-            raise ValueError(f"No endpoint for node {origin}")
+    async def forward_result(self, task_id: str, agent_id: str,
+                             content: Any) -> dict[str, Any]:
+        ep = self._resolve(task_id)
+        return await self._post(f"{ep}/peer/task/result", {
+            "task_id": task_id, "agent_id": agent_id,
+            "content": content, "from_node": self._local_node_id,
+        })
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{endpoint}/peer/task/result",
-                json={
-                    "task_id": task_id,
-                    "agent_id": agent_id,
-                    "content": content,
-                    "from_node": self._local_node_id,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()
+    async def forward_reject(self, task_id: str,
+                             agent_id: str) -> dict[str, Any]:
+        ep = self._resolve(task_id)
+        return await self._post(f"{ep}/peer/task/reject", {
+            "task_id": task_id, "agent_id": agent_id,
+            "from_node": self._local_node_id,
+        })
 
-    async def forward_reject(
-        self,
-        task_id: str,
-        agent_id: str,
-    ) -> dict[str, Any]:
-        """Forward a task rejection to the owner node."""
-        origin = self._routes.get(task_id)
-        if not origin:
-            raise ValueError(f"No route for task {task_id}")
+    async def forward_subtask(self, parent_task_id: str,
+                              subtask_data: dict[str, Any]) -> dict[str, Any]:
+        ep = self._resolve(parent_task_id)
+        return await self._post(f"{ep}/peer/task/subtask", {
+            "parent_task_id": parent_task_id,
+            "subtask_data": subtask_data,
+            "from_node": self._local_node_id,
+        })
 
-        endpoint = self._endpoints.get(origin)
-        if not endpoint:
-            raise ValueError(f"No endpoint for node {origin}")
-
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{endpoint}/peer/task/reject",
-                json={
-                    "task_id": task_id,
-                    "agent_id": agent_id,
-                    "from_node": self._local_node_id,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()
-
-    async def forward_subtask(
-        self,
-        parent_task_id: str,
-        subtask_data: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Forward subtask creation to the owner node."""
-        origin = self._routes.get(parent_task_id)
-        if not origin:
-            raise ValueError(f"No route for task {parent_task_id}")
-
-        endpoint = self._endpoints.get(origin)
-        if not endpoint:
-            raise ValueError(f"No endpoint for node {origin}")
-
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{endpoint}/peer/task/subtask",
-                json={
-                    "parent_task_id": parent_task_id,
-                    "subtask_data": subtask_data,
-                    "from_node": self._local_node_id,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()
-
-    async def notify_status(
-        self,
-        task_id: str,
-        status: str,
-        participant_nodes: set[str],
-        payload: dict[str, Any] | None = None,
-    ) -> None:
-        """Notify participating nodes of a status change."""
-        for node_id in participant_nodes:
+    async def _broadcast_to_nodes(self, nodes: set[str], path: str,
+                                  body: dict, timeout: float = 5.0) -> None:
+        """POST to multiple nodes, skip self and missing endpoints, swallow errors."""
+        for node_id in nodes:
             if node_id == self._local_node_id:
                 continue
             endpoint = self._endpoints.get(node_id)
             if not endpoint:
                 continue
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    await client.post(
-                        f"{endpoint}/peer/task/status",
-                        json={
-                            "task_id": task_id,
-                            "status": status,
-                            "payload": payload or {},
-                        },
-                    )
+                await self._post(f"{endpoint}{path}", body, timeout)
             except Exception:
-                _log.warning("Failed to notify node %s of status change", node_id)
+                _log.warning("Failed to reach node %s at %s", node_id, path)
 
-    async def forward_push(
-        self,
-        event_type: str,
-        task_id: str,
-        recipients: list[str],
-        payload: dict[str, Any],
-        target_nodes: set[str],
-    ) -> None:
-        """Forward push event to specific nodes for local delivery."""
-        for node_id in target_nodes:
-            if node_id == self._local_node_id:
-                continue
-            endpoint = self._endpoints.get(node_id)
-            if not endpoint:
-                continue
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    await client.post(
-                        f"{endpoint}/peer/push",
-                        json={
-                            "type": event_type,
-                            "task_id": task_id,
-                            "recipients": recipients,
-                            "payload": payload,
-                        },
-                    )
-            except Exception:
-                _log.warning("Failed to forward push to node %s", node_id)
+    async def notify_status(self, task_id: str, status: str,
+                            participant_nodes: set[str],
+                            payload: dict[str, Any] | None = None) -> None:
+        await self._broadcast_to_nodes(participant_nodes, "/peer/task/status", {
+            "task_id": task_id, "status": status, "payload": payload or {},
+        })
+
+    async def forward_push(self, event_type: str, task_id: str,
+                           recipients: list[str], payload: dict[str, Any],
+                           target_nodes: set[str]) -> None:
+        await self._broadcast_to_nodes(target_nodes, "/peer/push", {
+            "type": event_type, "task_id": task_id,
+            "recipients": recipients, "payload": payload,
+        })

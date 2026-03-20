@@ -9,11 +9,6 @@ from tests.api.conftest import (
     setup_task_with_result,
 )
 
-
-# ══════════════════════════════════════════════════════════════════════
-# POST /api/admin/scan-deadlines — 扫描过期任务
-# ══════════════════════════════════════════════════════════════════════
-
 class TestScanDeadlines:
     @pytest.mark.asyncio
     async def test_scan_finds_expired(self, client):
@@ -119,11 +114,6 @@ class TestScanDeadlines:
             params={"now": "2025-06-01T12:00:00+00:00"},
         )
         assert "t1" in resp.json()["expired"]
-
-
-# ══════════════════════════════════════════════════════════════════════
-# GET /api/admin/logs — 日志查询
-# ══════════════════════════════════════════════════════════════════════
 
 class TestQueryLogs:
     @pytest.mark.asyncio

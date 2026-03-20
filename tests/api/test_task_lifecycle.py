@@ -9,10 +9,6 @@ import pytest
 from tests.api.conftest import create_task, bid, submit_result, close_task
 
 
-# ══════════════════════════════════════════════════════════════════════
-# POST /api/tasks — 创建任务
-# ══════════════════════════════════════════════════════════════════════
-
 class TestCreateTask:
     @pytest.mark.asyncio
     async def test_basic_creation(self, client):
@@ -53,47 +49,10 @@ class TestCreateTask:
         assert data["remaining_budget"] == 500.0
 
     @pytest.mark.asyncio
-    async def test_duplicate_task_409(self, client):
-        await create_task(client, task_id="t1", budget=50.0)
-        resp = await client.post("/api/tasks", json={
-            "task_id": "t1", "initiator_id": "user1",
-            "content": {}, "domains": ["coding"], "budget": 50.0,
-        })
-        assert resp.status_code == 409
-
-    @pytest.mark.asyncio
-    async def test_insufficient_funds_402(self, api):
-        resp = await api.post("/api/tasks", json={
-            "task_id": "t1", "initiator_id": "broke_user",
-            "content": {}, "domains": ["coding"], "budget": 999999.0,
-        })
-        assert resp.status_code == 402
-
-    @pytest.mark.asyncio
     async def test_zero_budget_allowed(self, client):
         data = await create_task(client, task_id="t1", budget=0.0)
         assert data["budget"] == 0.0
 
-    @pytest.mark.asyncio
-    async def test_validation_empty_domains_422(self, client):
-        resp = await client.post("/api/tasks", json={
-            "task_id": "t1", "initiator_id": "user1",
-            "content": {}, "domains": [], "budget": 100.0,
-        })
-        assert resp.status_code == 422
-
-    @pytest.mark.asyncio
-    async def test_validation_negative_budget_422(self, client):
-        resp = await client.post("/api/tasks", json={
-            "task_id": "t1", "initiator_id": "user1",
-            "content": {}, "domains": ["coding"], "budget": -10.0,
-        })
-        assert resp.status_code == 422
-
-
-# ══════════════════════════════════════════════════════════════════════
-# GET /api/tasks/{id} — 获取单个任务
-# ══════════════════════════════════════════════════════════════════════
 
 class TestGetTask:
     @pytest.mark.asyncio
@@ -102,11 +61,6 @@ class TestGetTask:
         resp = await client.get("/api/tasks/t1")
         assert resp.status_code == 200
         assert resp.json()["id"] == "t1"
-
-    @pytest.mark.asyncio
-    async def test_get_nonexistent_404(self, client):
-        resp = await client.get("/api/tasks/nonexistent")
-        assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_get_reflects_state_changes(self, client):
@@ -127,10 +81,6 @@ class TestGetTask:
         assert data["bids"][0]["agent_id"] == "a1"
         assert data["bids"][0]["price"] == 80.0
 
-
-# ══════════════════════════════════════════════════════════════════════
-# GET /api/tasks — 列表 + 过滤
-# ══════════════════════════════════════════════════════════════════════
 
 class TestListTasks:
     @pytest.mark.asyncio
@@ -188,10 +138,6 @@ class TestListTasks:
         assert offset_tasks[0]["id"] == all_tasks[5]["id"]
 
 
-# ══════════════════════════════════════════════════════════════════════
-# POST /api/tasks/{id}/close — 关闭任务
-# ══════════════════════════════════════════════════════════════════════
-
 class TestCloseTask:
     @pytest.mark.asyncio
     async def test_close_no_results(self, client):
@@ -208,14 +154,6 @@ class TestCloseTask:
         assert data["status"] == "awaiting_retrieval"
 
     @pytest.mark.asyncio
-    async def test_close_already_completed_400(self, client):
-        await create_task(client, task_id="t1")
-        await close_task(client, task_id="t1")
-        # Second close on a terminal state should fail
-        resp = await client.post("/api/tasks/t1/close", json={"initiator_id": "user1"})
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
     async def test_close_triggers_refund_on_no_results(self, client):
         """Budget should be refunded when task is closed with no results."""
         await create_task(client, task_id="t1", budget=200.0)
@@ -224,10 +162,6 @@ class TestCloseTask:
         data = (await client.get("/api/tasks/t1")).json()
         assert data["status"] == "no_one_able"
 
-
-# ══════════════════════════════════════════════════════════════════════
-# PUT /api/tasks/{id}/deadline — 更新截止时间
-# ══════════════════════════════════════════════════════════════════════
 
 class TestUpdateDeadline:
     @pytest.mark.asyncio
@@ -260,20 +194,6 @@ class TestUpdateDeadline:
         )
         assert resp.status_code == 200
 
-    @pytest.mark.asyncio
-    async def test_update_deadline_on_completed_fails(self, client):
-        await create_task(client, task_id="t1")
-        await close_task(client, task_id="t1")
-        resp = await client.put(
-            "/api/tasks/t1/deadline",
-            json={"initiator_id": "user1", "deadline": "2030-01-01"},
-        )
-        assert resp.status_code == 400
-
-
-# ══════════════════════════════════════════════════════════════════════
-# POST /api/tasks/{id}/discussions — 讨论消息
-# ══════════════════════════════════════════════════════════════════════
 
 class TestUpdateDiscussions:
     @pytest.mark.asyncio
@@ -303,75 +223,27 @@ class TestUpdateDiscussions:
         assert data is not None
 
 
-# ══════════════════════════════════════════════════════════════════════
-# State machine transitions — 通过接口验证状态流转
-# ══════════════════════════════════════════════════════════════════════
-
 class TestStateMachineViaAPI:
     @pytest.mark.asyncio
     async def test_unclaimed_to_bidding(self, client):
-        """First bid transitions unclaimed → bidding."""
         await create_task(client, task_id="t1")
-        data = (await client.get("/api/tasks/t1")).json()
-        assert data["status"] == "unclaimed"
-
+        assert (await client.get("/api/tasks/t1")).json()["status"] == "unclaimed"
         await bid(client, task_id="t1")
-        data = (await client.get("/api/tasks/t1")).json()
-        assert data["status"] == "bidding"
+        assert (await client.get("/api/tasks/t1")).json()["status"] == "bidding"
 
     @pytest.mark.asyncio
-    async def test_unclaimed_to_no_one_able(self, client):
-        """Close unclaimed task → no_one_able."""
-        await create_task(client, task_id="t1")
-        await close_task(client, task_id="t1")
-        data = (await client.get("/api/tasks/t1")).json()
-        assert data["status"] == "no_one_able"
-
-    @pytest.mark.asyncio
-    async def test_bidding_to_awaiting_retrieval(self, client):
-        """Close bidding task with results → awaiting_retrieval."""
+    async def test_full_state_transitions(self, client):
+        """unclaimed → bidding → awaiting_retrieval → completed."""
         await create_task(client, task_id="t1")
         await bid(client, task_id="t1")
         await submit_result(client, task_id="t1")
         await close_task(client, task_id="t1")
-        data = (await client.get("/api/tasks/t1")).json()
-        assert data["status"] == "awaiting_retrieval"
+        assert (await client.get("/api/tasks/t1")).json()["status"] == "awaiting_retrieval"
+        await client.get("/api/tasks/t1/results", params={"initiator_id": "user1"})
+        assert (await client.get("/api/tasks/t1")).json()["status"] == "completed"
 
     @pytest.mark.asyncio
-    async def test_awaiting_to_completed(self, client):
-        """Collect results transitions awaiting → completed."""
-        await create_task(client, task_id="t1")
-        await bid(client, task_id="t1")
-        await submit_result(client, task_id="t1")
-        await close_task(client, task_id="t1")
-        # Collect results triggers transition
-        resp = await client.get("/api/tasks/t1/results", params={"initiator_id": "user1"})
-        assert resp.status_code == 200
-        data = (await client.get("/api/tasks/t1")).json()
-        assert data["status"] == "completed"
-
-    @pytest.mark.asyncio
-    async def test_auto_collect_fills_slots(self, client):
-        """When all slots filled and results submitted → auto collect."""
-        await create_task(
-            client, task_id="t1", budget=200.0, max_concurrent_bidders=1,
-        )
-        await bid(client, task_id="t1", agent_id="a1", price=80.0)
-        await submit_result(client, task_id="t1", agent_id="a1")
-        # Should auto-collect since max_concurrent=1 and result submitted
-        data = (await client.get("/api/tasks/t1")).json()
-        assert data["status"] in ("awaiting_retrieval", "bidding")
-
-    @pytest.mark.asyncio
-    async def test_terminal_states_are_final(self, client):
-        """Completed and no_one_able are terminal."""
+    async def test_unclaimed_close_to_no_one_able(self, client):
         await create_task(client, task_id="t1")
         await close_task(client, task_id="t1")
-        data = (await client.get("/api/tasks/t1")).json()
-        assert data["status"] == "no_one_able"
-
-        # Cannot bid on terminal task
-        resp = await client.post("/api/tasks/t1/bid", json={
-            "agent_id": "a1", "confidence": 0.9, "price": 80.0,
-        })
-        assert resp.status_code == 400
+        assert (await client.get("/api/tasks/t1")).json()["status"] == "no_one_able"

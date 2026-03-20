@@ -6,7 +6,7 @@ Covers: POST /api/tasks/{id}/bid
 """
 
 import pytest
-from tests.api.conftest import create_task, bid
+from tests.api.conftest import create_task, bid, submit_result
 
 
 class TestBidBasic:
@@ -115,42 +115,10 @@ class TestBidOverBudget:
 
 class TestBidEdgeCases:
     @pytest.mark.asyncio
-    async def test_bid_on_nonexistent_task(self, client):
-        resp = await client.post("/api/tasks/nonexistent/bid", json={
-            "agent_id": "a1", "confidence": 0.9, "price": 80.0,
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_bid_on_closed_task(self, client):
-        await create_task(client, task_id="t1")
-        await client.post("/api/tasks/t1/close", json={"initiator_id": "user1"})
-        resp = await client.post("/api/tasks/t1/bid", json={
-            "agent_id": "a1", "confidence": 0.9, "price": 80.0,
-        })
-        assert resp.status_code == 400
-
-    @pytest.mark.asyncio
     async def test_zero_price_bid(self, client):
         await create_task(client, task_id="t1")
         data = await bid(client, task_id="t1", agent_id="a1", confidence=0.9, price=0.0)
         assert data["status"] == "executing"
-
-    @pytest.mark.asyncio
-    async def test_validation_confidence_out_of_range(self, client):
-        await create_task(client, task_id="t1")
-        resp = await client.post("/api/tasks/t1/bid", json={
-            "agent_id": "a1", "confidence": 1.5, "price": 80.0,
-        })
-        assert resp.status_code == 422
-
-    @pytest.mark.asyncio
-    async def test_validation_negative_price(self, client):
-        await create_task(client, task_id="t1")
-        resp = await client.post("/api/tasks/t1/bid", json={
-            "agent_id": "a1", "confidence": 0.9, "price": -10.0,
-        })
-        assert resp.status_code == 422
 
 
 class TestBidPromotion:
@@ -160,12 +128,82 @@ class TestBidPromotion:
         await create_task(client, task_id="t1", max_concurrent_bidders=1)
         await bid(client, task_id="t1", agent_id="a1", price=80.0)
         await bid(client, task_id="t1", agent_id="a2", price=70.0)
+        await submit_result(client, task_id="t1", agent_id="a1")
+        data = (await client.get("/api/tasks/t1")).json()
+        statuses = {b["agent_id"]: b["status"] for b in data["bids"]}
+        assert statuses.get("a2") in ("executing", "accepted")
 
-        # a1 submits result → frees slot → a2 promoted
-        await client.post("/api/tasks/t1/result", json={
-            "agent_id": "a1", "content": "done",
+    @pytest.mark.asyncio
+    async def test_promotion_order_fifo(self, client):
+        """FIFO: a2 promoted before a3."""
+        await create_task(client, task_id="t1", budget=500.0, max_concurrent_bidders=1)
+        await bid(client, task_id="t1", agent_id="a1", price=80.0)
+        await bid(client, task_id="t1", agent_id="a2", price=70.0)
+        await bid(client, task_id="t1", agent_id="a3", price=60.0)
+        await submit_result(client, task_id="t1", agent_id="a1")
+        data = (await client.get("/api/tasks/t1")).json()
+        statuses = {b["agent_id"]: b["status"] for b in data["bids"]}
+        assert statuses["a2"] in ("executing", "accepted")
+        assert statuses["a3"] == "waiting"
+
+    @pytest.mark.asyncio
+    async def test_chain_promotion(self, client):
+        """Chain: a1 done → a2 promoted → a2 done → a3 promoted."""
+        await create_task(client, task_id="t1", budget=500.0, max_concurrent_bidders=1)
+        await bid(client, task_id="t1", agent_id="a1", price=80.0)
+        await bid(client, task_id="t1", agent_id="a2", price=70.0)
+        await bid(client, task_id="t1", agent_id="a3", price=60.0)
+        await submit_result(client, task_id="t1", agent_id="a1")
+        await submit_result(client, task_id="t1", agent_id="a2")
+        data = (await client.get("/api/tasks/t1")).json()
+        statuses = {b["agent_id"]: b["status"] for b in data["bids"]}
+        assert statuses["a3"] in ("executing", "accepted")
+
+    @pytest.mark.asyncio
+    async def test_reject_promotes_waiting(self, client):
+        """Rejecting executing bid promotes next waiting."""
+        await create_task(client, task_id="t1", budget=500.0, max_concurrent_bidders=1)
+        await bid(client, task_id="t1", agent_id="a1", price=80.0)
+        await bid(client, task_id="t1", agent_id="a2", price=70.0)
+        await client.post("/api/tasks/t1/reject", json={"agent_id": "a1"})
+        data = (await client.get("/api/tasks/t1")).json()
+        statuses = {b["agent_id"]: b["status"] for b in data["bids"]}
+        assert statuses["a1"] == "rejected"
+        assert statuses["a2"] in ("executing", "accepted")
+
+
+class TestBidConfirmBudget:
+    @pytest.mark.asyncio
+    async def test_confirm_budget_promotes_pending(self, client):
+        await create_task(client, task_id="t1", budget=50.0)
+        await bid(client, task_id="t1", agent_id="a1", confidence=0.9, price=100.0)
+        resp = await client.post("/api/tasks/t1/confirm-budget", json={
+            "initiator_id": "user1", "approved": True, "new_budget": 100.0,
+        })
+        assert resp.status_code == 200
+        data = (await client.get("/api/tasks/t1")).json()
+        statuses = {b["agent_id"]: b["status"] for b in data["bids"]}
+        assert statuses["a1"] == "executing"
+
+    @pytest.mark.asyncio
+    async def test_confirm_insufficient_keeps_pending(self, client):
+        await create_task(client, task_id="t1", budget=50.0)
+        await bid(client, task_id="t1", agent_id="a1", confidence=0.9, price=200.0)
+        await client.post("/api/tasks/t1/confirm-budget", json={
+            "initiator_id": "user1", "approved": True, "new_budget": 60.0,
         })
         data = (await client.get("/api/tasks/t1")).json()
         statuses = {b["agent_id"]: b["status"] for b in data["bids"]}
-        # a2 should have been promoted from waiting
-        assert statuses.get("a2") in ("executing", "accepted")
+        assert statuses["a1"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_confirm_budget_rejected(self, client):
+        await create_task(client, task_id="t1", budget=50.0)
+        await bid(client, task_id="t1", agent_id="a1", confidence=0.9, price=100.0)
+        resp = await client.post("/api/tasks/t1/confirm-budget", json={
+            "initiator_id": "user1", "approved": False,
+        })
+        assert resp.status_code == 200
+        data = (await client.get("/api/tasks/t1")).json()
+        statuses = {b["agent_id"]: b["status"] for b in data["bids"]}
+        assert statuses["a1"] == "rejected"

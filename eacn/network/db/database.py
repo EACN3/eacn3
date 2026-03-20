@@ -183,9 +183,6 @@ class Database:
         """)
         await self.db.commit()
 
-    # ══════════════════════════════════════════════════════════════════
-    # Task store
-    # ══════════════════════════════════════════════════════════════════
 
     async def save_task(self, task_id: str, data: dict[str, Any]) -> None:
         """Insert or replace a full task JSON blob."""
@@ -265,9 +262,6 @@ class Database:
         await self.db.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         await self.db.commit()
 
-    # ══════════════════════════════════════════════════════════════════
-    # Account store
-    # ══════════════════════════════════════════════════════════════════
 
     async def get_account(self, agent_id: str) -> dict[str, float] | None:
         async with self.db.execute(
@@ -289,9 +283,6 @@ class Database:
         )
         await self.db.commit()
 
-    # ══════════════════════════════════════════════════════════════════
-    # Escrow store
-    # ══════════════════════════════════════════════════════════════════
 
     async def save_escrow(
         self, task_id: str, initiator_id: str, amount: float
@@ -317,9 +308,6 @@ class Database:
         await self.db.execute("DELETE FROM escrow WHERE task_id = ?", (task_id,))
         await self.db.commit()
 
-    # ══════════════════════════════════════════════════════════════════
-    # Reputation store
-    # ══════════════════════════════════════════════════════════════════
 
     async def get_reputation(self, agent_id: str) -> tuple[float, dict] | None:
         async with self.db.execute(
@@ -363,9 +351,6 @@ class Database:
         )
         await self.db.commit()
 
-    # ══════════════════════════════════════════════════════════════════
-    # Log store
-    # ══════════════════════════════════════════════════════════════════
 
     async def insert_log(
         self,
@@ -439,9 +424,6 @@ class Database:
                 for r in rows
             ]
 
-    # ══════════════════════════════════════════════════════════════════
-    # DHT store
-    # ══════════════════════════════════════════════════════════════════
 
     async def dht_announce(self, domain: str, agent_id: str) -> None:
         await self.db.execute(
@@ -464,9 +446,6 @@ class Database:
             rows = await cursor.fetchall()
             return [r[0] for r in rows]
 
-    # ══════════════════════════════════════════════════════════════════
-    # Push history store
-    # ══════════════════════════════════════════════════════════════════
 
     async def insert_push(
         self,
@@ -503,9 +482,6 @@ class Database:
                 for r in rows
             ]
 
-    # ══════════════════════════════════════════════════════════════════
-    # AgentCard store
-    # ══════════════════════════════════════════════════════════════════
 
     async def save_agent_card(self, card: dict[str, Any]) -> None:
         await self.db.execute(
@@ -583,9 +559,6 @@ class Database:
             rows = await cursor.fetchall()
             return [r[0] for r in rows]
 
-    # ══════════════════════════════════════════════════════════════════
-    # ServerCard store
-    # ══════════════════════════════════════════════════════════════════
 
     async def save_server_card(
         self, server_id: str, version: str, endpoint: str, owner: str, status: str = "online",
@@ -626,9 +599,6 @@ class Database:
         )
         await self.db.commit()
 
-    # ══════════════════════════════════════════════════════════════════
-    # DHT store (extended)
-    # ══════════════════════════════════════════════════════════════════
 
     async def dht_revoke_all(self, agent_id: str) -> None:
         await self.db.execute(
@@ -644,9 +614,6 @@ class Database:
         )
         await self.db.commit()
 
-    # ══════════════════════════════════════════════════════════════════
-    # Gossip store
-    # ══════════════════════════════════════════════════════════════════
 
     async def gossip_add(self, agent_id: str, known_agent_id: str) -> None:
         await self.db.execute(
@@ -678,9 +645,6 @@ class Database:
         )
         await self.db.commit()
 
-    # ══════════════════════════════════════════════════════════════════
-    # Cluster: Node store
-    # ══════════════════════════════════════════════════════════════════
 
     async def cluster_save_node(self, node: dict[str, Any]) -> None:
         await self.db.execute(
@@ -746,9 +710,6 @@ class Database:
         )
         await self.db.commit()
 
-    # ══════════════════════════════════════════════════════════════════
-    # Cluster: Task routes
-    # ══════════════════════════════════════════════════════════════════
 
     async def cluster_set_route(self, task_id: str, origin_node: str) -> None:
         await self.db.execute(
@@ -773,9 +734,6 @@ class Database:
         )
         await self.db.commit()
 
-    # ══════════════════════════════════════════════════════════════════
-    # Cluster: Task participants
-    # ══════════════════════════════════════════════════════════════════
 
     async def cluster_add_participant(self, task_id: str, node_id: str) -> None:
         await self.db.execute(
@@ -799,9 +757,6 @@ class Database:
         )
         await self.db.commit()
 
-    # ══════════════════════════════════════════════════════════════════
-    # Cluster: DHT (domain → node_id)
-    # ══════════════════════════════════════════════════════════════════
 
     async def cluster_dht_store(self, domain: str, node_id: str) -> None:
         await self.db.execute(
@@ -830,9 +785,6 @@ class Database:
             rows = await cursor.fetchall()
             return [r[0] for r in rows]
 
-    # ══════════════════════════════════════════════════════════════════
-    # Cluster: Gossip (node-level known lists)
-    # ══════════════════════════════════════════════════════════════════
 
     async def cluster_gossip_add(self, node_id: str, known_node_id: str) -> None:
         await self.db.execute(

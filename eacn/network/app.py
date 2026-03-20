@@ -1,14 +1,4 @@
-"""Network application: the full orchestration layer.
-
-This is the central coordinator that ties together all network-side modules.
-All task lifecycle operations flow through here.
-
-Architecture:
-- Stateless logic (horizontally scalable)
-- Task data in persistent storage (TaskManager)
-- DHT for distributed discovery
-- Gossip for self-healing agent propagation
-"""
+"""Network application: central coordinator for all task lifecycle operations."""
 
 from __future__ import annotations
 
@@ -35,21 +25,7 @@ _log = logging.getLogger(__name__)
 
 
 class Network:
-    """EACN network node: stateless orchestration, DHT-redundant, gossip self-healing.
-
-    Public API methods (all async):
-    - create_task: publish a new task
-    - submit_bid: agent bids on a task
-    - submit_result: agent submits execution result
-    - select_result: initiator picks winning result
-    - close_task: initiator manually closes task
-    - collect_results: initiator retrieves results (first call → COMPLETED)
-    - create_subtask: executor delegates part of work
-    - update_deadline: change task deadline
-    - update_discussions: append discussion message
-    - confirm_budget: initiator approves/rejects over-budget bid
-    - scan_deadlines: periodic deadline expiration check
-    """
+    """EACN network node: stateless orchestration, DHT-redundant, gossip self-healing."""
 
     def __init__(
         self,
@@ -88,10 +64,6 @@ class Network:
         _log.info("EACN Network starting...")
         await self.cluster.start()
 
-    # ══════════════════════════════════════════════════════════════════
-    # Task creation
-    # ══════════════════════════════════════════════════════════════════
-
     async def create_task(
         self,
         task_id: str,
@@ -103,19 +75,8 @@ class Network:
         max_concurrent_bidders: int | None = None,
         max_depth: int | None = None,
     ) -> Task:
-        """Publish a new task to the network.
-
-        Flow:
-        1. Freeze initiator's budget → escrow
-        2. Create task in TaskManager
-        3. Discover candidate agents via DHT
-        4. Match and rank candidates
-        5. Push task broadcast to candidates
-        """
-        # 1. Freeze budget
+        """Publish a new task: freeze budget → create → discover → broadcast."""
         self.escrow.freeze_budget(initiator_id, task_id, budget)
-
-        # 2. Create task
         task = Task(
             id=task_id,
             content=content,
@@ -127,14 +88,8 @@ class Network:
             max_depth=max_depth or self.config.task.default_max_depth,
         )
         task = self.task_manager.create(task)
-
-        # 3. Log
         self._log_event("create_task", task_id=task_id, agent_id=initiator_id)
-
-        # 4. Discover + match + push
         await self._broadcast_to_candidates(task)
-
-        # 5. Cluster: broadcast to peer nodes
         await self.cluster.broadcast_task({
             "task_id": task.id,
             "initiator_id": initiator_id,
@@ -148,9 +103,6 @@ class Network:
 
         return task
 
-    # ══════════════════════════════════════════════════════════════════
-    # Bidding
-    # ══════════════════════════════════════════════════════════════════
 
     async def submit_bid(
         self,
@@ -160,29 +112,16 @@ class Network:
         price: float,
         server_id: str | None = None,
     ) -> BidStatus:
-        """Agent submits a bid on a task.
-
-        Flow:
-        1. Check for duplicate bid
-        2. Validate via Matcher (ability gate + price gate)
-        3. If price exceeds tolerance:
-           a. If concurrent slots not full → request budget confirmation
-           b. If concurrent slots full → reject (budget locked)
-        4. Add bid to TaskManager (EXECUTING or WAITING)
-        5. Push bid result to agent
-        """
+        """Agent bids on a task: validate → add bid → push result."""
         task = self.task_manager.get(task_id)
 
-        # 0. Duplicate bid check
         if any(b.agent_id == agent_id for b in task.bids):
             raise TaskError(f"Agent {agent_id} already bid on task {task_id}")
 
-        # Fetch reputation data
         scores = self.reputation.get_scores([agent_id])
         negotiation_gain = self.reputation.negotiation_gain(agent_id)
         is_adjudication = task.type == TaskType.ADJUDICATION
 
-        # 1. Validate
         check = self.matcher.check_bid(
             agent_id=agent_id,
             confidence=confidence,
@@ -252,26 +191,19 @@ class Network:
                 )
                 return BidStatus.REJECTED
 
-        # 2. Passed validation → add bid
         bid = Bid(agent_id=agent_id, confidence=confidence, price=price)
         bid_status = self.task_manager.add_bid(task_id, bid)
 
-        # 3. Push result
         await self.push.notify_bid_result(
             task_id, agent_id, accepted=True,
         )
 
-        # 4. Log
         self._log_event("submit_bid", task_id=task_id, agent_id=agent_id)
 
-        # 5. Gossip: exchange known agents between bidder and initiator
         await self.gossip.exchange(agent_id, task.initiator_id)
 
         return bid_status
 
-    # ══════════════════════════════════════════════════════════════════
-    # Task rejection (agent withdraws)
-    # ══════════════════════════════════════════════════════════════════
 
     async def reject_task(
         self,
@@ -279,13 +211,7 @@ class Network:
         agent_id: str,
         reason: str = "",
     ) -> None:
-        """Agent rejects/withdraws from an assigned task.
-
-        Flow:
-        1. Mark bid as REJECTED in TaskManager
-        2. Promote next from wait queue
-        3. Push rejection notification
-        """
+        """Agent withdraws from task: reject bid → promote next."""
         task = self.task_manager.get(task_id)
 
         # Find and reject the agent's bid
@@ -305,9 +231,6 @@ class Network:
                 reason="Promoted from wait queue",
             )
 
-    # ══════════════════════════════════════════════════════════════════
-    # Result submission
-    # ══════════════════════════════════════════════════════════════════
 
     async def submit_result(
         self,
@@ -315,19 +238,9 @@ class Network:
         agent_id: str,
         content: Any,
     ) -> None:
-        """Agent submits execution result.
-
-        Flow:
-        1. Validate caller is in bidders
-        2. Add result to TaskManager
-        3. If adjudication task → auto-collect to parent result
-        4. If normal task → trigger adjudication
-        5. Check auto-collection
-        6. Promote next from wait queue
-        """
+        """Agent submits result: validate → store → adjudicate → promote."""
         task = self.task_manager.get(task_id)
 
-        # 1. Validate caller is in bidders (has an active bid)
         bidder_ids = [
             b.agent_id for b in task.bids
             if b.status in (BidStatus.EXECUTING, BidStatus.ACCEPTED, BidStatus.WAITING)
@@ -339,13 +252,10 @@ class Network:
 
         result = Result(agent_id=agent_id, content=content)
 
-        # 2. Add result
         self.task_manager.add_result(task_id, result)
 
-        # 3. Log
         self._log_event("submit_result", task_id=task_id, agent_id=agent_id)
 
-        # 4. Adjudication auto-collection: if this is an adjudication task,
         #    collect result directly into parent task's result adjudications
         if task.type == TaskType.ADJUDICATION and task.parent_id:
             try:
@@ -368,15 +278,12 @@ class Network:
             except TaskError:
                 pass  # parent not found, skip
 
-        # 5. Trigger adjudication for normal tasks (non-blocking side path)
         if self.adjudication.should_create_adjudication(task):
             await self._create_adjudication(task, agent_id)
 
-        # 6. Check auto-collection
         if self.task_manager.check_auto_collect(task_id):
             await self.push.notify_task_collected(task)
 
-        # 7. Promote next from wait queue
         promoted = self.task_manager.promote_from_queue(task_id)
         if promoted:
             await self.push.notify_bid_result(
@@ -384,7 +291,6 @@ class Network:
                 reason="Promoted from wait queue",
             )
 
-        # 8. If this is a subtask, notify parent executors
         if task.parent_id:
             try:
                 parent = self.task_manager.get(task.parent_id)
@@ -392,9 +298,6 @@ class Network:
             except TaskError:
                 pass  # parent not found, ignore
 
-    # ══════════════════════════════════════════════════════════════════
-    # Result selection (settlement)
-    # ══════════════════════════════════════════════════════════════════
 
     async def select_result(
         self,
@@ -402,66 +305,40 @@ class Network:
         agent_id: str,
         initiator_id: str,
     ) -> None:
-        """Initiator selects a winning result.
-
-        Preconditions:
-        - Caller must be the task initiator
-        - Task status must be AWAITING_RETRIEVAL or COMPLETED
-
-        Flow:
-        1. Mark result as selected in TaskManager
-        2. Settle payment (escrow → executor + platform fee + refund)
-        3. Propagate reputation (PageRank)
-        """
+        """Initiator selects winning result: settle payment → update reputation."""
         task = self.task_manager.get(task_id)
 
-        # Auth: only initiator can select
         if task.initiator_id != initiator_id:
             raise TaskError("Only the task initiator can select a result")
 
-        # State: must be AWAITING_RETRIEVAL or COMPLETED
         if task.status not in (TaskStatus.AWAITING_RETRIEVAL, TaskStatus.COMPLETED):
             raise TaskError(
                 f"Cannot select result in status {task.status.value}; "
                 "task must be in awaiting_retrieval or completed"
             )
 
-        # 1. Select result
         selected = self.task_manager.select_result(task_id, agent_id)
 
-        # 2. Find the bid price
         bid_price = 0.0
         for bid in task.bids:
             if bid.agent_id == agent_id:
                 bid_price = bid.price
                 break
 
-        # 3. Settle (skip for adjudication tasks which have zero budget)
         if task.type != TaskType.ADJUDICATION and bid_price > 0:
             self.settlement.settle(task_id, agent_id, bid_price)
 
-        # 4. Reputation propagation
         self.reputation.propagate_selection(task.initiator_id, agent_id)
 
-        # 5. Cluster: gossip exchange with participating nodes
         await self.cluster.trigger_gossip(task_id)
 
-        # 6. Log
         self._log_event("select_result", task_id=task_id, agent_id=agent_id)
 
-    # ══════════════════════════════════════════════════════════════════
-    # Task control
-    # ══════════════════════════════════════════════════════════════════
 
     async def close_task(self, task_id: str, initiator_id: str) -> Task:
-        """Initiator manually closes a task.
-
-        Preconditions:
-        - Caller must be the task initiator
-        """
+        """Initiator closes task → AWAITING_RETRIEVAL or NO_ONE_ABLE."""
         task = self.task_manager.get(task_id)
 
-        # Auth: only initiator can close
         if task.initiator_id != initiator_id:
             raise TaskError("Only the task initiator can close this task")
 
@@ -484,14 +361,8 @@ class Network:
     async def update_deadline(
         self, task_id: str, deadline: str, initiator_id: str,
     ) -> Task:
-        """Update task deadline.
-
-        Preconditions:
-        - Caller must be the task initiator
-        """
         task = self.task_manager.get(task_id)
 
-        # Auth: only initiator can update deadline
         if task.initiator_id != initiator_id:
             raise TaskError("Only the task initiator can update the deadline")
 
@@ -502,19 +373,12 @@ class Network:
     async def update_discussions(
         self, task_id: str, message: str, initiator_id: str,
     ) -> Task:
-        """Append discussion and push to all bidders.
-
-        Preconditions:
-        - Caller must be the task initiator
-        - Task status must be BIDDING
-        """
+        """Append discussion and push to all bidders."""
         task = self.task_manager.get(task_id)
 
-        # Auth: only initiator can update discussions
         if task.initiator_id != initiator_id:
             raise TaskError("Only the task initiator can update discussions")
 
-        # State: must be BIDDING
         if task.status != TaskStatus.BIDDING:
             raise TaskError(
                 f"Cannot update discussions in status {task.status.value}; "
@@ -533,14 +397,9 @@ class Network:
         approved: bool,
         new_budget: float | None = None,
     ) -> None:
-        """Initiator responds to over-budget bid confirmation request.
-
-        - approved=True + new_budget → update budget and re-evaluate pending bids
-        - approved=False → reject all pending bids
-        """
+        """Initiator approves/rejects over-budget bids."""
         task = self.task_manager.get(task_id)
 
-        # Auth: only initiator
         if task.initiator_id != initiator_id:
             raise TaskError("Only the task initiator can confirm budget")
 
@@ -592,9 +451,6 @@ class Network:
                         reason="Budget confirmed",
                     )
 
-    # ══════════════════════════════════════════════════════════════════
-    # Subtask delegation
-    # ══════════════════════════════════════════════════════════════════
 
     async def create_subtask(
         self,
@@ -605,27 +461,15 @@ class Network:
         budget: float,
         deadline: str | None = None,
     ) -> Task:
-        """Executor creates a subtask, allocating from parent's budget.
-
-        Preconditions:
-        - Caller must be in parent task's bidders
-
-        Flow:
-        1. Validate caller is a bidder on parent
-        2. Allocate budget from parent escrow
-        3. Create subtask in TaskManager
-        4. Discover + broadcast to candidates
-        """
+        """Executor delegates subtask from parent's budget."""
         parent = self.task_manager.get(parent_task_id)
 
-        # Auth: caller must be in parent task's bidders
         bidder_ids = [b.agent_id for b in parent.bids]
         if initiator_id not in bidder_ids:
             raise TaskError(
                 f"Agent {initiator_id} is not a bidder on parent task {parent_task_id}"
             )
 
-        # 1. Create subtask
         subtask = self.task_manager.create_subtask(
             parent_task_id=parent_task_id,
             content=content,
@@ -640,28 +484,17 @@ class Network:
             parent_task_id, subtask.id, initiator_id, budget,
         )
 
-        # 2. Log
         self._log_event(
             "create_subtask", task_id=subtask.id, agent_id=initiator_id,
         )
 
-        # 3. Discover + push
         await self._broadcast_to_candidates(subtask)
 
         return subtask
 
-    # ══════════════════════════════════════════════════════════════════
-    # Deadline management
-    # ══════════════════════════════════════════════════════════════════
 
     async def scan_deadlines(self, now: str | None = None) -> list[str]:
-        """Periodic scan for expired tasks.
-
-        Returns list of task IDs that were expired.
-        For each:
-        - Has results → AWAITING_RETRIEVAL + notify
-        - No results → NO_ONE_ABLE + refund + notify
-        """
+        """Expire overdue tasks and handle settlement."""
         expired = self.task_manager.scan_expired(now)
         expired_ids = []
 
@@ -681,9 +514,6 @@ class Network:
 
         return expired_ids
 
-    # ══════════════════════════════════════════════════════════════════
-    # Reputation events (from servers)
-    # ══════════════════════════════════════════════════════════════════
 
     def receive_reputation_event(
         self,
@@ -702,9 +532,6 @@ class Network:
             server_id=server_id,
         )
 
-    # ══════════════════════════════════════════════════════════════════
-    # Internal helpers
-    # ══════════════════════════════════════════════════════════════════
 
     async def _broadcast_to_candidates(self, task: Task) -> None:
         """Discover agents, match, and push task broadcast."""
