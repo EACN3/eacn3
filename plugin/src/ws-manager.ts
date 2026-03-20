@@ -10,6 +10,17 @@ import { type PushEvent } from "./models.js";
 import { getState, pushEvents } from "./state.js";
 
 // ---------------------------------------------------------------------------
+// Event callback — server.ts registers a handler for auto-actions
+// ---------------------------------------------------------------------------
+
+type EventCallback = (agentId: string, event: PushEvent) => void;
+let onEventCallback: EventCallback | null = null;
+
+export function setEventCallback(cb: EventCallback): void {
+  onEventCallback = cb;
+}
+
+// ---------------------------------------------------------------------------
 // Connection state
 // ---------------------------------------------------------------------------
 
@@ -42,6 +53,11 @@ function handleMessage(agentId: string, data: WebSocket.Data): void {
     const event = JSON.parse(raw) as Omit<PushEvent, "received_at">;
     const pushEvent: PushEvent = { ...event, received_at: Date.now() } as PushEvent;
     pushEvents([pushEvent]);
+
+    // Trigger registered callback for auto-actions
+    if (onEventCallback) {
+      try { onEventCallback(agentId, pushEvent); } catch { /* callback errors non-fatal */ }
+    }
   } catch {
     // Ignore malformed messages
   }

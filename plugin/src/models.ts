@@ -19,9 +19,16 @@ export interface ServerCard {
 // ---------------------------------------------------------------------------
 
 export interface AgentSkill {
+  id?: string;
   name: string;
   description: string;
+  tags?: string[];
   parameters?: Record<string, unknown>;
+}
+
+export interface AgentCapabilities {
+  max_concurrent_tasks: number;
+  concurrent: boolean;
 }
 
 export interface AgentCard {
@@ -30,6 +37,7 @@ export interface AgentCard {
   agent_type: "executor" | "planner";
   domains: string[];
   skills: AgentSkill[];
+  capabilities?: AgentCapabilities;
   url: string;
   server_id: string;
   network_id: string;

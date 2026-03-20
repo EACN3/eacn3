@@ -93,6 +93,18 @@ export function removeTask(taskId: string): void {
   save();
 }
 
+export function updateTaskStatus(taskId: string, status: string): void {
+  const task = getState().local_tasks[taskId];
+  if (task) {
+    task.status = status as import("./models.js").TaskStatus;
+    save();
+  }
+}
+
+export function getTask(taskId: string): import("./models.js").LocalTaskInfo | undefined {
+  return getState().local_tasks[taskId];
+}
+
 export function pushEvents(events: PushEvent[]): void {
   getState().pending_events.push(...events);
   // No save — events are transient, only persist on explicit save

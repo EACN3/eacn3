@@ -1,5 +1,5 @@
 /**
- * EACN MCP Server — exposes 29 tools via stdio transport.
+ * EACN MCP Server — exposes 30 tools via stdio transport.
  *
  * All intelligence lives in Skills (host LLM). This server is just
  * state management + network API wrapper. No adapter, no registry —
@@ -156,7 +156,7 @@ server.tool(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Agent Management (6)
+// Agent Management (7)
 // ═══════════════════════════════════════════════════════════════════════════
 
 // #5 eacn_register_agent
@@ -169,10 +169,16 @@ server.tool(
     description: z.string().describe("What this Agent does"),
     domains: z.array(z.string()).describe("Capability domains (e.g. ['translation', 'coding'])"),
     skills: z.array(z.object({
+      id: z.string().optional(),
       name: z.string(),
       description: z.string(),
+      tags: z.array(z.string()).optional(),
       parameters: z.record(z.string(), z.unknown()).optional(),
     })).optional().describe("Agent skills"),
+    capabilities: z.object({
+      max_concurrent_tasks: z.number().describe("Max tasks this Agent can handle simultaneously (0 = unlimited)"),
+      concurrent: z.boolean().describe("Whether this Agent supports concurrent execution"),
+    }).optional().describe("Agent capacity limits"),
     agent_type: z.enum(["executor", "planner"]).optional().describe("Defaults to executor"),
     agent_id: z.string().optional().describe("Custom agent ID. Auto-generated if omitted."),
   },
@@ -194,6 +200,7 @@ server.tool(
       agent_type: params.agent_type ?? "executor",
       domains: params.domains,
       skills: params.skills ?? [],
+      capabilities: params.capabilities,
       url: `plugin://local/agents/${agentId}`,
       server_id: sid,
       network_id: "",
@@ -245,8 +252,10 @@ server.tool(
     name: z.string().optional(),
     domains: z.array(z.string()).optional(),
     skills: z.array(z.object({
+      id: z.string().optional(),
       name: z.string(),
       description: z.string(),
+      tags: z.array(z.string()).optional(),
       parameters: z.record(z.string(), z.unknown()).optional(),
     })).optional(),
     description: z.string().optional(),
@@ -318,11 +327,27 @@ server.tool(
   },
 );
 
+// #11 eacn_list_agents
+server.tool(
+  "eacn_list_agents",
+  "List Agents from the network. Filter by domain or server_id.",
+  {
+    domain: z.string().optional(),
+    server_id: z.string().optional(),
+    limit: z.number().optional(),
+    offset: z.number().optional(),
+  },
+  async (params) => {
+    const agents = await net.listAgentsRemote(params);
+    return ok({ count: agents.length, agents });
+  },
+);
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Task Query (4)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #11 eacn_get_task
+// #12 eacn_get_task
 server.tool(
   "eacn_get_task",
   "Get full task details including content, bids, and results.",
@@ -728,9 +753,102 @@ server.tool(
 // Start
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// WS Event Callbacks — auto-actions when events arrive
+// ---------------------------------------------------------------------------
+
+function registerEventCallbacks(): void {
+  ws.setEventCallback((agentId, event) => {
+    const taskId = event.task_id;
+
+    switch (event.type) {
+      case "awaiting_retrieval":
+        // Task has results ready — update local status so dashboard/skills see it
+        state.updateTaskStatus(taskId, "awaiting_retrieval");
+        break;
+
+      case "subtask_completed": {
+        // A subtask we created finished — auto-fetch its results
+        const subtaskId = (event.payload as Record<string, unknown>)?.subtask_id as string | undefined;
+        if (subtaskId) {
+          net.getTaskResults(subtaskId, agentId)
+            .then((res) => {
+              // Buffer a synthetic event with the results for the skill to pick up
+              state.pushEvents([{
+                type: "subtask_completed",
+                task_id: taskId,
+                payload: { subtask_id: subtaskId, results: res.results },
+                received_at: Date.now(),
+              }]);
+            })
+            .catch(() => { /* non-critical */ });
+        }
+        break;
+      }
+
+      case "timeout":
+        // Task timed out — auto-report reputation event, update local status
+        state.updateTaskStatus(taskId, "no_one");
+        net.reportEvent(agentId, "task_timeout").catch(() => { /* non-critical */ });
+        break;
+
+      case "budget_confirmation":
+        // Bid exceeded budget — mark in local state for initiator to handle
+        // The event stays in the buffer for /eacn-bounty to surface
+        break;
+
+      case "task_broadcast":
+        // New task available — auto-evaluate bid if agent has matching domains
+        autoBidEvaluate(agentId, event).catch(() => { /* non-critical */ });
+        break;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Auto-bid evaluation — communication layer auto-filter per agent.md:172-193
+// ---------------------------------------------------------------------------
+
+async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void> {
+  const agent = state.getAgent(agentId);
+  if (!agent) return;
+
+  const taskId = event.task_id;
+  const payload = event.payload as Record<string, unknown>;
+  const taskDomains = (payload?.domains as string[]) ?? [];
+
+  // Domain overlap check — skip if no overlap
+  const overlap = taskDomains.some((d) => agent.domains.includes(d));
+  if (!overlap) return;
+
+  // Capacity check — skip if at max concurrent tasks
+  if (agent.capabilities?.max_concurrent_tasks) {
+    const activeTasks = Object.values(state.getState().local_tasks).filter(
+      (t) => t.role === "executor" && t.status !== "completed" && t.status !== "no_one",
+    );
+    if (activeTasks.length >= agent.capabilities.max_concurrent_tasks) return;
+  }
+
+  // Passed auto-filter — enrich the buffered event with a hint
+  // The skill layer (/eacn-bounty) will see this and can fast-track bidding
+  state.pushEvents([{
+    type: "task_broadcast",
+    task_id: taskId,
+    payload: { ...payload, auto_match: true, matched_agent: agentId },
+    received_at: Date.now(),
+  }]);
+}
+
+// ---------------------------------------------------------------------------
+// Start
+// ---------------------------------------------------------------------------
+
 async function main() {
   // Load state on startup
   state.load();
+
+  // Register WS event callbacks
+  registerEventCallbacks();
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
