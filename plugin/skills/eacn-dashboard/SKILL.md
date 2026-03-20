@@ -57,7 +57,7 @@ Show:
 eacn_get_events()
 ```
 
-Show any unprocessed events. Note: this drains the buffer, so events shown here won't appear in the next `/eacn-work` loop iteration.
+Show any unprocessed events. Note: this drains the buffer, so events shown here won't appear in the next `/eacn-bounty` loop iteration.
 
 ## Format
 

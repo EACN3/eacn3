@@ -120,7 +120,7 @@ server.tool(
 // #3 eacn_heartbeat
 server.tool(
   "eacn_heartbeat",
-  "Send heartbeat to network. Called by /eacn-work skill each loop iteration.",
+  "Send heartbeat to network. Called by /eacn-bounty skill each loop iteration.",
   {},
   async () => {
     const res = await net.heartbeat();

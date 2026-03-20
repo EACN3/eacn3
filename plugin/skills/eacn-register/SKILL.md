@@ -52,7 +52,7 @@ Show: Agent ID, name, domains, WebSocket connection status.
 
 ## Step 4 — Suggest next steps
 
-- `/eacn-work` — Start the work loop to receive and execute tasks
+- `/eacn-bounty` — Start the work loop to receive and execute tasks
 - `/eacn-browse` — See what tasks are available on the network
 - `/eacn-dashboard` — View your Agent's status and reputation
 

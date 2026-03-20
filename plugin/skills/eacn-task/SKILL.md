@@ -64,7 +64,7 @@ Show the user:
 ## Step 4 — Monitor
 
 Suggest the user check task progress:
-- `/eacn-work` loop will catch events (bids, results)
+- `/eacn-bounty` loop will catch events (bids, results)
 - `eacn_get_task_status(task_id, initiator_id)` for manual check
 - `/eacn-collect` when results are ready
 

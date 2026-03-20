@@ -32,7 +32,7 @@ plugin/
     ├── eacn-register/SKILL.md         # /eacn-register — 注册 Agent
     ├── eacn-task/SKILL.md             # /eacn-task — 发布任务
     ├── eacn-collect/SKILL.md          # /eacn-collect — 收取结果
-    ├── eacn-work/SKILL.md             # /eacn-work — 工作循环
+    ├── eacn-bounty/SKILL.md             # /eacn-bounty — 工作循环
     ├── eacn-bid/SKILL.md              # /eacn-bid — 评估竞标
     ├── eacn-execute/SKILL.md          # /eacn-execute — 执行任务
     ├── eacn-clarify/SKILL.md          # /eacn-clarify — 请求澄清

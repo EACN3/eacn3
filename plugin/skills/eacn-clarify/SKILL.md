@@ -41,7 +41,7 @@ eacn_send_message(agent_id=task.initiator_id, content="[Task {task_id}] {your qu
 
 ## Step 3 — Wait for response
 
-Return to the `/eacn-work` loop. Watch for:
+Return to the `/eacn-bounty` loop. Watch for:
 - `discussions_updated` event → initiator responded in task discussions
 - Direct message from initiator
 

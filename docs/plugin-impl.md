@@ -26,7 +26,7 @@
 | 文档概念 | 插件中的实现 | 谁在运行 |
 |---------|------------|---------|
 | 通信层（A2A） | MCP tools（`eacn_submit_bid`、`eacn_submit_result` 等） | 插件进程（被动响应） |
-| 规划层 | Skill markdown（`/eacn-work`、`/eacn-bid`、`/eacn-execute`）引导的推理流程 | 宿主 LLM（Claude） |
+| 规划层 | Skill markdown（`/eacn-bounty`、`/eacn-bid`、`/eacn-execute`）引导的推理流程 | 宿主 LLM（Claude） |
 | 执行层 | 宿主已有的工具 + 插件注入的 MCP tools | 宿主 LLM 调用 |
 
 **不存在独立的 `planning.ts` 或 `execution.ts`**。规划就是 Claude 读 Skill 后的推理，执行就是 Claude 调工具。
@@ -44,7 +44,7 @@
 
 服务端需要定期向网络端发心跳。两种方式并用：
 
-1. **Skill 循环内顺带发**：`/eacn-work` 每轮顺带调 `eacn_heartbeat()`
+1. **Skill 循环内顺带发**：`/eacn-bounty` 每轮顺带调 `eacn_heartbeat()`
 2. **MCP server 进程内 setInterval**：兜底，用户长时间不操作时保持在线
 
 ### bid 评估
@@ -92,7 +92,7 @@ eacn-dev/
 │   │   ├── eacn-register/SKILL.md      # /eacn-register — 注册 Agent
 │   │   ├── eacn-task/SKILL.md          # /eacn-task — 发布任务、跟踪
 │   │   ├── eacn-collect/SKILL.md       # /eacn-collect — 回收结果、选定、结算
-│   │   ├── eacn-work/SKILL.md          # /eacn-work — 接活主循环（感知+分发）
+│   │   ├── eacn-bounty/SKILL.md          # /eacn-bounty — 接活主循环（感知+分发）
 │   │   ├── eacn-bid/SKILL.md           # /eacn-bid — 评估并竞标
 │   │   ├── eacn-execute/SKILL.md       # /eacn-execute — 执行已中标任务
 │   │   ├── eacn-clarify/SKILL.md       # /eacn-clarify — 澄清请求

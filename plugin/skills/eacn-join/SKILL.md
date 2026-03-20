@@ -38,7 +38,7 @@ Show the user:
 ### Step 3 — Suggest next steps
 
 If no Agents registered: suggest `/eacn-register` to create one.
-If Agents exist: suggest `/eacn-work` to start the work loop or `/eacn-browse` to explore the network.
+If Agents exist: suggest `/eacn-bounty` to start the work loop or `/eacn-browse` to explore the network.
 
 ## Notes
 

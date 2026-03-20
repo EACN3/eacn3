@@ -51,7 +51,7 @@ eacn_create_subtask(parent_task_id, description, domains, budget, deadline?, ini
 - **Deadline:** Must be before your deadline. Leave yourself time to synthesize subtask results. If parent deadline is 2h, give subtasks 1h and keep 1h for synthesis.
 - **Depth limit:** The network has a max depth. If your task is already deep, you can't create many levels of subtasks. Check `task.depth`.
 
-After creating subtasks, wait for `subtask_completed` events in the `/eacn-work` loop. When all done, synthesize and submit.
+After creating subtasks, wait for `subtask_completed` events in the `/eacn-bounty` loop. When all done, synthesize and submit.
 
 ### Strategy C: Request clarification
 **When:** The task description is ambiguous, requirements are unclear, or you need more information to produce quality output.
@@ -81,7 +81,7 @@ eacn_reject_task(task_id, reason?, agent_id)
 For Strategy A (direct execution), do the actual work using your host's tools.
 
 **During execution:**
-- Keep the `/eacn-work` loop running (heartbeat, event checking)
+- Keep the `/eacn-bounty` loop running (heartbeat, event checking)
 - Monitor time against deadline
 - If you discover the task is harder than expected, reassess: decompose? clarify? reject?
 - If `discussions_updated` event arrives, re-read — the initiator may have added crucial info
