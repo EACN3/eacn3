@@ -7,7 +7,6 @@ For simplicity in v0.1, stores mappings in the local database
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -22,12 +21,6 @@ class ClusterDHT:
 
     def __init__(self, db: "Database") -> None:
         self._db = db
-
-    @staticmethod
-    def hash_domain(domain: str) -> int:
-        """SHA256 hash, first 8 bytes as int."""
-        h = hashlib.sha256(domain.encode()).digest()
-        return int.from_bytes(h[:8], "big")
 
     async def announce(self, domain: str, node_id: str) -> None:
         """Register domain -> node_id mapping."""

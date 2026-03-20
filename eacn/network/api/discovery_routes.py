@@ -12,7 +12,6 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
 
-from eacn.core.exceptions import TaskError
 from eacn.network.api.schemas import (
     RegisterServerRequest, RegisterServerResponse, ServerCardResponse,
     RegisterAgentRequest, RegisterAgentResponse, AgentCardResponse,

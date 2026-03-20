@@ -389,8 +389,8 @@ async def update_config(patch: dict):
     new_config = NetworkConfig(**current)
     net.config = new_config
 
-    # Reload affected modules
-    net.reputation = type(net.reputation)(config=new_config.reputation)
+    # Reload affected modules (preserve state, update config)
+    net.reputation.update_config(new_config.reputation)
     net.matcher = type(net.matcher)(config=new_config.matcher)
     net.push.MAX_RETRIES = new_config.push.max_retries
     net.settlement.platform_fee_rate = new_config.economy.platform_fee_rate

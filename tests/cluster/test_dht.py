@@ -50,16 +50,6 @@ class TestClusterDHT:
         result = await dht.lookup("nonexistent")
         assert result == []
 
-    async def test_hash_domain_deterministic(self):
-        h1 = ClusterDHT.hash_domain("coding")
-        h2 = ClusterDHT.hash_domain("coding")
-        assert h1 == h2
-
-    async def test_hash_domain_different_inputs(self):
-        h1 = ClusterDHT.hash_domain("coding")
-        h2 = ClusterDHT.hash_domain("design")
-        assert h1 != h2
-
     async def test_handle_store_and_lookup(self, db):
         dht = ClusterDHT(db)
         await dht.handle_store("coding", "node-1")

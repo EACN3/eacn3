@@ -157,10 +157,9 @@ def _deep_merge(base: dict, override: dict) -> None:
             base[k] = v
 
 
-def _to_toml(data: dict[str, Any], indent: int = 0) -> str:
+def _to_toml(data: dict[str, Any]) -> str:
     """简单 TOML 序列化 (不依赖第三方库)。"""
     lines: list[str] = []
-    prefix = ""
 
     # 先输出标量字段
     for k, v in data.items():

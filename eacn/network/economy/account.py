@@ -20,6 +20,8 @@ class Account:
         self.frozen += amount
 
     def unfreeze(self, amount: float) -> None:
+        if amount > self.frozen:
+            amount = self.frozen
         self.frozen -= amount
         self.available += amount
 

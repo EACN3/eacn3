@@ -6,8 +6,7 @@ import logging
 from typing import Any
 
 from eacn.core.models import (
-    Task, TaskStatus, TaskType, Bid, BidStatus, Result,
-    AgentCard, LogEntry, PushEventType,
+    Task, TaskStatus, TaskType, Bid, BidStatus, Result, LogEntry,
 )
 from eacn.core.exceptions import TaskError, BudgetError
 from eacn.network.task_manager import TaskManager

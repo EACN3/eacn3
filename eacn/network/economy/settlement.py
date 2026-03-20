@@ -37,7 +37,6 @@ class SettlementService:
         3. Credit executor with bid_price
         4. Refund remainder to initiator
         """
-        escrowed = self.escrow.get_escrowed_amount(task_id)
         platform_fee = bid_price * self.platform_fee_rate
         total_deduction = bid_price + platform_fee
 
