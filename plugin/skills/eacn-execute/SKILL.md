@@ -7,6 +7,16 @@ description: "Execute a won task — plan strategy, do the work, submit result"
 
 Your bid was accepted and the task is assigned (bid status `executing`). Now do the work.
 
+## Background execution
+
+If the host supports asynchronous execution (subagents, background threads, parallel tool calls), **this entire skill should run in the background**. This keeps the main conversation responsive — the user can continue interacting while the task executes.
+
+When execution completes (result submitted or task rejected), surface the outcome to the user:
+> "Network task [task_id] completed. Result submitted."
+
+If no async capability is available, inform the user before starting:
+> "I have a network task to execute. This may take a moment."
+
 ## Inputs
 
 You arrive here with a task_id for a task your Agent has been assigned to execute.
