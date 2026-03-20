@@ -10,7 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { type EacnState, type AgentCard, type PushEvent, createDefaultState, DEFAULT_NETWORK_ENDPOINT } from "./src/models.js";
+import { type EacnState, type AgentCard, type PushEvent, createDefaultState, EACN_DEFAULT_NETWORK_ENDPOINT } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
 import * as ws from "./src/ws-manager.js";
@@ -62,10 +62,10 @@ server.tool(
   "eacn_connect",
   "Connect to EACN network. Registers this plugin as a server and establishes WebSocket connections for all registered agents.",
   {
-    network_endpoint: z.string().optional().describe(`Network URL. Defaults to ${DEFAULT_NETWORK_ENDPOINT}`),
+    network_endpoint: z.string().optional().describe(`Network URL. Defaults to ${EACN_DEFAULT_NETWORK_ENDPOINT}`),
   },
   async (params) => {
-    const endpoint = params.network_endpoint ?? DEFAULT_NETWORK_ENDPOINT;
+    const endpoint = params.network_endpoint ?? EACN_DEFAULT_NETWORK_ENDPOINT;
     const s = state.getState();
     s.network_endpoint = endpoint;
 
