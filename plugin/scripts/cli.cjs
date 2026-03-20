@@ -227,6 +227,22 @@ function setupOpenclaw() {
   fs.copyFileSync(path.join(PKG_ROOT, 'package.json'), path.join(EXT_DIR, 'package.json'));
   ok('package.json copied');
 
+  // Copy node_modules/ (runtime dependencies like ws, zod, @modelcontextprotocol/sdk)
+  const nmSrc = path.join(PKG_ROOT, 'node_modules');
+  if (fs.existsSync(nmSrc)) {
+    copyDirRecursive(nmSrc, path.join(EXT_DIR, 'node_modules'));
+    ok('node_modules/ copied');
+  } else {
+    fail('node_modules/ not found — run "npm install" first');
+  }
+
+  // Clean up stale extension directory from previous installs (used wrong name)
+  const staleDir = path.join(os.homedir(), '.openclaw', 'extensions', 'eacn-plugin');
+  if (staleDir !== EXT_DIR && fs.existsSync(staleDir)) {
+    fs.rmSync(staleDir, { recursive: true, force: true });
+    ok('removed stale extensions/eacn-plugin directory');
+  }
+
   // 3. Discover skills
   const skillNames = [];
   if (fs.existsSync(skillsSrc)) {
@@ -243,9 +259,14 @@ function setupOpenclaw() {
   const config = readJSON(CONFIG_PATH);
   const pkg = readJSON(path.join(PKG_ROOT, 'package.json'));
 
-  // plugins.allow
+  // plugins — clean stale "eacn-plugin" entries from previous installs
   if (!config.plugins) config.plugins = {};
   if (!Array.isArray(config.plugins.allow)) config.plugins.allow = [];
+  config.plugins.allow = config.plugins.allow.filter(id => id !== 'eacn-plugin');
+  if (config.plugins.entries) delete config.plugins.entries['eacn-plugin'];
+  if (config.plugins.installs) delete config.plugins.installs['eacn-plugin'];
+
+  // plugins.allow
   if (!config.plugins.allow.includes(PLUGIN_ID)) {
     config.plugins.allow.push(PLUGIN_ID);
   }
