@@ -1,4 +1,4 @@
-# MCP Tools（29 个）
+# MCP Tools（31 个）
 
 插件对宿主暴露的全部 MCP 工具。每个工具是网络端 HTTP 接口的薄封装，`agent_id` / `server_id` 由插件自动注入。
 
@@ -13,7 +13,7 @@
 | 3 | `eacn_heartbeat` | — | POST `/api/discovery/servers/{id}/heartbeat` | 发送心跳 |
 | 4 | `eacn_server_info` | — | GET `/api/discovery/servers/{id}` + 本地 state | 当前服务端状态 |
 
-## Agent 管理（6 个）
+## Agent 管理（7 个）
 
 | # | Tool | 参数 | 网络端接口 | 说明 |
 |---|------|------|-----------|------|
@@ -23,6 +23,7 @@
 | 8 | `eacn_unregister_agent` | `agent_id` | DELETE `/api/discovery/agents/{id}` | 注销 Agent |
 | 9 | `eacn_list_my_agents` | — | GET `/api/discovery/agents?server_id=xxx` | 列出本服务端的 Agent |
 | 10 | `eacn_discover_agents` | `domain, requester_id?` | GET `/api/discovery/query?domain=xxx` | 按域发现 Agent（Gossip → DHT → Bootstrap 三层 fallback） |
+| 11 | `eacn_list_agents` | `domain?, server_id?, limit?, offset?` | GET `/api/discovery/agents` | 列出网络上的 Agent，按域或服务端过滤 |
 
 ## 任务查询（4 个）
 
@@ -62,11 +63,17 @@
 | 27 | `eacn_report_event` | `agent_id, event_type` | POST `/api/reputation/events` | 上报声誉事件（Logger 调用） |
 | 28 | `eacn_get_reputation` | `agent_id` | GET `/api/reputation/{agent_id}` | 查询 Agent 全局声誉分 |
 
+## 经济（1 个）
+
+| # | Tool | 参数 | 网络端接口 | 说明 |
+|---|------|------|-----------|------|
+| 30 | `eacn_get_balance` | `agent_id` | GET `/api/economy/balance?agent_id=xxx` | 查询 Agent 账户余额（available + frozen）。用于创建任务前检查余额、Dashboard 显示资金状况 |
+
 ## 事件（1 个）
 
 | # | Tool | 参数 | 网络端接口 | 说明 |
 |---|------|------|-----------|------|
-| 29 | `eacn_get_events` | — | WS `/ws/{agent_id}`（内部缓冲） | 获取待处理事件。WS 连接由插件进程在 `eacn_connect` 时建立，事件缓冲在内存；此工具 drain buffer 返回给宿主 |
+| 31 | `eacn_get_events` | — | WS `/ws/{agent_id}`（内部缓冲） | 获取待处理事件。WS 连接由插件进程在 `eacn_connect` 时建立，事件缓冲在内存；此工具 drain buffer 返回给宿主 |
 
 ---
 
@@ -75,21 +82,22 @@
 | 网络端接口分组 | 接口数 | 覆盖的 MCP Tool |
 |--------------|--------|----------------|
 | Discovery - Server（4） | 4 | #1-4 |
-| Discovery - Agent（6） | 6 | #5-10 |
-| Tasks - 查询（5） | 5 | #11-14（GET /api/tasks 和 GET /api/tasks/open 各有对应） |
+| Discovery - Agent（6） | 6 | #5-11 |
+| Tasks - 查询（5） | 5 | #12-14（GET /api/tasks 和 GET /api/tasks/open 各有对应） |
 | Tasks - 发起者写入（7） | 7 | #15-21 |
 | Tasks - 执行者写入（4） | 4 | #22-25 |
 | Reputation（2） | 2 | #27-28 |
-| WebSocket（1） | 1 | #29（内部 WS + eacn_get_events 暴露） |
+| Economy（1, TODO） | 1 | #30（网络端接口待实现） |
+| WebSocket（1） | 1 | #31（内部 WS + eacn_get_events 暴露） |
 | A2A 直连 | — | #26 |
 
-**28/28 全覆盖。**
+**29/29 全覆盖 + 1 待网络端实现。**
 
 ---
 
 ## 备注
 
-1. **Economy 没有 HTTP API** — economy.md 定义的接口（get_balance、deposit、settle 等）是网络端内部模块，未暴露给服务端。如果 /eacn-dashboard 要显示余额，需网络端补充接口
+1. **Economy API 待网络端实现** — 插件端已实现 `eacn_get_balance`（#30），调用 `GET /api/economy/balance`。网络端需暴露此接口（目前 economy 模块是内部的）。详见 network-api.md TODO 段
 2. **eacn_get_events 的实现** — 插件进程在 `eacn_connect` 时为每个已注册 Agent 建立 WS 连接，事件缓冲在内存。`eacn_get_events` 只是 drain buffer，对宿主来说像"轮询"但底层是 push
 3. **eacn_report_event** — 由 Logger 模块在任务状态变更时自动调用，通常不需要 Skill 手动触发，但作为工具暴露以备特殊场景
 4. **get_task vs get_task_status** — `get_task` 任何人可调，返回完整任务（含 results）；`get_task_status` 仅发起者可调，返回状态+竞标列表，不含 results

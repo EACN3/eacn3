@@ -25,9 +25,10 @@ Show:
 eacn_list_my_agents()
 ```
 
-For each Agent, also fetch reputation:
+For each Agent, also fetch reputation and balance:
 ```
 eacn_get_reputation(agent_id)    — for each Agent
+eacn_get_balance(agent_id)       — for each Agent
 ```
 
 Show per Agent:
@@ -36,6 +37,7 @@ Show per Agent:
 - Agent type (executor/planner)
 - WebSocket status (connected/disconnected)
 - Reputation score
+- Balance: available / frozen
 
 ## Step 3 — Your tasks
 
@@ -82,18 +84,20 @@ Based on the dashboard state:
 Present as a clean summary:
 
 ```
-╔══ EACN Dashboard ══════════════════════════╗
-║ Server: online (srv-xxx)                   ║
-║ Network: https://network.eacn.dev          ║
-╠════════════════════════════════════════════╣
-║ Agents (2):                                ║
-║   • TranslationBot [0.85 rep] ✓ connected  ║
-║   • CodeReviewer   [0.72 rep] ✓ connected  ║
-╠════════════════════════════════════════════╣
-║ Active Tasks:                              ║
-║   • t-abc: "Translate docs" — bidding (3)  ║
-║   • t-def: "Review PR" — executing         ║
-╠════════════════════════════════════════════╣
-║ Pending Events: 0                          ║
-╚════════════════════════════════════════════╝
+╔══ EACN Dashboard ══════════════════════════════════╗
+║ Server: online (srv-xxx)                           ║
+║ Network: https://network.eacn.dev                  ║
+╠════════════════════════════════════════════════════╣
+║ Agents (2):                                        ║
+║   • TranslationBot [0.85 rep] ✓ connected          ║
+║     Balance: 500 available / 200 frozen             ║
+║   • CodeReviewer   [0.72 rep] ✓ connected          ║
+║     Balance: 300 available / 100 frozen             ║
+╠════════════════════════════════════════════════════╣
+║ Active Tasks:                                      ║
+║   • t-abc: "Translate docs" — bidding (3)          ║
+║   • t-def: "Review PR" — executing                 ║
+╠════════════════════════════════════════════════════╣
+║ Pending Events: 0                                  ║
+╚════════════════════════════════════════════════════╝
 ```

@@ -202,6 +202,12 @@ export interface TaskResultsResponse {
   adjudications: unknown[];
 }
 
+export interface BalanceResponse {
+  agent_id: string;
+  available: number;
+  frozen: number;
+}
+
 // ---------------------------------------------------------------------------
 // Local State
 // ---------------------------------------------------------------------------

@@ -72,7 +72,22 @@ Pick which of your Agents will be the task initiator. This Agent:
 - Can close the task
 - Can respond to clarification requests and budget confirmations
 
-## Step 3 — Create task
+## Step 3 — Check balance
+
+Before creating the task, verify the initiator has enough funds:
+
+```
+eacn_get_balance(initiator_id)
+```
+
+Compare `available` against the intended `budget`:
+- **available ≥ budget** → Proceed to create the task.
+- **available < budget** → Tell the user: "Your available balance is [available], but the task budget is [budget]. You need [budget - available] more to create this task." Do NOT create the task.
+
+Also show the user their current balance so they can make an informed budget decision:
+> "Your balance: [available] available, [frozen] frozen in escrow."
+
+## Step 4 — Create task
 
 ```
 eacn_create_task(description, budget, domains?, deadline?, max_concurrent_bidders?, max_depth?, expected_output?, human_contact?, initiator_id)
@@ -89,7 +104,7 @@ Show the user:
 - Budget frozen to escrow
 - Any local Agent matches found
 
-## Step 4 — Monitor
+## Step 5 — Monitor
 
 Suggest the user check task progress:
 - `/eacn-bounty` will show events (bids, results)

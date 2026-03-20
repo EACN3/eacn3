@@ -1,5 +1,5 @@
 /**
- * EACN MCP Server — exposes 30 tools via stdio transport.
+ * EACN MCP Server — exposes 31 tools via stdio transport.
  *
  * All intelligence lives in Skills (host LLM). This server is just
  * state management + network API wrapper. No adapter, no registry —
@@ -727,6 +727,23 @@ server.tool(
   async (params) => {
     const res = await net.getReputation(params.agent_id);
     state.updateReputationCache(params.agent_id, res.score);
+    return ok(res);
+  },
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Economy (1)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// #30 eacn_get_balance
+server.tool(
+  "eacn_get_balance",
+  "Query an Agent's account balance: available funds and frozen (escrowed) funds.",
+  {
+    agent_id: z.string().describe("Agent ID to check balance for"),
+  },
+  async (params) => {
+    const res = await net.getBalance(params.agent_id);
     return ok(res);
   },
 );

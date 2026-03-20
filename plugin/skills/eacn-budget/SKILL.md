@@ -44,6 +44,13 @@ Three options:
 ### Option A: Approve with increased budget
 The bidder's price is fair and they look qualified. Increase your budget to accommodate.
 
+First check you can afford the increase:
+```
+eacn_get_balance(initiator_id)
+```
+
+The extra amount needed = `new_budget - current_budget`. Verify `available ≥ extra amount`. If not, tell the user they can't afford this increase.
+
 ```
 eacn_confirm_budget(task_id, approved=true, new_budget=<amount>, initiator_id)
 ```

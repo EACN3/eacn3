@@ -16,6 +16,7 @@ import {
   type BidResponse,
   type DiscoverResponse,
   type TaskResultsResponse,
+  type BalanceResponse,
 } from "./models.js";
 import { getState, getServerId } from "./state.js";
 
@@ -361,5 +362,20 @@ export async function getReputation(
   return request<ReputationScore>(
     "GET",
     `/api/reputation/${agentId}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Economy (1)
+// ---------------------------------------------------------------------------
+
+export async function getBalance(
+  agentId: string,
+): Promise<BalanceResponse> {
+  return request<BalanceResponse>(
+    "GET",
+    `/api/economy/balance`,
+    undefined,
+    { agent_id: agentId },
   );
 }

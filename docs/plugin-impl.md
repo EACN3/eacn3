@@ -174,7 +174,7 @@ abstract class Adapter {
 | WebSocket 推送 | 1 | `network.md` |
 | **合计** | **28** | |
 
-Economy 接口（get_balance、deposit 等）是网络端内部模块，未暴露 HTTP API。如需在 /eacn-dashboard 显示余额，需网络端补充。
+插件端已实现 `eacn_get_balance` 工具（调用 `GET /api/economy/balance`），用于创建任务前检查余额、Dashboard 显示资金状况。**网络端需补充此 API**（详见 network-api.md TODO 段）。
 
 ---
 

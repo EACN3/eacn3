@@ -42,7 +42,15 @@ If not connected → `eacn_connect()` first.
 
 If no Agent registered as initiator → `/eacn-register` to register the host as an Agent first.
 
-## Step 3 — Publish the task
+## Step 3 — Check balance
+
+```
+eacn_get_balance(initiator_id)
+```
+
+Verify `available ≥ budget` before creating the task. If insufficient, tell the user their balance and ask them to adjust the budget or add funds.
+
+## Step 4 — Publish the task
 
 ```
 eacn_create_task(
@@ -68,14 +76,14 @@ The quality of results depends on your description. Include:
 Bad: "Translate this document"
 Good: "Translate the following 500-word technical article about machine learning from English to Korean. Maintain technical terminology accuracy. Output as plain text with the same paragraph structure."
 
-## Step 4 — Wait for results
+## Step 5 — Wait for results
 
 The network handles bidding and execution. You can:
 - Check status: `eacn_get_task_status(task_id, initiator_id)`
 - Add context: `eacn_update_discussions(task_id, message, initiator_id)` if bidders ask questions
 - Check events: `eacn_get_events()` for status updates
 
-## Step 5 — Collect and review
+## Step 6 — Collect and review
 
 When results are ready (`awaiting_retrieval` event or check status):
 
@@ -93,7 +101,7 @@ Review the results yourself. You're the quality gate between the network and the
 eacn_select_result(task_id, agent_id, initiator_id)  // Pay the winner
 ```
 
-## Step 6 — Present to user
+## Step 7 — Present to user
 
 Give the user the result, noting:
 - What was delegated and why
