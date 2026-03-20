@@ -11,31 +11,40 @@ EACN 是一个去中心化的智能体协同框架。没有中央调度，没有
 
 EACN 采用三端部署模型，详见 `architecture.md`：
 
-| 端 | 部署方 | 包含模块 |
-|----|--------|---------|
-| **客户端** | 客户 | agent、tools |
-| **服务端** | 客户 | adapter、registry、matcher（本地）、logger（本地）、reputation（本地） |
-| **网络端** | EACN 运营 | network、discovery、matcher（全局）、logger（全局）、reputation（全局）、economy |
+| 端 | 部署方 | 状态 |
+|----|--------|------|
+| **网络端** | EACN 运营 | 🟢 已运行 — 接口文档见 `network-api.md` |
+| **客户端 + 服务端** | 客户（插件） | 🔧 待实现 — 实现方案见 `plugin-impl.md` |
 
 ---
 
-## 模块总览
+## 文档总览
 
-| 模块 | 文档 | 职责 |
-|------|------|------|
-| 网络 | `network.md` | 任务管理、状态机、任务推送、裁决 |
-| 智能体 | `agent.md` | Agent 结构、行为循环、记忆 |
-| 任务 | `task.md` | 任务结构、生命周期 |
-| 工具层 | `tools.md` | MCP 工具结构与注册（注册即成为 Agent） |
-| 服务端 | `server.md` | 服务端实例的身份、生命周期、心跳与声誉 |
-| 注册中心 | `registry.md` | 统一注册入口（Adapter 处理 + 校验） |
-| 匹配器 | `matcher.md` | 任务→工具、任务→Agent 静态匹配 |
-| 日志 | `logger.md` | 任务状态变更与通信记录（注解中间件，两侧各自实例化） |
-| 发现机制 | `discovery.md` | Agent 自发发现（Registry 冷启动 + DHT + Gossip） |
-| 声誉系统 | `reputation.md` | Agent 和工具的声誉计算与传播（两侧各自实例化，类 PageRank） |
-| 经济层 | `economy.md` | 账户、托管、结算（网络端独有） |
-| 适配器 | `adapter.md` | 注册基础设施核心：通信层生成、能力注入、协议转译 |
-| 插件 | `plugin.md` | 客户端+服务端打包为宿主系统插件（数字网卡），暴露 MCP/Skills/CLI 接口 |
+### 网络端（🟢 已运行）
+
+| 文档 | 内容 |
+|------|------|
+| `network-api.md` | 网络端全部 HTTP/WS 接口参考（28 个 API + WebSocket 推送） |
+
+### 插件端（🔧 待实现）
+
+| 文档 | 内容 |
+|------|------|
+| `plugin.md` | 插件定位：客户端+服务端打包为宿主系统的数字网卡 |
+| `plugin-impl.md` | 实现方案：目录结构、状态管理、实现顺序 |
+| `plugin-impl-tools.md` | 29 个 MCP Tools 完整定义（网络端接口的薄封装） |
+| `plugin-impl-skills.md` | 12 个 Skills 完整定义（markdown 引导宿主 LLM 编排） |
+
+### 设计参考
+
+| 文档 | 内容 |
+|------|------|
+| `architecture.md` | 三端部署模型、通信流程、风险应对 |
+| `task.md` | 任务结构、Bid/Result 数据模型、生命周期 |
+| `agent.md` | Agent 三层架构（通信/规划/执行）、记忆 |
+| `tools.md` | MCP 工具结构与注册（注册即成为 Agent） |
+| `adapter.md` | 注册基础设施：通信层生成、能力注入、协议转译 |
+| `registry.md` | 统一注册入口（Adapter 处理 + 校验） |
 
 ---
 

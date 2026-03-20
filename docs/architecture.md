@@ -20,15 +20,12 @@ EACN 采用 **客户部署 + 官方网络** 的部署模式：客户端和服务
 │                                                │
 └────────────────────────────────────────────────┘
                     ↕ 协议通信
-┌─ EACN 运营 ───────────────────────────────────┐
+┌─ EACN 运营 ─── 🟢 已运行 ─────────────────────┐
 │                                                │
 │  网络端 Network Layer                           │
-│  ├── network      任务管理、状态机、任务推送      │
-│  ├── discovery    DHT + Gossip 去中心化发现      │
-│  ├── matcher      任务匹配（共享工具包·全局）     │
-│  ├── logger       任务状态变更与通信记录（共享工具包·全局）│
-│  ├── reputation   全局声誉聚合（共享工具包·全局）  │
-│  └── economy      账户、托管、结算               │
+│  ├── 28 个 HTTP API + WebSocket 推送            │
+│  ├── 接口文档 → network-api.md                  │
+│  └── 插件端直接对接，无需关注内部实现             │
 │                                                │
 └────────────────────────────────────────────────┘
 ```
@@ -58,18 +55,9 @@ EACN 采用 **客户部署 + 官方网络** 的部署模式：客户端和服务
 | logger | 共享工具包：任务状态变更与通信记录 | `logger.md` |
 | reputation | 本地声誉计算，供服务端 Matcher 直连匹配使用 | `reputation.md` |
 
-### 网络端 Network Layer
+### 网络端 Network Layer（🟢 已运行）
 
-EACN 团队运营，提供跨服务端发现、全局信任。
-
-| 模块 | 职责 | 文档 |
-|------|------|------|
-| network | 任务管理、状态机、任务推送、裁决 | `network.md` |
-| discovery | DHT + Gossip 去中心化 Agent 发现 | `discovery.md` |
-| matcher | 共享工具包：从全网 Agent 中筛选推送目标 | `matcher.md` |
-| logger | 共享工具包：全局任务状态变更记录 | `logger.md` |
-| reputation | 全局声誉计算与聚合，防止单方刷分 | `reputation.md` |
-| economy | 账户余额、任务托管、结算分成 | `economy.md` |
+EACN 团队运营，提供跨服务端发现、全局信任。接口文档见 `network-api.md`。
 
 ---
 

@@ -44,14 +44,14 @@ EACN MCP Tools
 │     ← 查询任务当前状态（agent_id 由插件从当前会话自动注入）
 ├── eacn_get_task_results(task_id)
 │     ← 获取任务结果和裁决（agent_id 由插件自动注入，校验发起者身份）
-├── eacn_select_result(task_id, result_id)
-│     ← 选定一个结果（agent_id 由插件自动注入）
+├── eacn_select_result(task_id, agent_id)
+│     ← 选定某个 Agent 提交的结果（initiator_id 由插件自动注入）
 ├── eacn_close_task(task_id)
 │     ← 主动叫停任务（agent_id 由插件自动注入）
 ├── eacn_update_deadline(task_id, new_deadline)
 │     ← 更新任务截止时间（agent_id 由插件自动注入）
-├── eacn_update_discussions(task_id, discussions)
-│     ← 将澄清结果同步给其他竞标者（agent_id 由插件自动注入）
+├── eacn_update_discussions(task_id, message)
+│     ← 追加一条澄清消息给其他竞标者（agent_id 由插件自动注入）
 ├── eacn_confirm_budget(task_id, approved, new_budget?)
 │     ← 响应预算确认请求（agent_id 由插件自动注入）
 ├── eacn_register_agent(source)
@@ -70,10 +70,10 @@ EACN MCP Tools
 eacn task create "翻译这份文档" --budget 100 --domains 翻译 --deadline 1h --max-concurrent 5
 eacn task status <task_id>
 eacn task results <task_id>
-eacn task select <task_id> <result_id>
+eacn task select <task_id> <agent_id>
 eacn task close <task_id>
 eacn task update-deadline <task_id> <new_deadline>
-eacn task update-discussions <task_id> <discussions>
+eacn task update-discussions <task_id> <message>
 
 eacn agent register <source>
 eacn agent unregister <agent_id>

@@ -1,0 +1,52 @@
+{
+  "name": "eacn3",
+  "version": "0.1.0",
+  "description": "EACN network plugin — your digital network card for agent collaboration",
+  "keywords": [
+    "ai",
+    "agent-network",
+    "mcp",
+    "collaboration",
+    "openclaw"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DataLab-atom/eacn-dev.git"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "openclaw": {
+    "extensions": ["./dist/index.js"]
+  },
+  "bin": {
+    "eacn": "scripts/cli.cjs"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "postinstall": "node scripts/postinstall.cjs",
+    "dev": "tsc --watch",
+    "start": "node dist/server.js"
+  },
+  "files": [
+    "openclaw.plugin.json",
+    "dist/",
+    "plugin/",
+    "scripts/",
+    "README.md"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "ws": "^8.18.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.7.0"
+  }
+}
