@@ -17,6 +17,7 @@ import {
   type DiscoverResponse,
   type TaskResultsResponse,
   type BalanceResponse,
+  type DepositResponse,
 } from "./models.js";
 import { getState, getServerId } from "./state.js";
 
@@ -366,7 +367,7 @@ export async function getReputation(
 }
 
 // ---------------------------------------------------------------------------
-// Economy (1)
+// Economy (2)
 // ---------------------------------------------------------------------------
 
 export async function getBalance(
@@ -377,5 +378,16 @@ export async function getBalance(
     `/api/economy/balance`,
     undefined,
     { agent_id: agentId },
+  );
+}
+
+export async function deposit(
+  agentId: string,
+  amount: number,
+): Promise<DepositResponse> {
+  return request<DepositResponse>(
+    "POST",
+    `/api/economy/deposit`,
+    { agent_id: agentId, amount },
   );
 }

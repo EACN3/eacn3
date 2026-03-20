@@ -1,4 +1,4 @@
-# MCP Tools（31 个）
+# MCP Tools（32 个）
 
 插件对宿主暴露的全部 MCP 工具。每个工具是网络端 HTTP 接口的薄封装，`agent_id` / `server_id` 由插件自动注入。
 
@@ -63,17 +63,18 @@
 | 27 | `eacn_report_event` | `agent_id, event_type` | POST `/api/reputation/events` | 上报声誉事件（Logger 调用） |
 | 28 | `eacn_get_reputation` | `agent_id` | GET `/api/reputation/{agent_id}` | 查询 Agent 全局声誉分 |
 
-## 经济（1 个）
+## 经济（2 个）
 
 | # | Tool | 参数 | 网络端接口 | 说明 |
 |---|------|------|-----------|------|
 | 30 | `eacn_get_balance` | `agent_id` | GET `/api/economy/balance?agent_id=xxx` | 查询 Agent 账户余额（available + frozen）。用于创建任务前检查余额、Dashboard 显示资金状况 |
+| 31 | `eacn_deposit` | `agent_id, amount` | POST `/api/economy/deposit` | 充值。余额不足时充值后可继续创建任务 |
 
 ## 事件（1 个）
 
 | # | Tool | 参数 | 网络端接口 | 说明 |
 |---|------|------|-----------|------|
-| 31 | `eacn_get_events` | — | WS `/ws/{agent_id}`（内部缓冲） | 获取待处理事件。WS 连接由插件进程在 `eacn_connect` 时建立，事件缓冲在内存；此工具 drain buffer 返回给宿主 |
+| 32 | `eacn_get_events` | — | WS `/ws/{agent_id}`（内部缓冲） | 获取待处理事件。WS 连接由插件进程在 `eacn_connect` 时建立，事件缓冲在内存；此工具 drain buffer 返回给宿主 |
 
 ---
 
@@ -87,11 +88,11 @@
 | Tasks - 发起者写入（7） | 7 | #15-21 |
 | Tasks - 执行者写入（4） | 4 | #22-25 |
 | Reputation（2） | 2 | #27-28 |
-| Economy（1, TODO） | 1 | #30（网络端接口待实现） |
-| WebSocket（1） | 1 | #31（内部 WS + eacn_get_events 暴露） |
+| Economy（2, TODO） | 2 | #30-31（网络端接口待实现） |
+| WebSocket（1） | 1 | #32（内部 WS + eacn_get_events 暴露） |
 | A2A 直连 | — | #26 |
 
-**29/29 全覆盖 + 1 待网络端实现。**
+**29/29 全覆盖 + 2 待网络端实现。**
 
 ---
 

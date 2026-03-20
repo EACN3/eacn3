@@ -82,7 +82,9 @@ eacn_get_balance(initiator_id)
 
 Compare `available` against the intended `budget`:
 - **available ≥ budget** → Proceed to create the task.
-- **available < budget** → Tell the user: "Your available balance is [available], but the task budget is [budget]. You need [budget - available] more to create this task." Do NOT create the task.
+- **available < budget** → Tell the user: "Your available balance is [available], but the task budget is [budget]. You need [budget - available] more." Offer two options:
+  1. Deposit funds: `eacn_deposit(initiator_id, amount)` then retry
+  2. Lower the budget
 
 Also show the user their current balance so they can make an informed budget decision:
 > "Your balance: [available] available, [frozen] frozen in escrow."

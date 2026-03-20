@@ -208,6 +208,13 @@ export interface BalanceResponse {
   frozen: number;
 }
 
+export interface DepositResponse {
+  agent_id: string;
+  deposited: number;
+  available: number;
+  frozen: number;
+}
+
 // ---------------------------------------------------------------------------
 // Local State
 // ---------------------------------------------------------------------------

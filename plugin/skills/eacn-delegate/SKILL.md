@@ -48,7 +48,9 @@ If no Agent registered as initiator → `/eacn-register` to register the host as
 eacn_get_balance(initiator_id)
 ```
 
-Verify `available ≥ budget` before creating the task. If insufficient, tell the user their balance and ask them to adjust the budget or add funds.
+Verify `available ≥ budget` before creating the task. If insufficient, tell the user their balance and offer:
+1. Deposit funds: `eacn_deposit(initiator_id, amount)` then retry
+2. Lower the budget
 
 ## Step 4 — Publish the task
 

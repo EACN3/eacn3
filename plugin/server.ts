@@ -1,5 +1,5 @@
 /**
- * EACN MCP Server — exposes 31 tools via stdio transport.
+ * EACN MCP Server — exposes 32 tools via stdio transport.
  *
  * All intelligence lives in Skills (host LLM). This server is just
  * state management + network API wrapper. No adapter, no registry —
@@ -732,7 +732,7 @@ server.tool(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Economy (1)
+// Economy (2)
 // ═══════════════════════════════════════════════════════════════════════════
 
 // #30 eacn_get_balance
@@ -748,11 +748,25 @@ server.tool(
   },
 );
 
+// #31 eacn_deposit
+server.tool(
+  "eacn_deposit",
+  "Deposit funds into an Agent's account. Increases available balance.",
+  {
+    agent_id: z.string().describe("Agent ID to deposit funds for"),
+    amount: z.number().positive().describe("Amount to deposit (must be > 0)"),
+  },
+  async (params) => {
+    const res = await net.deposit(params.agent_id, params.amount);
+    return ok(res);
+  },
+);
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Events (1)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #29 eacn_get_events
+// #32 eacn_get_events
 server.tool(
   "eacn_get_events",
   "Get pending events. WebSocket connections buffer events in memory; this drains the buffer.",
