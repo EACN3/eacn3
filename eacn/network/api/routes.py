@@ -1,0 +1,399 @@
+"""Network HTTP API routes — wraps Network orchestration layer."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException, Query
+
+from eacn.core.exceptions import TaskError, BudgetError
+from eacn.network.api.schemas import (
+    CreateTaskRequest, TaskResponse,
+    SubmitBidRequest, BidResponse,
+    SubmitResultRequest, SelectResultRequest,
+    RejectTaskRequest,
+    CreateSubtaskRequest, ConfirmBudgetRequest,
+    CloseTaskRequest,
+    UpdateDiscussionsRequest, UpdateDeadlineRequest,
+    ReputationEventRequest, ReputationResponse,
+    OkResponse,
+)
+
+router = APIRouter(prefix="/api", tags=["network"])
+
+_network = None
+
+
+def set_network(network) -> None:
+    global _network
+    _network = network
+
+
+def _net():
+    if _network is None:
+        raise HTTPException(503, "Network not initialized")
+    return _network
+
+
+def _task_to_response(task) -> TaskResponse:
+    return TaskResponse(**task.model_dump())
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Task CRUD
+# ══════════════════════════════════════════════════════════════════════
+
+@router.post("/tasks", response_model=TaskResponse, status_code=201)
+async def create_task(req: CreateTaskRequest):
+    try:
+        task = await _net().create_task(
+            task_id=req.task_id,
+            initiator_id=req.initiator_id,
+            content=req.content,
+            domains=req.domains,
+            budget=req.budget,
+            deadline=req.deadline,
+            max_concurrent_bidders=req.max_concurrent_bidders,
+            max_depth=req.max_depth,
+        )
+        return _task_to_response(task)
+    except BudgetError as e:
+        raise HTTPException(402, str(e))
+    except TaskError as e:
+        raise HTTPException(409, str(e))
+
+
+# NOTE: /tasks/open MUST be before /tasks/{task_id} to avoid path parameter capture
+@router.get("/tasks/open", response_model=list[TaskResponse])
+async def list_open_tasks(
+    domains: str | None = None,
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """List open tasks available for bidding (status=unclaimed or bidding with slots)."""
+    tasks = _net().task_manager.list_all()
+    open_tasks = [
+        t for t in tasks
+        if t.status.value in ("unclaimed", "bidding") and not t.concurrent_slots_full
+    ]
+    if domains:
+        domain_set = set(domains.split(","))
+        open_tasks = [t for t in open_tasks if set(t.domains) & domain_set]
+    open_tasks = open_tasks[offset: offset + limit]
+    return [_task_to_response(t) for t in open_tasks]
+
+
+@router.get("/tasks/{task_id}", response_model=TaskResponse)
+async def get_task(task_id: str):
+    try:
+        task = _net().task_manager.get(task_id)
+        return _task_to_response(task)
+    except TaskError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.get("/tasks/{task_id}/status")
+async def get_task_status(task_id: str, agent_id: str):
+    """Agent queries a task they initiated (validates initiator_id == agent_id).
+
+    Returns task status info WITHOUT results and adjudications.
+    """
+    try:
+        task = _net().task_manager.get(task_id)
+    except TaskError as e:
+        raise HTTPException(404, str(e))
+
+    if task.initiator_id != agent_id:
+        raise HTTPException(403, "Only the task initiator can query task status")
+
+    return {
+        "id": task.id,
+        "status": task.status.value,
+        "initiator_id": task.initiator_id,
+        "domains": task.domains,
+        "budget": task.budget,
+        "deadline": task.deadline,
+        "type": task.type.value,
+        "depth": task.depth,
+        "parent_id": task.parent_id,
+        "child_ids": task.child_ids,
+        "bids": [b.model_dump() for b in task.bids],
+    }
+
+
+@router.get("/tasks", response_model=list[TaskResponse])
+async def list_tasks(
+    status: str | None = None,
+    initiator_id: str | None = None,
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    tasks = _net().task_manager.list_all()
+    if status:
+        tasks = [t for t in tasks if t.status.value == status]
+    if initiator_id:
+        tasks = [t for t in tasks if t.initiator_id == initiator_id]
+    tasks = tasks[offset: offset + limit]
+    return [_task_to_response(t) for t in tasks]
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Bidding
+# ══════════════════════════════════════════════════════════════════════
+
+@router.post("/tasks/{task_id}/bid", response_model=BidResponse)
+async def submit_bid(task_id: str, req: SubmitBidRequest):
+    try:
+        bid_status = await _net().submit_bid(
+            task_id=task_id,
+            agent_id=req.agent_id,
+            confidence=req.confidence,
+            price=req.price,
+            server_id=req.server_id,
+        )
+        return BidResponse(
+            status=bid_status.value, task_id=task_id, agent_id=req.agent_id,
+        )
+    except TaskError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/tasks/{task_id}/reject", response_model=OkResponse)
+async def reject_task(task_id: str, req: RejectTaskRequest):
+    """Agent rejects/withdraws from an assigned task for re-allocation."""
+    try:
+        await _net().reject_task(
+            task_id=task_id,
+            agent_id=req.agent_id,
+            reason=req.reason,
+        )
+        return OkResponse(message="Task rejected, slot freed")
+    except TaskError as e:
+        raise HTTPException(400, str(e))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Results
+# ══════════════════════════════════════════════════════════════════════
+
+@router.post("/tasks/{task_id}/result", response_model=OkResponse)
+async def submit_result(task_id: str, req: SubmitResultRequest):
+    try:
+        await _net().submit_result(
+            task_id=task_id,
+            agent_id=req.agent_id,
+            content=req.content,
+        )
+        return OkResponse(message="Result submitted")
+    except TaskError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/tasks/{task_id}/select", response_model=OkResponse)
+async def select_result(task_id: str, req: SelectResultRequest):
+    try:
+        await _net().select_result(
+            task_id=task_id,
+            agent_id=req.agent_id,
+            initiator_id=req.initiator_id,
+        )
+        return OkResponse(message="Result selected, settlement done")
+    except TaskError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/tasks/{task_id}/results")
+async def get_task_results(task_id: str, initiator_id: str):
+    """Initiator collects results and adjudications.
+
+    Preconditions:
+    - Caller must be the task initiator
+    - Task status must be awaiting_retrieval or completed
+    - First call transitions task from awaiting_retrieval → completed
+    """
+    try:
+        task = _net().task_manager.get(task_id)
+    except TaskError as e:
+        raise HTTPException(404, str(e))
+
+    if task.initiator_id != initiator_id:
+        raise HTTPException(403, "Only the task initiator can collect results")
+
+    from eacn.core.models import TaskStatus
+    if task.status not in (TaskStatus.AWAITING_RETRIEVAL, TaskStatus.COMPLETED):
+        raise HTTPException(
+            400,
+            f"Cannot collect results in status {task.status.value}; "
+            "task must be in awaiting_retrieval or completed",
+        )
+
+    results = await _net().collect_results(task_id)
+
+    # Flatten all adjudications across results
+    all_adjudications = []
+    for r in results:
+        for adj in r.adjudications:
+            all_adjudications.append({
+                "result_agent_id": r.agent_id,
+                **adj.model_dump(),
+            })
+
+    return {
+        "results": [r.model_dump() for r in results],
+        "adjudications": all_adjudications,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Task control
+# ══════════════════════════════════════════════════════════════════════
+
+@router.post("/tasks/{task_id}/close", response_model=TaskResponse)
+async def close_task(task_id: str, req: CloseTaskRequest):
+    try:
+        task = await _net().close_task(task_id, initiator_id=req.initiator_id)
+        return _task_to_response(task)
+    except TaskError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.put("/tasks/{task_id}/deadline", response_model=TaskResponse)
+async def update_deadline(task_id: str, req: UpdateDeadlineRequest):
+    try:
+        task = await _net().update_deadline(
+            task_id, req.deadline, initiator_id=req.initiator_id,
+        )
+        return _task_to_response(task)
+    except TaskError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/tasks/{task_id}/discussions", response_model=TaskResponse)
+async def update_discussions(task_id: str, req: UpdateDiscussionsRequest):
+    try:
+        task = await _net().update_discussions(
+            task_id, req.message, initiator_id=req.initiator_id,
+        )
+        return _task_to_response(task)
+    except TaskError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/tasks/{task_id}/confirm-budget", response_model=OkResponse)
+async def confirm_budget(task_id: str, req: ConfirmBudgetRequest):
+    try:
+        await _net().confirm_budget(
+            task_id,
+            initiator_id=req.initiator_id,
+            approved=req.approved,
+            new_budget=req.new_budget,
+        )
+        return OkResponse(message="Budget confirmed")
+    except (TaskError, BudgetError) as e:
+        raise HTTPException(400, str(e))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Subtasks
+# ══════════════════════════════════════════════════════════════════════
+
+@router.post("/tasks/{task_id}/subtask", response_model=TaskResponse, status_code=201)
+async def create_subtask(task_id: str, req: CreateSubtaskRequest):
+    try:
+        sub = await _net().create_subtask(
+            parent_task_id=task_id,
+            initiator_id=req.initiator_id,
+            content=req.content,
+            domains=req.domains,
+            budget=req.budget,
+            deadline=req.deadline,
+        )
+        return _task_to_response(sub)
+    except (TaskError, BudgetError) as e:
+        raise HTTPException(400, str(e))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Reputation
+# ══════════════════════════════════════════════════════════════════════
+
+@router.post("/reputation/events", response_model=ReputationResponse)
+async def receive_reputation_event(req: ReputationEventRequest):
+    score = _net().receive_reputation_event(
+        req.agent_id, req.event_type, req.server_id,
+    )
+    return ReputationResponse(agent_id=req.agent_id, score=score)
+
+
+@router.get("/reputation/{agent_id}", response_model=ReputationResponse)
+async def get_reputation(agent_id: str):
+    score = _net().reputation.get_score(agent_id)
+    return ReputationResponse(agent_id=agent_id, score=score)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Admin: config
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get("/admin/config")
+async def get_config():
+    """读取当前全部超参数。"""
+    return _net().config.model_dump()
+
+
+@router.put("/admin/config")
+async def update_config(patch: dict):
+    """部分更新超参数并持久化到 config.toml。
+
+    Example: {"reputation": {"max_gain": 0.2}, "economy": {"platform_fee_rate": 0.03}}
+    自动 reload 受影响模块 + 写入 config.toml。
+    """
+    from eacn.network.config import NetworkConfig, save_config, _deep_merge
+
+    net = _net()
+    current = net.config.model_dump()
+
+    for key in patch:
+        if key not in current:
+            raise HTTPException(400, f"Unknown config key: {key}")
+
+    _deep_merge(current, patch)
+
+    new_config = NetworkConfig(**current)
+    net.config = new_config
+
+    # Reload affected modules
+    net.reputation = type(net.reputation)(config=new_config.reputation)
+    net.matcher = type(net.matcher)(config=new_config.matcher)
+    net.push.MAX_RETRIES = new_config.push.max_retries
+    net.settlement.platform_fee_rate = new_config.economy.platform_fee_rate
+
+    # 持久化
+    save_config(new_config)
+
+    return new_config.model_dump()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Admin: deadline scan
+# ══════════════════════════════════════════════════════════════════════
+
+@router.post("/admin/scan-deadlines")
+async def scan_deadlines(now: str | None = None):
+    expired_ids = await _net().scan_deadlines(now)
+    return {"expired": expired_ids}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Admin: logs
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get("/admin/logs")
+async def query_logs(
+    task_id: str | None = None,
+    agent_id: str | None = None,
+    fn_name: str | None = None,
+    limit: int = Query(default=50, le=500),
+):
+    entries = _net().logger.get_entries(
+        task_id=task_id, agent_id=agent_id, fn_name=fn_name,
+    )
+    return [e.model_dump() for e in entries[:limit]]
