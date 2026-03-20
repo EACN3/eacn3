@@ -15,7 +15,7 @@ from eacn.network.push import PushService
 from eacn.network.adjudication import AdjudicationService
 from eacn.network.discovery import DiscoveryService
 from eacn.network.matcher import GlobalMatcher
-from eacn.network.logger import GlobalLogger, log_event
+from eacn.network.logger import GlobalLogger
 from eacn.network.reputation import GlobalReputation
 from eacn.network.economy import EscrowService
 from eacn.network.economy.settlement import SettlementService
@@ -276,7 +276,7 @@ class Network:
                     score=score,
                 )
             except TaskError:
-                pass  # parent not found, skip
+                _log.debug("Adjudication parent task not found, skipping")
 
         if self.adjudication.should_create_adjudication(task):
             await self._create_adjudication(task, agent_id)
@@ -296,7 +296,7 @@ class Network:
                 parent = self.task_manager.get(task.parent_id)
                 await self.push.notify_subtask_completed(parent, task_id)
             except TaskError:
-                pass  # parent not found, ignore
+                _log.debug("Parent task %s not found for subtask completion", task.parent_id)
 
 
     async def select_result(

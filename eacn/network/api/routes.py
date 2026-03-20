@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from eacn.core.exceptions import TaskError, BudgetError
+from eacn.core.models import TaskStatus
 from eacn.network.api.schemas import (
     CreateTaskRequest, TaskResponse,
     SubmitBidRequest, BidResponse,
@@ -236,7 +237,6 @@ async def get_task_results(task_id: str, initiator_id: str):
     if task.initiator_id != initiator_id:
         raise HTTPException(403, "Only the task initiator can collect results")
 
-    from eacn.core.models import TaskStatus
     if task.status not in (TaskStatus.AWAITING_RETRIEVAL, TaskStatus.COMPLETED):
         raise HTTPException(
             400,

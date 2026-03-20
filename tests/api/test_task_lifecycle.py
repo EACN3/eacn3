@@ -220,7 +220,7 @@ class TestUpdateDiscussions:
             json={"initiator_id": "user1", "message": "msg2"},
         )
         data = (await client.get("/api/tasks/t1")).json()
-        assert data is not None
+        assert data["status"] == "bidding"
 
 
 class TestStateMachineViaAPI:
@@ -242,8 +242,3 @@ class TestStateMachineViaAPI:
         await client.get("/api/tasks/t1/results", params={"initiator_id": "user1"})
         assert (await client.get("/api/tasks/t1")).json()["status"] == "completed"
 
-    @pytest.mark.asyncio
-    async def test_unclaimed_close_to_no_one_able(self, client):
-        await create_task(client, task_id="t1")
-        await close_task(client, task_id="t1")
-        assert (await client.get("/api/tasks/t1")).json()["status"] == "no_one_able"

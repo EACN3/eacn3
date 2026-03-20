@@ -182,9 +182,9 @@ class TestBudgetEscrow:
         await setup_task_with_result(client, budget=200.0, price=80.0)
         await close_task(client, task_id="t1")
         await select_result(client, task_id="t1", agent_id="a1")
-        # Task should be in a settled state
         data = (await client.get("/api/tasks/t1")).json()
-        assert data is not None
+        accepted = [b for b in data["bids"] if b["status"] == "accepted"]
+        assert len(accepted) == 1
 
     @pytest.mark.asyncio
     async def test_deadline_expiry_refunds(self, client):

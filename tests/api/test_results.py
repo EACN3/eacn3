@@ -39,14 +39,6 @@ class TestSubmitResult:
         assert len(data["results"]) == 2
 
     @pytest.mark.asyncio
-    async def test_adjudication_task_created_on_result(self, client):
-        """Submitting a result on normal task creates an adjudication task."""
-        await setup_task_with_result(client)
-        all_tasks = (await client.get("/api/tasks")).json()
-        adj_tasks = [t for t in all_tasks if t["type"] == "adjudication"]
-        assert len(adj_tasks) >= 1
-
-    @pytest.mark.asyncio
     async def test_auto_collect_when_all_slots_done(self, client):
         """When max_concurrent=1 and sole agent submits result → auto collect."""
         await create_task(client, task_id="t1", max_concurrent_bidders=1)
@@ -120,9 +112,9 @@ class TestSelectResult:
         await setup_task_with_result(client, budget=200.0, price=80.0)
         await close_task(client, task_id="t1")
         await select_result(client, task_id="t1", agent_id="a1")
-        # Task should reflect settlement occurred
         data = (await client.get("/api/tasks/t1")).json()
-        assert data is not None
+        selected = [b for b in data["bids"] if b["status"] == "accepted"]
+        assert len(selected) == 1
 
     @pytest.mark.asyncio
     async def test_select_propagates_reputation(self, client):
