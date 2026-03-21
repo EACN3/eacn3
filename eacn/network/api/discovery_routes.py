@@ -78,6 +78,20 @@ async def unregister_server(server_id: str):
     card = await _net().discovery.bootstrap.get_server_card(server_id)
     if not card:
         raise HTTPException(404, f"Server {server_id} not found")
+    # Revoke domains of all agents belonging to this server from cluster
+    server_agent_ids = await _net().discovery.bootstrap.get_agent_ids_by_server(server_id)
+    server_agent_set = set(server_agent_ids)
+    for aid in server_agent_ids:
+        agent_card = await _net().discovery.bootstrap.get_agent_card(aid)
+        if agent_card:
+            for domain in agent_card.get("domains", []):
+                others = await _net().discovery.bootstrap._db.query_agent_cards_by_domain(domain)
+                still_used = any(
+                    c["agent_id"] not in server_agent_set for c in others
+                )
+                if not still_used:
+                    await _net().cluster.revoke_domain(domain)
+
     await _net().discovery.unregister_server(server_id)
     return OkResponse(message=f"Server {server_id} unregistered, agents cascade removed")
 
@@ -112,6 +126,11 @@ async def register_agent(req: RegisterAgentRequest):
         "description": req.description,
     }
     seeds = await _net().discovery.register_agent(card)
+
+    # Sync new domains to cluster DHT so peer nodes know we handle them
+    for domain in req.domains:
+        await _net().cluster.announce_domain(domain)
+
     return RegisterAgentResponse(agent_id=req.agent_id, seeds=seeds)
 
 
@@ -154,9 +173,15 @@ async def update_agent(agent_id: str, req: UpdateAgentRequest):
         # Revoke removed domains
         for d in old_domains - new_domains:
             await _net().discovery.dht.revoke(d, agent_id)
+            # Only revoke from cluster if no other local agent uses this domain
+            others = await _net().discovery.bootstrap._db.query_agent_cards_by_domain(d)
+            still_used = any(c["agent_id"] != agent_id for c in others)
+            if not still_used:
+                await _net().cluster.revoke_domain(d)
         # Announce new domains
         for d in new_domains - old_domains:
             await _net().discovery.dht.announce(d, agent_id)
+            await _net().cluster.announce_domain(d)
 
     return OkResponse(message="Agent updated")
 
@@ -167,6 +192,13 @@ async def unregister_agent(agent_id: str):
     card = await _net().discovery.bootstrap.get_agent_card(agent_id)
     if not card:
         raise HTTPException(404, f"Agent {agent_id} not found")
+    # Revoke agent's domains from cluster if no other local agent uses them
+    for domain in card.get("domains", []):
+        others = await _net().discovery.bootstrap._db.query_agent_cards_by_domain(domain)
+        still_used = any(c["agent_id"] != agent_id for c in others)
+        if not still_used:
+            await _net().cluster.revoke_domain(domain)
+
     await _net().discovery.unregister_agent(agent_id)
     return OkResponse(message=f"Agent {agent_id} unregistered")
 

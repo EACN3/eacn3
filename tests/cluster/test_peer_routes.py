@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
 from eacn.network.app import Network
+from eacn.network.config import NetworkConfig
 from eacn.network.db import Database
 from eacn.network.api.routes import router as net_router, set_network
 from eacn.network.api.discovery_routes import discovery_router, set_discovery_network
@@ -17,7 +18,7 @@ async def peer_client():
     """HTTP client with Network + ClusterService for peer route testing."""
     db = Database()
     await db.connect()
-    net = Network(db=db)
+    net = Network(db=db, config=NetworkConfig())
     await net.start()
 
     # Fund accounts for task tests

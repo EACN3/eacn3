@@ -21,7 +21,7 @@ from eacn.network.cluster.gossip import ClusterGossip
 from eacn.network.cluster.router import ClusterRouter
 from eacn.network.cluster.service import ClusterService
 from eacn.network.cluster.bootstrap import ClusterBootstrap
-from eacn.network.config import ClusterConfig
+from eacn.network.config import ClusterConfig, NetworkConfig
 
 
 def _mock_httpx():
@@ -41,7 +41,7 @@ async def api():
     """Full API client with Network + Cluster wired up."""
     db = Database()
     await db.connect()
-    net = Network(db=db)
+    net = Network(db=db, config=NetworkConfig())
     await net.start()
     net.escrow.get_or_create_account("user1", 10_000.0)
     await net.dht.announce("coding", "a1")
