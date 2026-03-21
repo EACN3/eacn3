@@ -9,6 +9,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from eacn.network.app import Network
 from eacn.network.db import Database
@@ -55,6 +56,11 @@ def create_app(db_path: str = ":memory:") -> FastAPI:
         lifespan=lifespan,
     )
     app.state.db_path = db_path
+
+    @app.get("/health")
+    async def health():
+        return JSONResponse({"status": "ok"})
+
     app.include_router(router)
     app.include_router(discovery_router)
     app.include_router(peer_router)
