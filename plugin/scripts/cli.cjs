@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * cli.js — `eacn` CLI entry point
+ * cli.js — `eacn3` CLI entry point
  * Usage:
- *   npx eacn setup     — configure OpenClaw native plugin
- *   npx eacn diagnose  — run diagnostics
+ *   npx eacn3 setup     — configure OpenClaw native plugin
+ *   npx eacn3 diagnose  — run diagnostics
  */
 
 const { spawnSync, execFileSync } = require('child_process');
@@ -113,13 +113,13 @@ function diagnose() {
   // 3. OpenClaw installation
   console.log('\n── OpenClaw Integration ──');
   check('extensions directory', () => {
-    if (!fs.existsSync(EXT_DIR)) throw new Error(`${EXT_DIR} not found — run "npx eacn setup"`);
+    if (!fs.existsSync(EXT_DIR)) throw new Error(`${EXT_DIR} not found — run "npx eacn3 setup"`);
     const files = fs.readdirSync(EXT_DIR);
     return `${files.length} entries in ${EXT_DIR}`;
   });
   check('dist/index.js in extensions', () => {
     const p = path.join(EXT_DIR, 'dist', 'index.js');
-    if (!fs.existsSync(p)) throw new Error('not found — run "npx eacn setup" to copy');
+    if (!fs.existsSync(p)) throw new Error('not found — run "npx eacn3 setup" to copy');
     return 'exists';
   });
   check('openclaw.json plugin entry', () => {
@@ -140,7 +140,7 @@ function diagnose() {
   check('plugins.installs metadata', () => {
     const config = readJSON(CONFIG_PATH);
     const inst = config?.plugins?.installs?.[PLUGIN_ID];
-    if (!inst) throw new Error('no install entry — run "npx eacn setup"');
+    if (!inst) throw new Error('no install entry — run "npx eacn3 setup"');
     return `source=${inst.source} v=${inst.version} @ ${inst.installedAt}`;
   });
   check('skills.entries registration', () => {
@@ -176,7 +176,7 @@ function diagnose() {
     console.log('  All checks passed.\n');
   } else {
     console.log('  Some checks failed. Fix the issues above and re-run:\n');
-    console.log('    npx eacn diagnose\n');
+    console.log('    npx eacn3 diagnose\n');
   }
 
   return allOk;
@@ -185,7 +185,7 @@ function diagnose() {
 // ── setup ─────────────────────────────────────────────────────────────────────
 
 function setupOpenclaw() {
-  console.log('\neacn setup\n');
+  console.log('\neacn3 setup\n');
 
   // 1. Check dist exists
   const distSrc = path.join(PKG_ROOT, 'dist', 'index.js');
@@ -326,7 +326,7 @@ switch (cmd) {
     break;
   default:
     console.log('Usage:');
-    console.log('  npx eacn setup     — install plugin into OpenClaw');
-    console.log('  npx eacn diagnose  — run full diagnostics');
+    console.log('  npx eacn3 setup     — install plugin into OpenClaw');
+    console.log('  npx eacn3 diagnose  — run full diagnostics');
     process.exit(0);
 }

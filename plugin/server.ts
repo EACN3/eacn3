@@ -64,7 +64,7 @@ function stopHeartbeat(): void {
 // MCP Server
 // ---------------------------------------------------------------------------
 
-const server = new McpServer({ name: "eacn", version: "0.1.0" });
+const server = new McpServer({ name: "eacn3", version: "0.1.0" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Server Management (4)
