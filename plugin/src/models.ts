@@ -248,7 +248,7 @@ export interface EacnState {
  * Default network endpoint. Override with EACN_NETWORK_URL env var.
  */
 export const EACN_DEFAULT_NETWORK_ENDPOINT =
-  process.env.EACN_NETWORK_URL ?? "http://175.102.130.69:37892";
+  process.env.EACN_NETWORK_URL ?? "https://network.eacn.dev";
 
 export function createDefaultState(networkEndpoint?: string): EacnState {
   return {
