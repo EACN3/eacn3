@@ -7,7 +7,7 @@ import pytest
 
 async def _setup(mcp, funded_network):
     """Register agents + fund + create task in bidding state. Returns task_id."""
-    await mcp.call_tool_parsed("eacn_register_agent", {
+    await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "DD Init",
         "description": "test",
         "domains": ["coding"],
@@ -15,7 +15,7 @@ async def _setup(mcp, funded_network):
         "agent_id": "dd-init",
         "agent_type": "planner",
     })
-    await mcp.call_tool_parsed("eacn_register_agent", {
+    await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "DD Worker",
         "description": "test",
         "domains": ["coding"],
@@ -26,7 +26,7 @@ async def _setup(mcp, funded_network):
     funded_network.reputation._scores["dd-init"] = 0.8
     funded_network.reputation._scores["dd-worker"] = 0.8
 
-    task = await mcp.call_tool_parsed("eacn_create_task", {
+    task = await mcp.call_tool_parsed("eacn3_create_task", {
         "description": "Discussions/deadline test",
         "budget": 500.0,
         "domains": ["coding"],
@@ -41,7 +41,7 @@ class TestDeadline:
         """Initiator updates deadline, exact value persisted on network."""
         task_id = await _setup(mcp, funded_network)
 
-        result = await mcp.call_tool_parsed("eacn_update_deadline", {
+        result = await mcp.call_tool_parsed("eacn3_update_deadline", {
             "task_id": task_id,
             "new_deadline": "2026-12-31T23:59:59Z",
             "initiator_id": "dd-init",
@@ -57,7 +57,7 @@ class TestDeadline:
     @pytest.mark.asyncio
     async def test_create_task_with_deadline(self, mcp, http, funded_network):
         """Task created with deadline has it stored."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "DL Init",
             "description": "test",
             "domains": ["coding"],
@@ -66,7 +66,7 @@ class TestDeadline:
         })
         funded_network.escrow.get_or_create_account("dl-init", 5000.0)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Has deadline",
             "budget": 100.0,
             "domains": ["coding"],
@@ -110,12 +110,12 @@ class TestDiscussions:
         task_id = await _setup(mcp, funded_network)
 
         # Need task in bidding state for discussions
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id, "agent_id": "dd-worker",
             "confidence": 0.9, "price": 80.0,
         })
 
-        result = await mcp.call_tool_parsed("eacn_update_discussions", {
+        result = await mcp.call_tool_parsed("eacn3_update_discussions", {
             "task_id": task_id,
             "message": "请注意代码规范",
             "initiator_id": "dd-init",
@@ -135,15 +135,15 @@ class TestDiscussions:
         """Multiple discussions are appended in order."""
         task_id = await _setup(mcp, funded_network)
 
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id, "agent_id": "dd-worker",
             "confidence": 0.9, "price": 80.0,
         })
 
-        await mcp.call_tool_parsed("eacn_update_discussions", {
+        await mcp.call_tool_parsed("eacn3_update_discussions", {
             "task_id": task_id, "message": "First", "initiator_id": "dd-init",
         })
-        await mcp.call_tool_parsed("eacn_update_discussions", {
+        await mcp.call_tool_parsed("eacn3_update_discussions", {
             "task_id": task_id, "message": "Second", "initiator_id": "dd-init",
         })
 
@@ -158,24 +158,24 @@ class TestDiscussions:
         """Adding discussion pushes event to bidder's event buffer."""
         task_id = await _setup(mcp, funded_network)
 
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id, "agent_id": "dd-worker",
             "confidence": 0.9, "price": 80.0,
         })
 
         # Drain old events
         await asyncio.sleep(0.5)
-        await mcp.call_tool_parsed("eacn_get_events")
+        await mcp.call_tool_parsed("eacn3_get_events")
 
         # Add discussion
-        await mcp.call_tool_parsed("eacn_update_discussions", {
+        await mcp.call_tool_parsed("eacn3_update_discussions", {
             "task_id": task_id,
             "message": "New requirement: add tests",
             "initiator_id": "dd-init",
         })
 
         await asyncio.sleep(1.0)
-        result = await mcp.call_tool_parsed("eacn_get_events")
+        result = await mcp.call_tool_parsed("eacn3_get_events")
         events = result["events"]
         event_types = [e["type"] for e in events]
         assert any("discussion" in t for t in event_types), (

@@ -7,7 +7,7 @@ from tests.integration.conftest import is_error
 
 async def _setup_task(mcp, funded_network, task_desc="Executor test", budget=200.0):
     """Register agents, fund, create task. Returns task_id."""
-    await mcp.call_tool_parsed("eacn_register_agent", {
+    await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "Initiator",
         "description": "test",
         "domains": ["coding"],
@@ -15,7 +15,7 @@ async def _setup_task(mcp, funded_network, task_desc="Executor test", budget=200
         "agent_id": "exec-init",
         "agent_type": "planner",
     })
-    await mcp.call_tool_parsed("eacn_register_agent", {
+    await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "Executor",
         "description": "test",
         "domains": ["coding"],
@@ -26,7 +26,7 @@ async def _setup_task(mcp, funded_network, task_desc="Executor test", budget=200
     funded_network.reputation._scores["exec-init"] = 0.8
     funded_network.reputation._scores["exec-worker"] = 0.8
 
-    task = await mcp.call_tool_parsed("eacn_create_task", {
+    task = await mcp.call_tool_parsed("eacn3_create_task", {
         "description": task_desc,
         "budget": budget,
         "domains": ["coding"],
@@ -39,7 +39,7 @@ class TestBidEdgeCases:
     @pytest.mark.asyncio
     async def test_bid_on_nonexistent_task(self, mcp, funded_network):
         """Bidding on a non-existent task returns error."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Bidder",
             "description": "test",
             "domains": ["coding"],
@@ -48,7 +48,7 @@ class TestBidEdgeCases:
         })
         funded_network.reputation._scores["bid-ghost"] = 0.8
 
-        result = await mcp.call_tool_parsed("eacn_submit_bid", {
+        result = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": "nonexistent-task",
             "agent_id": "bid-ghost",
             "confidence": 0.9,
@@ -63,7 +63,7 @@ class TestBidEdgeCases:
         # Set low reputation: 0.5 × 0.3 = 0.15 < 0.5 threshold
         funded_network.reputation._scores["exec-worker"] = 0.3
 
-        result = await mcp.call_tool_parsed("eacn_submit_bid", {
+        result = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "confidence": 0.5,
@@ -78,12 +78,12 @@ class TestBidEdgeCases:
         """Bidding on a closed task returns error."""
         task_id = await _setup_task(mcp, funded_network)
 
-        await mcp.call_tool_parsed("eacn_close_task", {
+        await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id,
             "initiator_id": "exec-init",
         })
 
-        result = await mcp.call_tool_parsed("eacn_submit_bid", {
+        result = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "confidence": 0.9,
@@ -96,7 +96,7 @@ class TestBidEdgeCases:
         """Same agent bidding twice on same task returns error."""
         task_id = await _setup_task(mcp, funded_network)
 
-        r1 = await mcp.call_tool_parsed("eacn_submit_bid", {
+        r1 = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "confidence": 0.9,
@@ -104,7 +104,7 @@ class TestBidEdgeCases:
         })
         assert r1["status"] == "executing"
 
-        r2 = await mcp.call_tool_parsed("eacn_submit_bid", {
+        r2 = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "confidence": 0.95,
@@ -119,7 +119,7 @@ class TestRejectTask:
         """Executor rejects task → bid status REJECTED, task back to bidding."""
         task_id = await _setup_task(mcp, funded_network)
 
-        bid = await mcp.call_tool_parsed("eacn_submit_bid", {
+        bid = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "confidence": 0.9,
@@ -127,7 +127,7 @@ class TestRejectTask:
         })
         assert bid["status"] == "executing"
 
-        result = await mcp.call_tool_parsed("eacn_reject_task", {
+        result = await mcp.call_tool_parsed("eacn3_reject_task", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "reason": "Too complex",
@@ -148,7 +148,7 @@ class TestRejectTask:
         """Rejecting a task you haven't bid on returns error."""
         task_id = await _setup_task(mcp, funded_network)
 
-        result = await mcp.call_tool_parsed("eacn_reject_task", {
+        result = await mcp.call_tool_parsed("eacn3_reject_task", {
             "task_id": task_id,
             "agent_id": "exec-worker",
         })
@@ -161,7 +161,7 @@ class TestSubmitResult:
         """Submitting result without being an active bidder returns error."""
         task_id = await _setup_task(mcp, funded_network)
 
-        result = await mcp.call_tool_parsed("eacn_submit_result", {
+        result = await mcp.call_tool_parsed("eacn3_submit_result", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "content": {"answer": "sneaky"},
@@ -173,7 +173,7 @@ class TestSubmitResult:
         """Submitted result is retrievable with correct content."""
         task_id = await _setup_task(mcp, funded_network)
 
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "confidence": 0.9,
@@ -185,7 +185,7 @@ class TestSubmitResult:
             "language": "python",
             "metadata": {"lines": 1},
         }
-        result = await mcp.call_tool_parsed("eacn_submit_result", {
+        result = await mcp.call_tool_parsed("eacn3_submit_result", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "content": rich_content,
@@ -193,11 +193,11 @@ class TestSubmitResult:
         assert result["ok"] is True
 
         # Close and collect — verify content preserved
-        await mcp.call_tool_parsed("eacn_close_task", {
+        await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id,
             "initiator_id": "exec-init",
         })
-        collected = await mcp.call_tool_parsed("eacn_get_task_results", {
+        collected = await mcp.call_tool_parsed("eacn3_get_task_results", {
             "task_id": task_id,
             "initiator_id": "exec-init",
         })
@@ -215,7 +215,7 @@ class TestMultipleBids:
         """Two agents bid on same task — both get EXECUTING (default 5 slots)."""
         task_id = await _setup_task(mcp, funded_network)
 
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Executor 2",
             "description": "test",
             "domains": ["coding"],
@@ -224,13 +224,13 @@ class TestMultipleBids:
         })
         funded_network.reputation._scores["exec-worker-2"] = 0.8
 
-        bid1 = await mcp.call_tool_parsed("eacn_submit_bid", {
+        bid1 = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "confidence": 0.9,
             "price": 80.0,
         })
-        bid2 = await mcp.call_tool_parsed("eacn_submit_bid", {
+        bid2 = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "exec-worker-2",
             "confidence": 0.85,

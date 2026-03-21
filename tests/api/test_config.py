@@ -9,7 +9,7 @@ from pathlib import Path
 
 from tests.api.conftest import create_task, bid, submit_result
 
-from eacn.network.config import NetworkConfig, load_config, save_config
+from eacn3.network.config import NetworkConfig, load_config, save_config
 
 class TestGetConfig:
     @pytest.mark.asyncio
@@ -133,7 +133,7 @@ class TestConfigAffectsBehavior:
     @pytest.mark.asyncio
     async def test_custom_config_on_init(self):
         """Network can be initialized with custom config."""
-        from eacn.network.app import Network
+        from eacn3.network.app import Network
         config = NetworkConfig(
             reputation={"max_gain": 0.3, "default_score": 0.7},
             matcher={"ability_threshold": 0.2},
@@ -148,7 +148,7 @@ class TestConfigAffectsBehavior:
 class TestTOMLConfig:
     def test_load_default_toml(self):
         """config.default.toml 应能正常加载。"""
-        from eacn.network.config import _DEFAULT_TOML
+        from eacn3.network.config import _DEFAULT_TOML
         cfg = load_config(_DEFAULT_TOML)
         assert cfg.reputation.max_gain == 0.1
         assert cfg.matcher.ability_threshold == 0.5

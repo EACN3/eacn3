@@ -7,7 +7,7 @@ from tests.integration.conftest import is_error
 
 async def _setup_agent(mcp, funded_network, agent_id="query-init"):
     """Register agent + fund for task creation."""
-    await mcp.call_tool_parsed("eacn_register_agent", {
+    await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "Query Agent",
         "description": "test",
         "domains": ["coding", "design"],
@@ -22,16 +22,16 @@ class TestGetTask:
     @pytest.mark.asyncio
     async def test_get_nonexistent_task(self, mcp):
         """Getting a task that doesn't exist returns error with 404."""
-        result = await mcp.call_tool_parsed("eacn_get_task", {
+        result = await mcp.call_tool_parsed("eacn3_get_task", {
             "task_id": "nonexistent-task-xyz",
         })
         assert is_error(result), f"Expected error for non-existent task, got: {result}"
 
     @pytest.mark.asyncio
     async def test_get_task_returns_full_details(self, mcp, funded_network):
-        """eacn_get_task returns task with all fields populated correctly."""
+        """eacn3_get_task returns task with all fields populated correctly."""
         await _setup_agent(mcp, funded_network)
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Detail test",
             "budget": 100.0,
             "domains": ["coding"],
@@ -41,7 +41,7 @@ class TestGetTask:
         assert task["status"] == "unclaimed"
         assert task["budget"] == 100.0
 
-        result = await mcp.call_tool_parsed("eacn_get_task", {"task_id": task_id})
+        result = await mcp.call_tool_parsed("eacn3_get_task", {"task_id": task_id})
         assert result["id"] == task_id
         assert result["budget"] == 100.0
         assert result["domains"] == ["coding"]
@@ -56,9 +56,9 @@ class TestGetTask:
 
     @pytest.mark.asyncio
     async def test_get_task_status_initiator_only(self, mcp, http, funded_network):
-        """eacn_get_task_status returns 403 for non-initiator."""
+        """eacn3_get_task_status returns 403 for non-initiator."""
         await _setup_agent(mcp, funded_network)
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Status auth test",
             "budget": 50.0,
             "domains": ["coding"],
@@ -85,7 +85,7 @@ class TestListTasks:
     async def test_list_tasks_by_status(self, mcp, http, funded_network):
         """List tasks filtered by status returns only matching tasks."""
         await _setup_agent(mcp, funded_network)
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "List status test",
             "budget": 50.0,
             "domains": ["coding"],
@@ -109,13 +109,13 @@ class TestListTasks:
         await _setup_agent(mcp, funded_network)
         await _setup_agent(mcp, funded_network, agent_id="other-init")
 
-        t1 = await mcp.call_tool_parsed("eacn_create_task", {
+        t1 = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "By initiator A",
             "budget": 50.0,
             "domains": ["coding"],
             "initiator_id": "query-init",
         })
-        t2 = await mcp.call_tool_parsed("eacn_create_task", {
+        t2 = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "By initiator B",
             "budget": 50.0,
             "domains": ["coding"],
@@ -138,7 +138,7 @@ class TestListTasks:
         await _setup_agent(mcp, funded_network)
         created_ids = []
         for i in range(3):
-            t = await mcp.call_tool_parsed("eacn_create_task", {
+            t = await mcp.call_tool_parsed("eacn3_create_task", {
                 "description": f"Page test {i}",
                 "budget": 10.0,
                 "domains": ["coding"],
@@ -169,16 +169,16 @@ class TestListTasks:
 class TestOpenTasks:
     @pytest.mark.asyncio
     async def test_list_open_tasks_via_plugin(self, mcp, funded_network):
-        """Plugin eacn_list_open_tasks returns {count, tasks}."""
+        """Plugin eacn3_list_open_tasks returns {count, tasks}."""
         await _setup_agent(mcp, funded_network)
-        t = await mcp.call_tool_parsed("eacn_create_task", {
+        t = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Open task test",
             "budget": 50.0,
             "domains": ["coding"],
             "initiator_id": "query-init",
         })
 
-        result = await mcp.call_tool_parsed("eacn_list_open_tasks", {
+        result = await mcp.call_tool_parsed("eacn3_list_open_tasks", {
             "domains": "coding",
         })
         assert result["count"] >= 1
@@ -189,13 +189,13 @@ class TestOpenTasks:
     async def test_open_tasks_domain_filter(self, mcp, http, funded_network):
         """Open tasks filtered by domain excludes other domains."""
         await _setup_agent(mcp, funded_network)
-        await mcp.call_tool_parsed("eacn_create_task", {
+        await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Design task",
             "budget": 50.0,
             "domains": ["design"],
             "initiator_id": "query-init",
         })
-        coding_task = await mcp.call_tool_parsed("eacn_create_task", {
+        coding_task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Coding task",
             "budget": 50.0,
             "domains": ["coding"],
@@ -215,7 +215,7 @@ class TestOpenTasks:
     async def test_closed_task_not_in_open(self, mcp, http, funded_network):
         """A closed task must not appear in open tasks list."""
         await _setup_agent(mcp, funded_network)
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Will close",
             "budget": 50.0,
             "domains": ["closing-test"],
@@ -228,7 +228,7 @@ class TestOpenTasks:
         assert task_id in [t["id"] for t in resp.json()]
 
         # Close it
-        close_result = await mcp.call_tool_parsed("eacn_close_task", {
+        close_result = await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id,
             "initiator_id": "query-init",
         })

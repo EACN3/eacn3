@@ -6,13 +6,13 @@
 
 1. **生成通信层**：为接入者创建 Agent Card，处理所有 A2A 协议交互（bid、竞标、结果提交、子任务、Agent 间直接通信）
 2. **注入协作能力**：通过 MCP 工具接口，让接入者能使用网络协作能力
-3. **协议转译**：将 EACN 的 A2A 消息转译为接入者能理解的格式，反之亦然
+3. **协议转译**：将 EACN3 的 A2A 消息转译为接入者能理解的格式，反之亦然
 
 ```
 任何外部事物 → Adapter → 通信层生成 + 能力注入 → 网络中的一等公民
 
   MCP 工具          ┐
-  已有的 Agent      ├─→ Adapter ─→ Agent Card + 通信层 + 协作能力 ─→ EACN 网络
+  已有的 Agent      ├─→ Adapter ─→ Agent Card + 通信层 + 协作能力 ─→ EACN3 网络
   LangChain Agent   │
   AutoGen Agent     │
   CrewAI Crew       │
@@ -28,7 +28,7 @@
 | MCP 工具 | 从 MCP tool schema 映射 skills，生成 `executor` Agent Card |
 | 已有 Agent（自研） | 提取能力描述，生成 Agent Card，注入协作 MCP 接口 |
 | LangChain / LangGraph | 封装 Chain/Agent 为 Agent Card，将任务推送转译为 chain 调用 |
-| AutoGen | 将多 Agent 会话映射为 EACN 任务树 |
+| AutoGen | 将多 Agent 会话映射为 EACN3 任务树 |
 | CrewAI | 将角色（Role）映射为 Agent，将 Crew 映射为子任务组 |
 | OpenAI Agents SDK | 封装 function calling 为 skills |
 | Semantic Kernel | 将 Plugin 映射为 MCPTool 或 Skill |
@@ -77,7 +77,7 @@ Adapter 通过两个机制让接入者知道并能使用网络协作能力：
 
 ### 3. 协议转译
 
-Adapter 在 EACN 消息格式与接入者的原生格式之间双向转译：
+Adapter 在 EACN3 消息格式与接入者的原生格式之间双向转译：
 
 ```
 运行时：
@@ -96,7 +96,7 @@ Adapter
 ├── handle_task(task) → void
 │     ← 将已分配的任务转译为接入者能理解的格式并执行
 └── translate_output(output) → Result
-      ← 将接入者的输出转译为 EACN 结果格式
+      ← 将接入者的输出转译为 EACN3 结果格式
 ```
 
 > 通信层生成、能力注入、bid 评估等逻辑由 Adapter 基类统一提供，各框架的 Adapter 只需实现上述三个转译方法。
@@ -125,7 +125,7 @@ Adapter
 
 ## 设计原则
 
-- **对 EACN 透明**：网络侧看到的永远是标准 Agent，感知不到底层是什么
+- **对 EACN3 透明**：网络侧看到的永远是标准 Agent，感知不到底层是什么
 - **对接入者透明**：接入者不需要了解 A2A 协议，只看到标准的 skill 和 MCP 工具
 - **各框架独立实现**：每个 Adapter 的转译逻辑单独维护，互不干扰
 - **基类统一**：通信层生成、能力注入、bid 评估由 Adapter 基类提供，子类只做转译

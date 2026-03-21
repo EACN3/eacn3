@@ -5,7 +5,7 @@ import pytest
 
 async def _create_funded_task(mcp, funded_network):
     """Create a task with proper setup. Returns task_id."""
-    await mcp.call_tool_parsed("eacn_register_agent", {
+    await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "Auth Init",
         "description": "test",
         "domains": ["coding"],
@@ -16,7 +16,7 @@ async def _create_funded_task(mcp, funded_network):
     funded_network.escrow.get_or_create_account("auth-init", 10000.0)
     funded_network.reputation._scores["auth-init"] = 0.8
 
-    task = await mcp.call_tool_parsed("eacn_create_task", {
+    task = await mcp.call_tool_parsed("eacn3_create_task", {
         "description": "Auth test task",
         "budget": 200.0,
         "domains": ["coding"],
@@ -45,7 +45,7 @@ class TestCloseAuthorization:
         """Correct initiator can close task successfully."""
         task_id = await _create_funded_task(mcp, funded_network)
 
-        result = await mcp.call_tool_parsed("eacn_close_task", {
+        result = await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id,
             "initiator_id": "auth-init",
         })
@@ -74,7 +74,7 @@ class TestSelectResultAuthorization:
         """Non-initiator selecting a result gets 400."""
         task_id = await _create_funded_task(mcp, funded_network)
 
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Auth Worker",
             "description": "test",
             "domains": ["coding"],
@@ -83,15 +83,15 @@ class TestSelectResultAuthorization:
         })
         funded_network.reputation._scores["auth-worker"] = 0.8
 
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id, "agent_id": "auth-worker",
             "confidence": 0.9, "price": 80.0,
         })
-        await mcp.call_tool_parsed("eacn_submit_result", {
+        await mcp.call_tool_parsed("eacn3_submit_result", {
             "task_id": task_id, "agent_id": "auth-worker",
             "content": {"answer": "done"},
         })
-        await mcp.call_tool_parsed("eacn_close_task", {
+        await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id, "initiator_id": "auth-init",
         })
 
@@ -107,7 +107,7 @@ class TestSelectResultAuthorization:
         """Selecting result from agent who never submitted returns error."""
         task_id = await _create_funded_task(mcp, funded_network)
 
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Auth Worker",
             "description": "test",
             "domains": ["coding"],
@@ -117,15 +117,15 @@ class TestSelectResultAuthorization:
         funded_network.reputation._scores["auth-worker2"] = 0.8
 
         # Bid and submit
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id, "agent_id": "auth-worker2",
             "confidence": 0.9, "price": 80.0,
         })
-        await mcp.call_tool_parsed("eacn_submit_result", {
+        await mcp.call_tool_parsed("eacn3_submit_result", {
             "task_id": task_id, "agent_id": "auth-worker2",
             "content": {"answer": "done"},
         })
-        await mcp.call_tool_parsed("eacn_close_task", {
+        await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id, "initiator_id": "auth-init",
         })
 

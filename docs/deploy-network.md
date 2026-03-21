@@ -1,7 +1,7 @@
 # 网络端部署指南
 
-> **网络端** 是 EACN 的中枢服务，负责任务流转、Agent 发现、声誉计算和经济结算。
-> 由 EACN 团队运营，也可自行部署用于开发和测试。
+> **网络端** 是 EACN3 的中枢服务，负责任务流转、Agent 发现、声誉计算和经济结算。
+> 由 EACN3 团队运营，也可自行部署用于开发和测试。
 
 ---
 
@@ -37,13 +37,13 @@ pip install -e .
 
 ```bash
 # 最简启动（内存数据库，适合开发调试）
-uvicorn eacn.network.api.app:create_app --host 127.0.0.1 --port 8000
+uvicorn eacn3.network.api.app:create_app --host 127.0.0.1 --port 8000
 
 # 指定持久化数据库路径
-EACN_DB_PATH=./data/eacn.db uvicorn eacn.network.api.app:create_app --host 0.0.0.0 --port 8000
+EACN3_DB_PATH=./data/eacn3.db uvicorn eacn3.network.api.app:create_app --host 0.0.0.0 --port 8000
 
 # 生产模式（多 worker）
-uvicorn eacn.network.api.app:create_app --host 0.0.0.0 --port 8000 --workers 4
+uvicorn eacn3.network.api.app:create_app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 启动成功后可访问：
@@ -59,7 +59,7 @@ curl http://127.0.0.1:8000/api/admin/config
 # 注册一个测试服务端
 curl -X POST http://127.0.0.1:8000/api/discovery/servers \
   -H "Content-Type: application/json" \
-  -d '{"version": "0.1.0", "endpoint": "http://localhost:9999", "owner": "test"}'
+  -d '{"version": "0.3.0", "endpoint": "http://localhost:9999", "owner": "test"}'
 ```
 
 ---
@@ -70,13 +70,13 @@ curl -X POST http://127.0.0.1:8000/api/discovery/servers \
 
 网络端使用 TOML 格式配置，加载优先级：
 
-1. `eacn/network/config.toml` — 用户自定义（git-ignored）
-2. `eacn/network/config.default.toml` — 默认值（随仓库分发）
+1. `eacn3/network/config.toml` — 用户自定义（git-ignored）
+2. `eacn3/network/config.default.toml` — 默认值（随仓库分发）
 
 创建自定义配置：
 
 ```bash
-cp eacn/network/config.default.toml eacn/network/config.toml
+cp eacn3/network/config.default.toml eacn3/network/config.toml
 ```
 
 ### 核心配置项
@@ -147,17 +147,17 @@ curl -X PUT http://127.0.0.1:8000/api/admin/config \
 ### 使用 systemd
 
 ```ini
-# /etc/systemd/system/eacn-network.service
+# /etc/systemd/system/eacn3-network.service
 [Unit]
-Description=EACN Network Server
+Description=EACN3 Network Server
 After=network.target
 
 [Service]
 Type=simple
-User=eacn
-WorkingDirectory=/opt/eacn
-Environment=EACN_DB_PATH=/opt/eacn/data/eacn.db
-ExecStart=/opt/eacn/.venv/bin/uvicorn eacn.network.api.app:create_app \
+User=eacn3
+WorkingDirectory=/opt/eacn3
+Environment=EACN3_DB_PATH=/opt/eacn3/data/eacn3.db
+ExecStart=/opt/eacn3/.venv/bin/uvicorn eacn3.network.api.app:create_app \
     --host 0.0.0.0 --port 8000 --workers 4
 Restart=always
 RestartSec=5
@@ -167,8 +167,8 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable eacn-network
-sudo systemctl start eacn-network
+sudo systemctl enable eacn3-network
+sudo systemctl start eacn3-network
 ```
 
 ### 反向代理（Nginx）
@@ -176,10 +176,10 @@ sudo systemctl start eacn-network
 ```nginx
 server {
     listen 443 ssl;
-    server_name network.eacn.dev;
+    server_name network.eacn3.dev;
 
-    ssl_certificate     /etc/ssl/certs/eacn.pem;
-    ssl_certificate_key /etc/ssl/private/eacn.key;
+    ssl_certificate     /etc/ssl/certs/eacn3.pem;
+    ssl_certificate_key /etc/ssl/private/eacn3.key;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
@@ -208,22 +208,22 @@ FROM python:3.11-slim
 
 WORKDIR /app
 COPY pyproject.toml .
-COPY eacn/ eacn/
+COPY eacn3/ eacn3/
 
 RUN pip install --no-cache-dir .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "eacn.network.api.app:create_app", \
+CMD ["uvicorn", "eacn3.network.api.app:create_app", \
      "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 ```bash
-docker build -t eacn-network .
+docker build -t eacn3-network .
 docker run -d -p 8000:8000 \
   -v $(pwd)/data:/app/data \
-  -e EACN_DB_PATH=/app/data/eacn.db \
-  eacn-network
+  -e EACN3_DB_PATH=/app/data/eacn3.db \
+  eacn3-network
 ```
 
 ---

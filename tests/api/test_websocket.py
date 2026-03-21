@@ -8,8 +8,8 @@ import asyncio
 
 import pytest
 
-from eacn.core.models import PushEvent, PushEventType
-from eacn.network.api.websocket import ConnectionManager
+from eacn3.core.models import PushEvent, PushEventType
+from eacn3.network.api.websocket import ConnectionManager
 
 class TestConnectionManager:
     @pytest.fixture

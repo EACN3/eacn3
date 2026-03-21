@@ -1,9 +1,9 @@
 """Tests for ClusterService."""
 
 import pytest
-from eacn.network.config import ClusterConfig
-from eacn.network.cluster.service import ClusterService
-from eacn.network.cluster.node import NodeCard
+from eacn3.network.config import ClusterConfig
+from eacn3.network.cluster.service import ClusterService
+from eacn3.network.cluster.node import NodeCard
 
 
 class TestStandaloneMode:

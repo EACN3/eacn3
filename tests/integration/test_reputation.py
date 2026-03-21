@@ -18,7 +18,7 @@ class TestGetReputation:
         """Query reputation returns exact seeded score."""
         funded_network.reputation._scores["rep-agent"] = 0.85
 
-        result = await mcp.call_tool_parsed("eacn_get_reputation", {
+        result = await mcp.call_tool_parsed("eacn3_get_reputation", {
             "agent_id": "rep-agent",
         })
         assert result["agent_id"] == "rep-agent"
@@ -27,7 +27,7 @@ class TestGetReputation:
     @pytest.mark.asyncio
     async def test_default_reputation_is_0_5(self, mcp, funded_network):
         """Agent with no history gets default score of 0.5."""
-        result = await mcp.call_tool_parsed("eacn_get_reputation", {
+        result = await mcp.call_tool_parsed("eacn3_get_reputation", {
             "agent_id": "unknown-agent",
         })
         assert result["agent_id"] == "unknown-agent"
@@ -50,7 +50,7 @@ class TestReportEvent:
         """result_selected event (+0.10 weight) increases score."""
         funded_network.reputation._scores["good-worker"] = 0.5
 
-        result = await mcp.call_tool_parsed("eacn_report_event", {
+        result = await mcp.call_tool_parsed("eacn3_report_event", {
             "agent_id": "good-worker",
             "event_type": "result_selected",
         })
@@ -64,7 +64,7 @@ class TestReportEvent:
         """result_rejected event (-0.05 weight) decreases score."""
         funded_network.reputation._scores["bad-worker"] = 0.7
 
-        result = await mcp.call_tool_parsed("eacn_report_event", {
+        result = await mcp.call_tool_parsed("eacn3_report_event", {
             "agent_id": "bad-worker",
             "event_type": "result_rejected",
         })
@@ -76,7 +76,7 @@ class TestReportEvent:
         """task_timed_out event (-0.05 weight) decreases score."""
         funded_network.reputation._scores["timeout-worker"] = 0.6
 
-        result = await mcp.call_tool_parsed("eacn_report_event", {
+        result = await mcp.call_tool_parsed("eacn3_report_event", {
             "agent_id": "timeout-worker",
             "event_type": "task_timed_out",
         })
@@ -88,14 +88,14 @@ class TestReportEvent:
         """Two result_selected events accumulate — score increases each time."""
         funded_network.reputation._scores["multi-worker"] = 0.5
 
-        r1 = await mcp.call_tool_parsed("eacn_report_event", {
+        r1 = await mcp.call_tool_parsed("eacn3_report_event", {
             "agent_id": "multi-worker",
             "event_type": "result_selected",
         })
         score1 = r1["score"]
         assert score1 > 0.5
 
-        r2 = await mcp.call_tool_parsed("eacn_report_event", {
+        r2 = await mcp.call_tool_parsed("eacn3_report_event", {
             "agent_id": "multi-worker",
             "event_type": "result_selected",
         })
@@ -129,7 +129,7 @@ class TestReportEvent:
         """Unknown event type has 0 weight — score unchanged."""
         funded_network.reputation._scores["stable-worker"] = 0.65
 
-        result = await mcp.call_tool_parsed("eacn_report_event", {
+        result = await mcp.call_tool_parsed("eacn3_report_event", {
             "agent_id": "stable-worker",
             "event_type": "made_up_event_type",
         })

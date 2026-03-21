@@ -25,12 +25,12 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 
-from eacn.network.app import Network
-from eacn.network.config import NetworkConfig
-from eacn.network.db import Database
-from eacn.network.api.routes import router as net_router, set_network
-from eacn.network.api.discovery_routes import discovery_router, set_discovery_network
-from eacn.network.api.websocket import ws_router
+from eacn3.network.app import Network
+from eacn3.network.config import NetworkConfig
+from eacn3.network.db import Database
+from eacn3.network.api.routes import router as net_router, set_network
+from eacn3.network.api.discovery_routes import discovery_router, set_discovery_network
+from eacn3.network.api.websocket import ws_router
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ async def funded_network(network):
 @pytest.fixture
 async def live_server(funded_network):
     """Start a real uvicorn server on a random port. Yields base URL."""
-    from eacn.network.api.websocket import manager as ws_manager
+    from eacn3.network.api.websocket import manager as ws_manager
 
     app = FastAPI()
     app.include_router(net_router)
@@ -253,13 +253,13 @@ async def mcp(live_server):
     """Start plugin MCP server subprocess, yield McpClient.
 
     The plugin uses a temporary state directory so tests don't pollute
-    each other or the user's real ~/.eacn state.
+    each other or the user's real ~/.eacn3 state.
     """
-    state_dir = tempfile.mkdtemp(prefix="eacn-test-")
+    state_dir = tempfile.mkdtemp(prefix="eacn3-test-")
     env = {
         **os.environ,
-        "EACN_STATE_DIR": state_dir,
-        "EACN_NETWORK_URL": live_server,
+        "EACN3_STATE_DIR": state_dir,
+        "EACN3_NETWORK_URL": live_server,
     }
 
     proc = subprocess.Popen(
@@ -276,11 +276,11 @@ async def mcp(live_server):
     try:
         await client.initialize()
         # Connect plugin to the live network server
-        connect_result = await client.call_tool_parsed("eacn_connect", {
+        connect_result = await client.call_tool_parsed("eacn3_connect", {
             "network_endpoint": live_server,
         })
         assert connect_result.get("connected") is True, (
-            f"eacn_connect failed: {connect_result}"
+            f"eacn3_connect failed: {connect_result}"
         )
         yield client
     finally:

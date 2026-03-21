@@ -1,7 +1,7 @@
 """Tests for ClusterDHT."""
 
 import pytest
-from eacn.network.cluster.dht import ClusterDHT
+from eacn3.network.cluster.dht import ClusterDHT
 
 
 class TestClusterDHT:

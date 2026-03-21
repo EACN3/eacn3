@@ -1,7 +1,7 @@
 """Tests for NodeCard and MembershipList."""
 
 import pytest
-from eacn.network.cluster.node import NodeCard, MembershipList
+from eacn3.network.cluster.node import NodeCard, MembershipList
 
 
 class TestNodeCard:

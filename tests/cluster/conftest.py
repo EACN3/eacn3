@@ -1,10 +1,10 @@
 """Shared fixtures for cluster-level tests."""
 
 import pytest
-from eacn.network.db.database import Database
-from eacn.network.config import ClusterConfig
-from eacn.network.cluster.node import NodeCard, MembershipList
-from eacn.network.cluster.service import ClusterService
+from eacn3.network.db.database import Database
+from eacn3.network.config import ClusterConfig
+from eacn3.network.cluster.node import NodeCard, MembershipList
+from eacn3.network.cluster.service import ClusterService
 
 
 @pytest.fixture

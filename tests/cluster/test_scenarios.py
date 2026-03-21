@@ -10,18 +10,18 @@ import httpx
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from eacn.network.app import Network
-from eacn.network.db import Database
-from eacn.network.api.routes import router as net_router, set_network
-from eacn.network.api.discovery_routes import discovery_router, set_discovery_network
-from eacn.network.api.peer_routes import peer_router, set_peer_cluster, set_peer_network
-from eacn.network.api.websocket import ws_router
-from eacn.network.cluster.node import NodeCard, MembershipList
-from eacn.network.cluster.gossip import ClusterGossip
-from eacn.network.cluster.router import ClusterRouter
-from eacn.network.cluster.service import ClusterService
-from eacn.network.cluster.bootstrap import ClusterBootstrap
-from eacn.network.config import ClusterConfig, NetworkConfig
+from eacn3.network.app import Network
+from eacn3.network.db import Database
+from eacn3.network.api.routes import router as net_router, set_network
+from eacn3.network.api.discovery_routes import discovery_router, set_discovery_network
+from eacn3.network.api.peer_routes import peer_router, set_peer_cluster, set_peer_network
+from eacn3.network.api.websocket import ws_router
+from eacn3.network.cluster.node import NodeCard, MembershipList
+from eacn3.network.cluster.gossip import ClusterGossip
+from eacn3.network.cluster.router import ClusterRouter
+from eacn3.network.cluster.service import ClusterService
+from eacn3.network.cluster.bootstrap import ClusterBootstrap
+from eacn3.network.config import ClusterConfig, NetworkConfig
 
 
 def _mock_httpx():
@@ -76,7 +76,7 @@ class TestForwardingHTTP:
         mock_client, mock_resp = _mock_httpx()
         mock_resp.json.return_value = {"status": "executing", "bid": {"agent_id": "a1"}}
 
-        with patch("eacn.network.cluster.router.httpx.AsyncClient", return_value=mock_client):
+        with patch("eacn3.network.cluster.router.httpx.AsyncClient", return_value=mock_client):
             result = await router.forward_bid("t1", "a1", "srv", 0.9, 80.0)
 
         assert result["status"] == "executing"
@@ -92,7 +92,7 @@ class TestForwardingHTTP:
         mock_client, _ = _mock_httpx()
         mock_client.post.side_effect = httpx.ConnectError("refused")
 
-        with patch("eacn.network.cluster.router.httpx.AsyncClient", return_value=mock_client):
+        with patch("eacn3.network.cluster.router.httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(httpx.ConnectError):
                 await router.forward_bid("t1", "a1", None, 0.9, 80.0)
 
@@ -105,7 +105,7 @@ class TestNotifyAndBroadcast:
         router.set_endpoint("a", "http://a:8000")
 
         mock_client, _ = _mock_httpx()
-        with patch("eacn.network.cluster.router.httpx.AsyncClient", return_value=mock_client):
+        with patch("eacn3.network.cluster.router.httpx.AsyncClient", return_value=mock_client):
             await router.notify_status("t1", "done", {"local", "a", "missing"})
 
         assert mock_client.post.call_count == 1
@@ -118,7 +118,7 @@ class TestNotifyAndBroadcast:
 
         mock_client, _ = _mock_httpx()
         mock_client.post.side_effect = [httpx.ConnectError("x"), MagicMock()]
-        with patch("eacn.network.cluster.router.httpx.AsyncClient", return_value=mock_client):
+        with patch("eacn3.network.cluster.router.httpx.AsyncClient", return_value=mock_client):
             await router.notify_status("t1", "done", {"a", "b"})  # no raise
 
     async def test_broadcast_task_to_peers(self, db):
@@ -131,7 +131,7 @@ class TestNotifyAndBroadcast:
         await cs.dht.announce("coding", "p1")
 
         mock_client, _ = _mock_httpx()
-        with patch("eacn.network.cluster.service.httpx.AsyncClient", return_value=mock_client):
+        with patch("eacn3.network.cluster.service.httpx.AsyncClient", return_value=mock_client):
             notified = await cs.broadcast_task({"task_id": "t1", "domains": ["coding"]})
 
         assert notified == ["p1"]
@@ -148,7 +148,7 @@ class TestNotifyAndBroadcast:
         await cs.dht.announce("b", "m")
 
         mock_client, _ = _mock_httpx()
-        with patch("eacn.network.cluster.service.httpx.AsyncClient", return_value=mock_client):
+        with patch("eacn3.network.cluster.service.httpx.AsyncClient", return_value=mock_client):
             notified = await cs.broadcast_task({"task_id": "t1", "domains": ["a", "b"]})
 
         assert notified == ["m"]
@@ -199,7 +199,7 @@ class TestAPIRouting:
 
         mock_client, _ = _mock_httpx()
         mock_client.post.side_effect = httpx.ConnectError("x")
-        with patch("eacn.network.cluster.router.httpx.AsyncClient", return_value=mock_client):
+        with patch("eacn3.network.cluster.router.httpx.AsyncClient", return_value=mock_client):
             resp = await client.post("/api/tasks/rt1/bid",
                                      json={"agent_id": "a1", "confidence": 0.9, "price": 80.0})
         assert resp.status_code == 502
