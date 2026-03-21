@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from eacn.core.models import (
-    Task, TaskStatus, TaskType, Bid, BidStatus, Result, LogEntry,
+    Task, TaskStatus, TaskType, Bid, BidStatus, Result, LogEntry, HumanContact,
 )
 from eacn.core.exceptions import TaskError, BudgetError
 from eacn.network.task_manager import TaskManager
@@ -73,6 +73,7 @@ class Network:
         deadline: str | None = None,
         max_concurrent_bidders: int | None = None,
         max_depth: int | None = None,
+        human_contact: HumanContact | None = None,
     ) -> Task:
         """Publish a new task: freeze budget → create → discover → broadcast."""
         self.escrow.freeze_budget(initiator_id, task_id, budget)
@@ -85,6 +86,7 @@ class Network:
             deadline=deadline,
             max_concurrent_bidders=max_concurrent_bidders or self.config.task.default_max_concurrent_bidders,
             max_depth=max_depth or self.config.task.default_max_depth,
+            human_contact=human_contact,
         )
         task = self.task_manager.create(task)
         self._log_event("create_task", task_id=task_id, agent_id=initiator_id)

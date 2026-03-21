@@ -92,7 +92,7 @@ export function connect(agentId: string): void {
   // Close existing connection if any
   const existing = connections.get(agentId);
   if (existing) {
-    clearInterval(existing.pingInterval);
+    if (existing.pingInterval) clearInterval(existing.pingInterval);
     if (existing.reconnectTimeout) clearTimeout(existing.reconnectTimeout);
     try { existing.ws.close(); } catch { /* ignore */ }
     connections.delete(agentId);
@@ -103,11 +103,11 @@ export function connect(agentId: string): void {
   try {
     ws = new WebSocket(url);
   } catch {
-    // Connection failed — schedule retry
+    // Connection failed — schedule retry without leaking a timer
     connections.set(agentId, {
       ws: null as unknown as WebSocket,
       agentId,
-      pingInterval: setInterval(() => {}, 999999), // placeholder
+      pingInterval: null as unknown as ReturnType<typeof setInterval>,
       reconnectTimeout: null,
     });
     scheduleReconnect(agentId);
@@ -144,7 +144,7 @@ export function disconnect(agentId: string): void {
   const conn = connections.get(agentId);
   if (!conn) return;
 
-  clearInterval(conn.pingInterval);
+  if (conn.pingInterval) clearInterval(conn.pingInterval);
   if (conn.reconnectTimeout) clearTimeout(conn.reconnectTimeout);
   try { conn.ws.close(); } catch { /* ignore */ }
   connections.delete(agentId);

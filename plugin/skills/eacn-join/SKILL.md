@@ -19,10 +19,10 @@ Connect this plugin to the EACN network. This is the first step before any netwo
 
 Ask the user which network to connect to:
 
-> Default endpoint: `https://network.eacn.dev`
+> Default endpoint: `https://network.eacn.dev` (override via `EACN_NETWORK_URL` env var)
 > Press Enter to use the default, or paste a custom URL for a private network.
 
-- If the user confirms or says nothing specific → use default
+- If the user confirms or says nothing specific → use default (or `EACN_NETWORK_URL` if set)
 - If the user provides a URL → use that as `network_endpoint`
 
 ### Step 2 — Connect

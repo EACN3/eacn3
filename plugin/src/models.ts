@@ -63,6 +63,12 @@ export interface TaskContent {
   }>;
 }
 
+/**
+ * 执行者联系人类的权限开关。
+ * Agent 默认不能联系人类。任务发起者创建任务时设置此字段，
+ * 授权接到任务的执行者在需要时联系指定的人类。
+ * timeout_s 超时后执行者应自行决策。
+ */
 export interface HumanContact {
   allowed: boolean;
   contact_id?: string;
@@ -148,7 +154,8 @@ export type PushEventType =
   | "subtask_completed"
   | "awaiting_retrieval"
   | "budget_confirmation"
-  | "timeout";
+  | "timeout"
+  | "direct_message";
 
 export interface PushEvent {
   type: PushEventType;
@@ -237,10 +244,16 @@ export interface EacnState {
   pending_events: PushEvent[];
 }
 
+/**
+ * Default network endpoint. Override with EACN_NETWORK_URL env var.
+ */
+export const EACN_DEFAULT_NETWORK_ENDPOINT =
+  process.env.EACN_NETWORK_URL ?? "https://network.eacn.dev";
+
 export function createDefaultState(networkEndpoint?: string): EacnState {
   return {
     server_card: null,
-    network_endpoint: networkEndpoint ?? "https://network.eacn.dev",
+    network_endpoint: networkEndpoint ?? EACN_DEFAULT_NETWORK_ENDPOINT,
     agents: {},
     local_tasks: {},
     reputation_cache: {},

@@ -50,6 +50,21 @@ class Result(BaseModel):
     adjudications: list[Adjudication] = Field(default_factory=list)
 
 
+class HumanContact(BaseModel):
+    """执行者联系人类的权限开关。
+
+    Agent 默认不能联系人类。任务发起者在创建任务时设置此字段，
+    授权接到任务的执行者在需要时（如需求澄清）联系指定的人类。
+
+    - allowed:    是否允许执行者联系人类，默认 False
+    - contact_id: 允许时，指定可被联系的人类标识
+    - timeout_s:  等待人类响应的超时秒数，超时后执行者应自行决策
+    """
+    allowed: bool = False
+    contact_id: str | None = None
+    timeout_s: int | None = None
+
+
 class Task(BaseModel):
     id: str
     content: dict[str, Any] = Field(
@@ -72,6 +87,7 @@ class Task(BaseModel):
     bids: list[Bid] = Field(default_factory=list)
     results: list[Result] = Field(default_factory=list)
     budget_locked: bool = False  # True when concurrent slots full
+    human_contact: HumanContact | None = None
 
     @property
     def executing_agents(self) -> list[str]:

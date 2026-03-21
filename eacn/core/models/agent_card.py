@@ -18,12 +18,18 @@ class Skill(BaseModel):
     parameters: dict = Field(default_factory=dict)
 
 
+class AgentCapabilities(BaseModel):
+    max_concurrent_tasks: int = 0  # 0 = unlimited
+    concurrent: bool = True
+
+
 class AgentCard(BaseModel):
     agent_id: str
     name: str
     agent_type: AgentType
     domains: list[str] = Field(min_length=1)
     skills: list[Skill] = Field(min_length=1)
+    capabilities: AgentCapabilities | None = None
     url: str
     server_id: str
     network_id: str = ""

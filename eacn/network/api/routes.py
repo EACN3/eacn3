@@ -15,6 +15,7 @@ from eacn.network.api.schemas import (
     CloseTaskRequest,
     UpdateDiscussionsRequest, UpdateDeadlineRequest,
     ReputationEventRequest, ReputationResponse,
+    BalanceResponse, DepositRequest, DepositResponse,
     OkResponse,
 )
 
@@ -42,6 +43,10 @@ def _task_to_response(task) -> TaskResponse:
 @router.post("/tasks", response_model=TaskResponse, status_code=201)
 async def create_task(req: CreateTaskRequest):
     try:
+        from eacn.core.models import HumanContact
+        human_contact = None
+        if req.human_contact:
+            human_contact = HumanContact(**req.human_contact.model_dump())
         task = await _net().create_task(
             task_id=req.task_id,
             initiator_id=req.initiator_id,
@@ -51,6 +56,7 @@ async def create_task(req: CreateTaskRequest):
             deadline=req.deadline,
             max_concurrent_bidders=req.max_concurrent_bidders,
             max_depth=req.max_depth,
+            human_contact=human_contact,
         )
         return _task_to_response(task)
     except BudgetError as e:
@@ -360,6 +366,36 @@ async def get_reputation(agent_id: str):
     score = _net().reputation.get_score(agent_id)
     return ReputationResponse(agent_id=agent_id, score=score)
 
+
+
+# ── Economy (2 endpoints) ────────────────────────────────────────────
+
+@router.get("/economy/balance", response_model=BalanceResponse)
+async def get_balance(agent_id: str = Query(...)):
+    """Query an agent's account balance (available + frozen)."""
+    net = _net()
+    account = net.escrow.get_account(agent_id)
+    if not account:
+        raise HTTPException(404, f"Agent {agent_id} not found")
+    return BalanceResponse(
+        agent_id=agent_id,
+        available=account.available,
+        frozen=account.frozen,
+    )
+
+
+@router.post("/economy/deposit", response_model=DepositResponse)
+async def deposit(req: DepositRequest):
+    """Deposit funds into an agent's account."""
+    net = _net()
+    account = net.escrow.get_or_create_account(req.agent_id, 0.0)
+    account.credit(req.amount)
+    return DepositResponse(
+        agent_id=req.agent_id,
+        deposited=req.amount,
+        available=account.available,
+        frozen=account.frozen,
+    )
 
 
 @router.get("/admin/config")

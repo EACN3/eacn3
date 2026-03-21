@@ -5,8 +5,8 @@
 将 `plugin.md` 中描述的插件（服务端 + 客户端合体）实现为独立的 TypeScript 项目。采用与 Evo-anything 相同的插件架构模式（OpenClaw plugin + MCP server + Skills），但与 Evo-anything 没有代码依赖。
 
 **相关文档**：
-- MCP Tools 完整列表（29 个）→ `plugin-impl-tools.md`
-- Skills 完整列表（12 个）→ `plugin-impl-skills.md`
+- MCP Tools 完整列表（32 个）→ `plugin-impl-tools.md`
+- Skills 完整列表（14 个）→ `plugin-impl-skills.md`
 
 ---
 
@@ -14,7 +14,7 @@
 
 插件本身**不做任何主动决策**。所有"智能行为"——bid 评估、任务规划、执行编排——都由宿主 LLM 在 Skill 工作流中完成。插件只提供两样东西：
 
-1. **MCP Tools**：状态管理 + 网络端接口的薄封装（29 个，覆盖网络端全部 28 个接口 + A2A 直连）
+1. **MCP Tools**：状态管理 + 网络端接口的薄封装（32 个，覆盖网络端接口 + 经济接口 + A2A 直连）
 2. **状态**：本地持久化（已注册 Agent、任务、声誉缓存）
 
 这和 Evo-anything 的模式完全一致：`evo_step` 不做进化决策，只管状态转换；所有策略由 Skill markdown 引导 Claude 完成。
@@ -79,20 +79,18 @@ eacn-dev/
 │   ├── src/
 │   │   ├── models.ts              # 数据类型（对齐 docs/ 中的定义）
 │   │   ├── state.ts               # 本地状态持久化（~/.eacn/state.json）
-│   │   ├── network-client.ts      # HTTP + WS 客户端，调网络端接口
-│   │   ├── ws-manager.ts          # WebSocket 连接管理 + 事件缓冲
-│   │   ├── matcher.ts             # 本地任务→Agent 匹配
-│   │   ├── adapter.ts             # Adapter 基类（Agent Card 包装）
-│   │   ├── registry.ts            # Agent 注册、校验、向网络端 DHT 公告
-│   │   └── logger.ts              # 本地事件日志 + 上报网络端
+│   │   ├── network-client.ts      # HTTP 客户端，封装 29 个网络端接口
+│   │   └── ws-manager.ts          # WebSocket 连接管理 + 事件缓冲
 │   │
-│   ├── skills/                    # 12 个 Skills
+│   ├── skills/                    # 14 个 Skills
 │   │   ├── eacn-join/SKILL.md          # /eacn-join — 连接网络
 │   │   ├── eacn-leave/SKILL.md         # /eacn-leave — 断开连接
 │   │   ├── eacn-register/SKILL.md      # /eacn-register — 注册 Agent
 │   │   ├── eacn-task/SKILL.md          # /eacn-task — 发布任务、跟踪
 │   │   ├── eacn-collect/SKILL.md       # /eacn-collect — 回收结果、选定、结算
-│   │   ├── eacn-bounty/SKILL.md          # /eacn-bounty — 接活主循环（感知+分发）
+│   │   ├── eacn-budget/SKILL.md        # /eacn-budget — 预算确认
+│   │   ├── eacn-delegate/SKILL.md      # /eacn-delegate — 委托任务
+│   │   ├── eacn-bounty/SKILL.md        # /eacn-bounty — 接活主循环（感知+分发）
 │   │   ├── eacn-bid/SKILL.md           # /eacn-bid — 评估并竞标
 │   │   ├── eacn-execute/SKILL.md       # /eacn-execute — 执行已中标任务
 │   │   ├── eacn-clarify/SKILL.md       # /eacn-clarify — 澄清请求
@@ -117,11 +115,11 @@ eacn-dev/
 ```typescript
 interface EacnState {
   server_card: ServerCard | null;
-  network_endpoint: string | null;
+  network_endpoint: string;
   agents: Record<string, AgentCard>;
-  local_tasks: Record<string, Task>;
+  local_tasks: Record<string, LocalTaskInfo>;
   reputation_cache: Record<string, number>;
-  pending_events: LogEntry[];
+  pending_events: PushEvent[];
 }
 ```
 
@@ -129,52 +127,33 @@ interface EacnState {
 
 ---
 
-## Adapter（adapter.ts）
+## 被砍掉的模块
 
-Adapter 在插件中的角色比文档描述的更轻：
+以下模块在早期设计中存在，已被内联到 MCP tool handler 中，不再作为独立文件：
 
-- **不生成运行时通信层**——通信层就是 MCP tools，已经存在
-- **只做注册时的包装**：提取能力 → 生成 AgentCard → 提交 Registry
-
-```typescript
-abstract class Adapter {
-  abstract extractCapabilities(source: unknown): {
-    name: string;
-    description: string;
-    domains: string[];
-    skills: Skill[];
-  };
-
-  register(source: unknown): AgentCard {
-    const caps = this.extractCapabilities(source);
-    const card = buildAgentCard(caps);
-    registry.register(card);
-    networkClient.announceAgent(card);
-    return card;
-  }
-}
-```
-
-首期只实现 `GenericAdapter`（用户手动提供 name/description/domains）。MCP 工具自动注册、框架适配等后续再加。
+| 模块 | 砍掉原因 |
+|------|---------|
+| `adapter.ts` | AgentCard 组装由用户/LLM 填参数，MCP tool 内联组装即可 |
+| `registry.ts` | 校验 + 持久化 + 调网络，三行代码内联到 `eacn_register_agent` |
+| `matcher.ts` | 本地匹配几行代码，内联到 `eacn_create_task` |
+| `logger.ts` | 上报事件一行代码，内联到 `eacn_submit_result` / `eacn_reject_task` |
 
 ---
 
 ## 与网络端的接口对齐
 
-`network-client.ts` 完整覆盖网络端全部 28 个接口。详见 `plugin-impl-tools.md` 的覆盖校验表。
+`network-client.ts` 封装 29 个网络端接口。详见 `network-api.md`。
 
-| 接口分组 | 数量 | 文档 |
-|---------|------|------|
-| Discovery - Server | 4 | `discovery.md` |
-| Discovery - Agent | 6 | `discovery.md` |
-| Tasks - 查询 | 5 | `network.md` |
-| Tasks - 发起者写入 | 7 | `network.md` |
-| Tasks - 执行者写入 | 4 | `network.md` |
-| Reputation | 2 | `reputation.md` |
-| WebSocket 推送 | 1 | `network.md` |
-| **合计** | **28** | |
-
-插件端已实现 `eacn_get_balance` 工具（调用 `GET /api/economy/balance`），用于创建任务前检查余额、Dashboard 显示资金状况。**网络端需补充此 API**（详见 network-api.md TODO 段）。
+| 接口分组 | 数量 |
+|---------|------|
+| Discovery - Server | 4 |
+| Discovery - Agent | 6 |
+| Tasks - 查询 | 4 |
+| Tasks - 发起者写入 | 7 |
+| Tasks - 执行者写入 | 4 |
+| Reputation | 2 |
+| Economy | 2 |
+| **合计** | **29** |
 
 ---
 
@@ -183,14 +162,12 @@ abstract class Adapter {
 1. **骨架**：`package.json` / `tsconfig.json` / `openclaw.plugin.json` / `.mcp.json`
 2. **models.ts** + **state.ts**：类型定义 + 本地状态读写
 3. **network-client.ts** + **ws-manager.ts**：HTTP 客户端 + WebSocket 连接管理
-4. **adapter.ts** + **registry.ts**：注册链路
-5. **matcher.ts** + **logger.ts**：本地匹配 + 日志
-6. **index.ts** + **server.ts**：注册全部 29 个 MCP tools
-7. **Skills**（按角色顺序）：
+4. **index.ts** + **server.ts**：注册全部 32 个 MCP tools（注册/匹配/日志逻辑内联）
+5. **Skills**（14 个，按角色顺序）：
    - 服务端：join → leave
    - Agent：register
-   - 发起者：task → collect
-   - 执行者：work → bid → execute → clarify
+   - 发起者：task → collect → budget → delegate
+   - 执行者：bounty → bid → execute → clarify
    - 裁决者：adjudicate
    - 通用：browse → dashboard
-8. **agents/worker.md**：worker 子会话人设（可选）
+6. **agents/worker.md**：worker 子会话人设（可选）

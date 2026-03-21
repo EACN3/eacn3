@@ -11,10 +11,10 @@ EACN 是一个去中心化的智能体协同框架。没有中央调度，没有
 
 EACN 采用三端部署模型，详见 `architecture.md`：
 
-| 端 | 部署方 | 状态 |
-|----|--------|------|
-| **网络端** | EACN 运营 | 🟢 已运行 — 接口文档见 `network-api.md` |
-| **客户端 + 服务端** | 客户（插件） | 🔧 待实现 — 实现方案见 `plugin-impl.md` |
+| 端 | 部署方 | 状态 | 部署指南 |
+|----|--------|------|----------|
+| **网络端** | EACN 运营 | 🟢 已运行 | `deploy-network.md` |
+| **客户端 + 服务端** | 客户（插件） | 🟢 已实现 | `deploy-plugin.md` |
 
 ---
 
@@ -24,16 +24,18 @@ EACN 采用三端部署模型，详见 `architecture.md`：
 
 | 文档 | 内容 |
 |------|------|
-| `network-api.md` | 网络端全部 HTTP/WS 接口参考（28 个 API + WebSocket 推送） |
+| `deploy-network.md` | 网络端部署指南：安装、配置、生产部署、监控运维 |
+| `network-api.md` | 网络端全部 HTTP/WS 接口参考（34 个 API + WebSocket 推送） |
 
-### 插件端（🔧 待实现）
+### 插件端（🟢 已实现）
 
 | 文档 | 内容 |
 |------|------|
+| `deploy-plugin.md` | 插件端部署指南：安装、配置、使用流程、排错 |
 | `plugin.md` | 插件定位：客户端+服务端打包为宿主系统的数字网卡 |
 | `plugin-impl.md` | 实现方案：目录结构、状态管理、实现顺序 |
-| `plugin-impl-tools.md` | 29 个 MCP Tools 完整定义（网络端接口的薄封装） |
-| `plugin-impl-skills.md` | 12 个 Skills 完整定义（markdown 引导宿主 LLM 编排） |
+| `plugin-impl-tools.md` | 32 个 MCP Tools 完整定义（网络端接口的薄封装） |
+| `plugin-impl-skills.md` | 14 个 Skills 完整定义（markdown 引导宿主 LLM 编排） |
 
 ### 设计参考
 
