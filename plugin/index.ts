@@ -138,7 +138,7 @@ export default function (api: any) {
   // #0a eacn3_health
   api.registerTool({
     name: "eacn3_health",
-    description: "Probe network node health. Works before eacn3_connect — use to verify a node is reachable.",
+    description: "Check if a network node is alive and responding. No prerequisites — works before eacn3_connect. Returns {status: 'ok'} on success. Use this to verify an endpoint before connecting.",
     parameters: {
       type: "object",
       properties: {
@@ -159,7 +159,7 @@ export default function (api: any) {
   // #0b eacn3_cluster_status
   api.registerTool({
     name: "eacn3_cluster_status",
-    description: "Get cluster topology: all member nodes, their status, and seed node list.",
+    description: "Retrieve the full cluster topology including all member nodes, their online/offline status, and seed URLs. No prerequisites — works before eacn3_connect. Returns array of node objects with status and endpoint fields. Useful for diagnostics and finding alternative endpoints if primary is down.",
     parameters: {
       type: "object",
       properties: {
@@ -184,7 +184,7 @@ export default function (api: any) {
   // #1 eacn3_connect
   api.registerTool({
     name: "eacn3_connect",
-    description: "Connect to EACN3 network. Health-checks the endpoint first; if unreachable, falls back to other seed nodes.",
+    description: "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online}. Side effects: opens WebSocket connections for any previously registered agents. Call eacn3_register_agent next.",
     parameters: {
       type: "object",
       properties: {
@@ -219,7 +219,7 @@ export default function (api: any) {
   // #2 eacn3_disconnect
   api.registerTool({
     name: "eacn3_disconnect",
-    description: "Disconnect from EACN3 network. Unregisters server and closes all WebSocket connections.",
+    description: "Disconnect from the EACN3 network, unregister the server, and close all WebSocket connections. Requires: eacn3_connect first. Side effects: clears all local agent state; active tasks will timeout and hurt reputation. Returns {disconnected: true}. Only call at end of session.",
     parameters: { type: "object", properties: {} },
     async execute() {
       stopHeartbeat(); ws.disconnectAll();
@@ -233,7 +233,7 @@ export default function (api: any) {
   // #3 eacn3_heartbeat
   api.registerTool({
     name: "eacn3_heartbeat",
-    description: "Send heartbeat to network. Background interval auto-sends every 60s; this is for manual trigger.",
+    description: "Manually send a heartbeat to the network to signal this server is still alive. Requires: eacn3_connect first. Usually unnecessary — a background interval auto-sends every 60s. Only use if you suspect the connection may have gone stale.",
     parameters: { type: "object", properties: {} },
     async execute() { return ok(await net.heartbeat()); },
   });
@@ -241,7 +241,7 @@ export default function (api: any) {
   // #4 eacn3_server_info
   api.registerTool({
     name: "eacn3_server_info",
-    description: "Get current server status: connection state, registered agents, local tasks.",
+    description: "Get current server connection state, including server_card, network_endpoint, registered agent IDs, task count, and remote status. Requires: eacn3_connect first. Returns {server_card, network_endpoint, agents_count, agents[], tasks_count, remote_status}. No side effects — read-only diagnostic.",
     parameters: { type: "object", properties: {} },
     async execute() {
       const s = state.getState();
@@ -258,7 +258,7 @@ export default function (api: any) {
   // #5 eacn3_register_agent
   api.registerTool({
     name: "eacn3_register_agent",
-    description: "Register an Agent on the network. Assembles AgentCard, validates, registers with network, and opens WebSocket.",
+    description: "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and opens a WebSocket for real-time event push (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
     parameters: {
       type: "object",
       properties: {
@@ -293,7 +293,7 @@ export default function (api: any) {
   // #6 eacn3_get_agent
   api.registerTool({
     name: "eacn3_get_agent",
-    description: "Get any Agent's details (AgentCard) by ID.",
+    description: "Fetch the full AgentCard for any agent by ID — checks local state first, then queries the network. Returns {agent_id, name, agent_type, domains, skills, capabilities, url, server_id, description}. No side effects. Use to inspect an agent before sending messages or evaluating bids.",
     parameters: { type: "object", properties: { agent_id: { type: "string" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
       const local = state.getAgent(params.agent_id);
@@ -305,7 +305,7 @@ export default function (api: any) {
   // #7 eacn3_update_agent
   api.registerTool({
     name: "eacn3_update_agent",
-    description: "Update an Agent's info (name, domains, skills, description).",
+    description: "Update a registered agent's mutable fields: name, domains, skills, and/or description. Requires: the agent must be registered (eacn3_register_agent). Updates both network and local state. Changing domains affects which task broadcasts you receive going forward.",
     parameters: {
       type: "object",
       properties: {
@@ -334,7 +334,7 @@ export default function (api: any) {
   // #8 eacn3_unregister_agent
   api.registerTool({
     name: "eacn3_unregister_agent",
-    description: "Unregister an Agent from the network.",
+    description: "Remove an agent from the network and close its WebSocket connection. Side effects: deletes agent from local state, stops receiving events for this agent. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
     parameters: { type: "object", properties: { agent_id: { type: "string" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
       const res = await net.unregisterAgent(params.agent_id);
@@ -346,7 +346,7 @@ export default function (api: any) {
   // #9 eacn3_list_my_agents
   api.registerTool({
     name: "eacn3_list_my_agents",
-    description: "List all Agents registered under this server.",
+    description: "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, agent_type, domains, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
     parameters: { type: "object", properties: {} },
     async execute() {
       const agents = state.listAgents();
@@ -357,7 +357,7 @@ export default function (api: any) {
   // #10 eacn3_discover_agents
   api.registerTool({
     name: "eacn3_discover_agents",
-    description: "Discover Agents by domain. Searches network via Gossip → DHT → Bootstrap fallback.",
+    description: "Search for agents matching a specific domain using the network's discovery protocol (Gossip, then DHT, then Bootstrap fallback). Requires: eacn3_connect first. Returns a list of matching AgentCards. Use before creating a task to verify executors exist for your domains.",
     parameters: { type: "object", properties: { domain: { type: "string" }, requester_id: { type: "string" } }, required: ["domain"] },
     async execute(_id: string, params: any) {
       return ok(await net.discoverAgents(params.domain, params.requester_id));
@@ -367,7 +367,7 @@ export default function (api: any) {
   // #11 eacn3_list_agents
   api.registerTool({
     name: "eacn3_list_agents",
-    description: "List Agents from the network. Filter by domain or server_id.",
+    description: "Browse and paginate all agents registered on the network with optional filters by domain or server_id. Returns {count, agents[]}. Default page size is 20. Unlike eacn3_discover_agents, this is a direct registry query without Gossip/DHT discovery — faster but only returns agents already indexed.",
     parameters: {
       type: "object",
       properties: {
@@ -388,7 +388,7 @@ export default function (api: any) {
   // #12 eacn3_get_task
   api.registerTool({
     name: "eacn3_get_task",
-    description: "Get full task details including content, bids, and results.",
+    description: "Fetch complete task details from the network including description, content, bids[], results[], status, budget, deadline, and domains. No side effects — read-only. Use to inspect a task before bidding or to review submitted results. Works for any task ID regardless of your role.",
     parameters: { type: "object", properties: { task_id: { type: "string" } }, required: ["task_id"] },
     async execute(_id: string, params: any) { return ok(await net.getTask(params.task_id)); },
   });
@@ -396,7 +396,7 @@ export default function (api: any) {
   // #13 eacn3_get_task_status
   api.registerTool({
     name: "eacn3_get_task_status",
-    description: "Query task status and bid list (initiator only, no results).",
+    description: "Lightweight task query returning only status and bid list — no result content. Intended for initiators monitoring their tasks. Requires: agent_id must be the task initiator (auto-injected if only one agent registered). Returns {status, bids[]}. Cheaper than eacn3_get_task when you only need status.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, agent_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id"] },
     async execute(_id: string, params: any) { const agentId = resolveAgentId(params.agent_id); return ok(await net.getTaskStatus(params.task_id, agentId)); },
   });
@@ -404,7 +404,7 @@ export default function (api: any) {
   // #14 eacn3_list_open_tasks
   api.registerTool({
     name: "eacn3_list_open_tasks",
-    description: "List tasks open for bidding. Optionally filter by domains.",
+    description: "Browse tasks currently accepting bids (status: unclaimed or bidding). Returns {count, tasks[]} with pagination. Filter by comma-separated domains to find relevant work. Use this in your main loop to discover tasks to bid on after checking events.",
     parameters: { type: "object", properties: { domains: { type: "string", description: "Comma-separated domain filter" }, limit: { type: "number" }, offset: { type: "number" } } },
     async execute(_id: string, params: any) {
       const tasks = await net.getOpenTasks(params);
@@ -415,7 +415,7 @@ export default function (api: any) {
   // #15 eacn3_list_tasks
   api.registerTool({
     name: "eacn3_list_tasks",
-    description: "List tasks with optional filters (status, initiator).",
+    description: "Browse all tasks on the network with optional filters by status (unclaimed, bidding, awaiting_retrieval, completed, no_one) and/or initiator_id. Returns {count, tasks[]} with pagination. Unlike eacn3_list_open_tasks, this includes tasks in all states.",
     parameters: { type: "object", properties: { status: { type: "string" }, initiator_id: { type: "string" }, limit: { type: "number" }, offset: { type: "number" } } },
     async execute(_id: string, params: any) {
       const tasks = await net.listTasks(params);
@@ -430,7 +430,7 @@ export default function (api: any) {
   // #16 eacn3_create_task
   api.registerTool({
     name: "eacn3_create_task",
-    description: "Create a new task. Checks local agents first, then broadcasts to network.",
+    description: "Publish a new task to the EACN3 network for other agents to bid on. Side effects: freezes 'budget' credits from your available balance into escrow; broadcasts task to agents with matching domains. Returns {task_id, status, budget, local_matches[]}. Requires: sufficient balance (use eacn3_deposit first if needed). Task starts in 'unclaimed' status, transitions to 'bidding' when first bid arrives.",
     parameters: {
       type: "object",
       properties: {
@@ -483,7 +483,7 @@ export default function (api: any) {
   // #17 eacn3_get_task_results
   api.registerTool({
     name: "eacn3_get_task_results",
-    description: "Retrieve task results and adjudications. First call transitions task from awaiting_retrieval to completed.",
+    description: "Retrieve submitted results and adjudications for a task you initiated. IMPORTANT side effect: the first call transitions the task from 'awaiting_retrieval' to 'completed' permanently. Returns {results[], adjudications[]}. After reviewing results, call eacn3_select_result to pick a winner and trigger payment.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.getTaskResults(params.task_id, initiatorId)); },
   });
@@ -491,7 +491,7 @@ export default function (api: any) {
   // #18 eacn3_select_result
   api.registerTool({
     name: "eacn3_select_result",
-    description: "Select the winning result. Triggers economic settlement.",
+    description: "Pick the winning result for a task, triggering credit transfer from escrow to the selected executor agent. Requires: call eacn3_get_task_results first to review results. Side effects: transfers escrowed credits to the winning agent's balance, finalizes the task. The agent_id param is the executor whose result you select, not your own ID.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, agent_id: { type: "string", description: "ID of the agent whose result to select" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "agent_id"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.selectResult(params.task_id, initiatorId, params.agent_id)); },
   });
@@ -499,7 +499,7 @@ export default function (api: any) {
   // #19 eacn3_close_task
   api.registerTool({
     name: "eacn3_close_task",
-    description: "Manually close a task (stop accepting bids/results).",
+    description: "Stop accepting bids and results for a task you initiated, moving it to closed status. Requires: you must be the task initiator. Side effects: no new bids or results will be accepted; escrowed credits are returned if no result was selected. Returns confirmation with updated task status.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.closeTask(params.task_id, initiatorId)); },
   });
@@ -507,7 +507,7 @@ export default function (api: any) {
   // #20 eacn3_update_deadline
   api.registerTool({
     name: "eacn3_update_deadline",
-    description: "Update task deadline.",
+    description: "Extend or shorten a task's deadline. Requires: you must be the task initiator; new_deadline must be an ISO 8601 timestamp in the future. Returns confirmation with updated deadline. Use to give executors more time or to accelerate a slow task.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, new_deadline: { type: "string", description: "New ISO 8601 deadline" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "new_deadline"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.updateDeadline(params.task_id, initiatorId, params.new_deadline)); },
   });
@@ -515,7 +515,7 @@ export default function (api: any) {
   // #21 eacn3_update_discussions
   api.registerTool({
     name: "eacn3_update_discussions",
-    description: "Add a discussion message to a task. Synced to all bidders.",
+    description: "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussions_updated' WebSocket event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, message: { type: "string" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "message"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.updateDiscussions(params.task_id, initiatorId, params.message)); },
   });
@@ -523,7 +523,7 @@ export default function (api: any) {
   // #22 eacn3_confirm_budget
   api.registerTool({
     name: "eacn3_confirm_budget",
-    description: "Respond to a budget confirmation request (when a bid exceeds current budget).",
+    description: "Approve or reject a bid that exceeded your task's budget, triggered by a 'budget_confirmation' event. Set approved=true to accept (optionally raising the budget with new_budget); approved=false to reject the bid. Side effects: if approved, additional credits are frozen from your balance; the bid transitions from 'pending_confirmation' to 'accepted'. Returns updated task status.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, approved: { type: "boolean" }, new_budget: { type: "number" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "approved"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.confirmBudget(params.task_id, initiatorId, params.approved, params.new_budget)); },
   });
@@ -535,7 +535,7 @@ export default function (api: any) {
   // #23 eacn3_submit_bid
   api.registerTool({
     name: "eacn3_submit_bid",
-    description: "Submit a bid on a task (confidence + price).",
+    description: "Bid on an open task by specifying your confidence (0.0-1.0 honest ability estimate) and price in credits. Server evaluates: confidence * reputation must meet threshold or bid is rejected. Returns {status} which is one of: 'executing' (start work now), 'waiting_execution' (queued, slots full), 'rejected' (threshold not met), or 'pending_confirmation' (price > budget, awaiting initiator approval). Side effects: if accepted, tracks task locally as executor role. If price > budget, initiator gets a 'budget_confirmation' event.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, confidence: { type: "number", description: "0.0-1.0 confidence in ability to complete" }, price: { type: "number", description: "Bid price" }, agent_id: { type: "string", description: "Bidder agent ID (auto-injected if omitted)" } }, required: ["task_id", "confidence", "price"] },
     async execute(_id: string, params: any) {
       const agentId = resolveAgentId(params.agent_id);
@@ -550,7 +550,7 @@ export default function (api: any) {
   // #24 eacn3_submit_result
   api.registerTool({
     name: "eacn3_submit_result",
-    description: "Submit execution result for a task.",
+    description: "Submit your completed work for a task you are executing. Content should be a JSON object matching the task's expected_output format if specified. Side effects: automatically reports a 'task_completed' reputation event (increases your score); transitions task to 'awaiting_retrieval' so the initiator can review. Returns confirmation with submission status.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, content: { type: "object", description: "Result content object" }, agent_id: { type: "string", description: "Executor agent ID (auto-injected if omitted)" } }, required: ["task_id", "content"] },
     async execute(_id: string, params: any) {
       const agentId = resolveAgentId(params.agent_id);
@@ -563,7 +563,7 @@ export default function (api: any) {
   // #25 eacn3_reject_task
   api.registerTool({
     name: "eacn3_reject_task",
-    description: "Reject/return a task. Frees the execution slot. Note: rejection affects reputation.",
+    description: "Abandon a task you accepted, freeing your execution slot for another agent. WARNING: automatically reports a 'task_rejected' reputation event which decreases your score. Only use when you genuinely cannot complete the task. Returns confirmation. Provide a reason string to explain why.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, reason: { type: "string" }, agent_id: { type: "string", description: "Executor agent ID (auto-injected if omitted)" } }, required: ["task_id"] },
     async execute(_id: string, params: any) {
       const agentId = resolveAgentId(params.agent_id);
@@ -576,7 +576,7 @@ export default function (api: any) {
   // #26 eacn3_create_subtask
   api.registerTool({
     name: "eacn3_create_subtask",
-    description: "Create a subtask under a parent task. Budget is carved from parent's escrow.",
+    description: "Delegate part of your work by creating a child task under a parent task you are executing. Budget is carved from the parent task's escrow (not your balance). Returns {subtask_id, parent_task_id, status, depth}. Depth auto-increments (max 3 levels). Side effects: broadcasts subtask to agents with matching domains; when the subtask completes, you receive a 'subtask_completed' event with auto-fetched results in the payload.",
     parameters: {
       type: "object",
       properties: {
@@ -598,7 +598,7 @@ export default function (api: any) {
   // A2A direct — agent.md:358-362: 点对点，不经过 Network
   api.registerTool({
     name: "eacn3_send_message",
-    description: "Send a direct message to another Agent (A2A point-to-point). Local agents receive instantly; remote agents are reached via their URL callback.",
+    description: "Send a direct agent-to-agent message bypassing the task system. Local agents receive it instantly in their event buffer; remote agents receive it via HTTP POST to their /events endpoint. Returns {sent, to, from, local}. The recipient sees a 'direct_message' event with payload.from and payload.content. Will fail if the remote agent has no reachable URL or is offline.",
     parameters: { type: "object", properties: { agent_id: { type: "string", description: "Target agent ID" }, content: { type: "string" }, sender_id: { type: "string", description: "Your agent ID (auto-injected if omitted)" } }, required: ["agent_id", "content"] },
     async execute(_id: string, params: any) {
       const senderId = resolveAgentId(params.sender_id);
@@ -658,7 +658,7 @@ export default function (api: any) {
   // #28 eacn3_report_event
   api.registerTool({
     name: "eacn3_report_event",
-    description: "Report a reputation event. Usually called automatically by other tools, but exposed for special cases.",
+    description: "Manually report a reputation event for an agent. Valid event_type values: 'task_completed' (score up), 'task_rejected' (score down), 'task_timeout' (score down), 'bid_declined' (score down). Usually auto-called by eacn3_submit_result and eacn3_reject_task — only call manually for edge cases. Returns {agent_id, score} with updated reputation. Side effects: updates local reputation cache.",
     parameters: { type: "object", properties: { agent_id: { type: "string" }, event_type: { type: "string", description: "task_completed | task_rejected | task_timeout | bid_declined" } }, required: ["agent_id", "event_type"] },
     async execute(_id: string, params: any) {
       const res = await net.reportEvent(params.agent_id, params.event_type);
@@ -670,7 +670,7 @@ export default function (api: any) {
   // #29 eacn3_get_reputation
   api.registerTool({
     name: "eacn3_get_reputation",
-    description: "Query an Agent's global reputation score.",
+    description: "Query an agent's global reputation score (0.0-1.0, starts at 0.5 for new agents). Returns {agent_id, score}. Score affects bid acceptance: confidence * reputation must meet the task's threshold. No side effects besides updating local reputation cache. Works for any agent ID, not just your own.",
     parameters: { type: "object", properties: { agent_id: { type: "string" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
       const res = await net.getReputation(params.agent_id);
@@ -686,7 +686,7 @@ export default function (api: any) {
   // #30 eacn3_get_balance
   api.registerTool({
     name: "eacn3_get_balance",
-    description: "Query an Agent's account balance: available funds and frozen (escrowed) funds.",
+    description: "Check an agent's credit balance. Returns {agent_id, available, frozen} where 'available' is spendable credits and 'frozen' is credits locked in escrow for active tasks. No side effects. Check before creating tasks to ensure sufficient funds; use eacn3_deposit to add credits if needed.",
     parameters: { type: "object", properties: { agent_id: { type: "string", description: "Agent ID to check balance for" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
       return ok(await net.getBalance(params.agent_id));
@@ -696,7 +696,7 @@ export default function (api: any) {
   // #31 eacn3_deposit
   api.registerTool({
     name: "eacn3_deposit",
-    description: "Deposit funds into an Agent's account. Increases available balance.",
+    description: "Add EACN credits to an agent's available balance. Amount must be > 0. Returns updated balance {agent_id, available, frozen}. Deposit before creating tasks if your balance is insufficient to cover the task budget.",
     parameters: { type: "object", properties: { agent_id: { type: "string", description: "Agent ID to deposit funds for" }, amount: { type: "number", description: "Amount to deposit (must be > 0)" } }, required: ["agent_id", "amount"] },
     async execute(_id: string, params: any) {
       return ok(await net.deposit(params.agent_id, params.amount));
@@ -710,7 +710,7 @@ export default function (api: any) {
   // #32 eacn3_get_events
   api.registerTool({
     name: "eacn3_get_events",
-    description: "Get pending events. WebSocket connections buffer events in memory; this drains the buffer.",
+    description: "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[]} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. Call periodically in your main loop. Events arrive via WebSocket and accumulate until drained — missing events means missed tasks and messages.",
     parameters: { type: "object", properties: {} },
     async execute() {
       const events = state.drainEvents();
