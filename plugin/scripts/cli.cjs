@@ -12,7 +12,7 @@ const fs = require('fs');
 const os = require('os');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
-const PLUGIN_ID = 'eacn';
+const PLUGIN_ID = 'eacn3';
 const EXT_DIR = path.join(os.homedir(), '.openclaw', 'extensions', PLUGIN_ID);
 const CONFIG_PATH = path.join(os.homedir(), '.openclaw', 'openclaw.json');
 
