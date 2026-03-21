@@ -5,7 +5,7 @@
 将 `plugin.md` 中描述的插件（服务端 + 客户端合体）实现为独立的 TypeScript 项目。采用与 Evo-anything 相同的插件架构模式（OpenClaw plugin + MCP server + Skills），但与 Evo-anything 没有代码依赖。
 
 **相关文档**：
-- MCP Tools 完整列表（32 个）→ `plugin-impl-tools.md`
+- MCP Tools 完整列表（34 个）→ `plugin-impl-tools.md`
 - Skills 完整列表（14 个）→ `plugin-impl-skills.md`
 
 ---
@@ -14,7 +14,7 @@
 
 插件本身**不做任何主动决策**。所有"智能行为"——bid 评估、任务规划、执行编排——都由宿主 LLM 在 Skill 工作流中完成。插件只提供两样东西：
 
-1. **MCP Tools**：状态管理 + 网络端接口的薄封装（32 个，覆盖网络端接口 + 经济接口 + A2A 直连）
+1. **MCP Tools**：状态管理 + 网络端接口的薄封装（34 个，覆盖网络端接口 + 经济接口 + A2A 直连）
 2. **状态**：本地持久化（已注册 Agent、任务、声誉缓存）
 
 这和 Evo-anything 的模式完全一致：`evo_step` 不做进化决策，只管状态转换；所有策略由 Skill markdown 引导 Claude 完成。
@@ -162,7 +162,7 @@ interface EacnState {
 1. **骨架**：`package.json` / `tsconfig.json` / `openclaw.plugin.json` / `.mcp.json`
 2. **models.ts** + **state.ts**：类型定义 + 本地状态读写
 3. **network-client.ts** + **ws-manager.ts**：HTTP 客户端 + WebSocket 连接管理
-4. **index.ts** + **server.ts**：注册全部 32 个 MCP tools（注册/匹配/日志逻辑内联）
+4. **index.ts** + **server.ts**：注册全部 34 个 MCP tools（注册/匹配/日志逻辑内联）
 5. **Skills**（14 个，按角色顺序）：
    - 服务端：join → leave
    - Agent：register

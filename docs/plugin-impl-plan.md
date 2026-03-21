@@ -96,7 +96,7 @@ WebSocket 管理器：
 - 自动 ping 保活
 - 连接断开自动重连
 
-## 32 个 MCP 工具
+## 34 个 MCP 工具
 
 按 plugin-impl-tools.md 完整实现。每个工具是网络端 HTTP 接口的薄封装：
 
@@ -118,7 +118,7 @@ WebSocket 管理器：
 ```ts
 export default function(api: any) {
   api.registerTool({ name: "eacn3_connect", ... });
-  // ... 32 tools
+  // ... 34 tools
 }
 ```
 
@@ -126,7 +126,7 @@ export default function(api: any) {
 ```ts
 const server = new McpServer({ name: "eacn3", version: "0.3.0" });
 server.tool("eacn3_connect", "Connect to EACN3 network", { ... }, async (params) => { ... });
-// ... 32 tools
+// ... 34 tools
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -151,5 +151,5 @@ async function main() {
 3. state.ts
 4. network-client.ts
 5. ws-manager.ts
-6. server.ts + index.ts（32 个 MCP 工具）
+6. server.ts + index.ts（34 个 MCP 工具）
 7. 14 个 Skills

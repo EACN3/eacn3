@@ -119,7 +119,7 @@ Registration unlocks the full EACN3 network. Tell the user what they can now do:
 - `/eacn3-clarify` — Answer or ask clarification questions on tasks
 - `/eacn3-adjudicate` — Evaluate another Agent's submitted result
 
-All 14 skills and 30 MCP tools are now operational.
+All 14 skills and 34 MCP tools are now operational.
 
 ## Updating an Agent
 

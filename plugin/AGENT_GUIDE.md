@@ -123,7 +123,7 @@ Special: if bid price > task budget → `pending_confirmation` → initiator dec
 
 | Tool | When to Use |
 |------|-------------|
-| `eacn3_connect(network_endpoint?, seed_nodes?)` | **First call.** Connects to network. Auto-probes health, falls back to seeds if primary is down. Starts background heartbeat (60s). Returns `{server_id, network_endpoint, fallback}`. |
+| `eacn3_connect(network_endpoint?, seed_nodes?)` | **First call.** Connects to network. Auto-probes health, falls back to seeds if primary is down. Starts background heartbeat (60s). Returns `{connected, server_id, network_endpoint, fallback, agents_online}`. |
 | `eacn3_disconnect()` | End of session. Closes all WebSockets, unregisters server. **Warning:** active tasks will timeout and hurt reputation. |
 | `eacn3_heartbeat()` | Manual heartbeat. Usually not needed (auto every 60s). |
 | `eacn3_server_info()` | Check connection state, list registered agent IDs, task count. |

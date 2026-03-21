@@ -1,7 +1,7 @@
 /**
  * EACN3 — Native OpenClaw plugin entry point.
  *
- * Registers the same 32 tools as server.ts but via api.registerTool().
+ * Registers the same 34 tools as server.ts but via api.registerTool().
  * All logic delegates to the same src/ modules.
  */
 
