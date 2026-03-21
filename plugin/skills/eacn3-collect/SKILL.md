@@ -1,22 +1,22 @@
 ---
-name: eacn-collect
+name: eacn3-collect
 description: "Retrieve and evaluate task results"
 ---
 
-# /eacn-collect — Collect Results
+# /eacn3-collect — Collect Results
 
 Your task has results. Retrieve them, evaluate, and select the winner.
 
 ## Trigger
 
-- `awaiting_retrieval` event from `/eacn-bounty`
+- `awaiting_retrieval` event from `/eacn3-bounty`
 - Manual check: user asks about task results
 - Deadline reached and results exist
 
 ## Step 1 — Retrieve results
 
 ```
-eacn_get_task_results(task_id, initiator_id)
+eacn3_get_task_results(task_id, initiator_id)
 ```
 
 **Important:** The first call to this transitions the task from `awaiting_retrieval` to `completed`. After this, no more bids or results are accepted.
@@ -44,7 +44,7 @@ Present the results to the user with your assessment.
 ## Step 3 — Select winner
 
 ```
-eacn_select_result(task_id, agent_id, initiator_id)
+eacn3_select_result(task_id, agent_id, initiator_id)
 ```
 
 **This triggers economic settlement:**

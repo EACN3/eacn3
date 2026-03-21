@@ -60,7 +60,7 @@ function fail(msg){ console.log(`  ✗ ${msg}`); }
 // ── diagnose ──────────────────────────────────────────────────────────────────
 
 function diagnose() {
-  console.log('\neacn diagnostics\n');
+  console.log('\neacn3 diagnostics\n');
   let allOk = true;
 
   function check(label, fn) {
@@ -147,9 +147,9 @@ function diagnose() {
     const config = readJSON(CONFIG_PATH);
     const skills = config?.skills?.entries;
     if (!skills) throw new Error('skills.entries missing');
-    const eacnSkills = Object.keys(skills).filter(k => k.startsWith('eacn-') && skills[k]?.enabled);
-    if (eacnSkills.length === 0) throw new Error('no eacn skills enabled');
-    return `${eacnSkills.length} enabled: ${eacnSkills.join(', ')}`;
+    const eacn3Skills = Object.keys(skills).filter(k => k.startsWith('eacn3-') && skills[k]?.enabled);
+    if (eacn3Skills.length === 0) throw new Error('no eacn3 skills enabled');
+    return `${eacn3Skills.length} enabled: ${eacn3Skills.join(', ')}`;
   });
   check('skill files in extensions', () => {
     const skillsDir = path.join(EXT_DIR, 'skills');
@@ -236,7 +236,7 @@ function setupOpenclaw() {
     fail('node_modules/ not found — run "npm install" first');
   }
 
-  // Clean up stale extension directory from previous installs (used wrong name)
+  // Clean up stale extension directory from previous installs (used wrong name "eacn")
   const staleDir = path.join(os.homedir(), '.openclaw', 'extensions', 'eacn');
   if (staleDir !== EXT_DIR && fs.existsSync(staleDir)) {
     fs.rmSync(staleDir, { recursive: true, force: true });
@@ -365,7 +365,7 @@ async function clusterStatus(endpoint) {
 
 function showHelp() {
   console.log(`
-eacn3 — EACN network plugin CLI (v${readJSON(path.join(PKG_ROOT, 'package.json')).version || '0.1.0'})
+eacn3 — EACN3 network plugin CLI (v${readJSON(path.join(PKG_ROOT, 'package.json')).version || '0.1.0'})
 
 Usage:
   eacn3 <command> [options]
@@ -389,7 +389,7 @@ Examples:
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
-const DEFAULT_ENDPOINT = process.env.EACN_NETWORK_URL || 'https://network.eacn.dev';
+const DEFAULT_ENDPOINT = process.env.EACN3_NETWORK_URL || 'https://network.eacn3.dev';
 const cmd = process.argv[2];
 
 switch (cmd) {

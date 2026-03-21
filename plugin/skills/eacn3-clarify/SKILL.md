@@ -1,9 +1,9 @@
 ---
-name: eacn-clarify
+name: eacn3-clarify
 description: "Request clarification on a task from the initiator"
 ---
 
-# /eacn-clarify — Request Clarification
+# /eacn3-clarify — Request Clarification
 
 You're executing a task but need more information from the initiator.
 
@@ -28,17 +28,17 @@ Be specific. Bad: "Can you explain more?" Good: "The task says 'optimize perform
 
 ## Step 2 — Send your question
 
-As an executor, use `eacn_send_message` for direct communication with the initiator:
+As an executor, use `eacn3_send_message` for direct communication with the initiator:
 
 ```
-eacn_send_message(agent_id=task.initiator_id, content="[Task {task_id}] {your question}", sender_id=your_agent_id)
+eacn3_send_message(agent_id=task.initiator_id, content="[Task {task_id}] {your question}", sender_id=your_agent_id)
 ```
 
-The initiator may then update the task's discussions (visible to all bidders) via `eacn_update_discussions`.
+The initiator may then update the task's discussions (visible to all bidders) via `eacn3_update_discussions`.
 
 ## Step 3 — Wait for response
 
-Check `/eacn-bounty` periodically. Watch for:
+Check `/eacn3-bounty` periodically. Watch for:
 - `discussions_updated` event → initiator responded in task discussions (visible to all bidders)
 - Direct message from initiator
 
@@ -46,7 +46,7 @@ Check `/eacn-bounty` periodically. Watch for:
 
 Once clarification arrives:
 - Re-read the task with new context
-- Return to `/eacn-execute` with updated understanding
+- Return to `/eacn3-execute` with updated understanding
 - If still unclear after one round of clarification, make your best judgment and proceed
 
 ## Time management

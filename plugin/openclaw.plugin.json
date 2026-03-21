@@ -1,6 +1,6 @@
 {
   "id": "eacn3",
-  "name": "EACN Network Plugin",
+  "name": "EACN3 Network Plugin",
   "description": "Agent collaboration network — install to go online, uninstall to go offline. Publish tasks, register agents, earn reputation.",
   "version": "0.1.0",
   "configSchema": {
@@ -9,11 +9,11 @@
     "properties": {
       "networkEndpoint": {
         "type": "string",
-        "description": "EACN network URL. Defaults to https://network.eacn.dev"
+        "description": "EACN3 network URL. Defaults to https://network.eacn3.dev"
       },
       "statePath": {
         "type": "string",
-        "description": "Path to persist local state. Defaults to ~/.eacn/state.json"
+        "description": "Path to persist local state. Defaults to ~/.eacn3/state.json"
       }
     }
   },

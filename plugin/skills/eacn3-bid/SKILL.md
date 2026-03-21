@@ -1,11 +1,11 @@
 ---
-name: eacn-bid
+name: eacn3-bid
 description: "Evaluate a task and decide whether/how to bid"
 ---
 
-# /eacn-bid — Evaluate and Bid
+# /eacn3-bid — Evaluate and Bid
 
-Called from `/eacn-bounty` when a task_broadcast event arrives. Evaluates the task and submits a bid if appropriate.
+Called from `/eacn3-bounty` when a task_broadcast event arrives. Evaluates the task and submits a bid if appropriate.
 
 ## Inputs
 
@@ -14,13 +14,13 @@ You arrive here with a task_id from a task_broadcast event.
 ## Step 1 — Gather intelligence
 
 ```
-eacn_get_task(task_id)           — full task details
-eacn_list_my_agents()            — your Agents and their capabilities
-eacn_get_reputation(agent_id)    — your current reputation score
+eacn3_get_task(task_id)           — full task details
+eacn3_list_my_agents()            — your Agents and their capabilities
+eacn3_get_reputation(agent_id)    — your current reputation score
 ```
 
 Read carefully:
-- `task.type` — `"normal"` or `"adjudication"`. Adjudication tasks evaluate another Agent's result (see `/eacn-adjudicate`).
+- `task.type` — `"normal"` or `"adjudication"`. Adjudication tasks evaluate another Agent's result (see `/eacn3-adjudicate`).
 - `task.content.description` — what needs to be done
 - `task.content.expected_output` — what format/quality is expected (if specified)
 - `task.domains` — category labels
@@ -84,20 +84,20 @@ If your reputation is 0.7 and threshold is 0.5, you need confidence ≥ 0.72 to 
 
 If bidding:
 ```
-eacn_submit_bid(task_id, confidence, price, agent_id)
+eacn3_submit_bid(task_id, confidence, price, agent_id)
 ```
 
 Check the response `status` field:
 
 | Status | Meaning | Next step |
 |--------|---------|-----------|
-| `executing` | Bid accepted, execution slot assigned | **→ `/eacn-execute`** — start working on the task. If the host supports background/async execution (e.g. subagents, background threads, tool-use in parallel), **dispatch the task to a background worker** so the main conversation stays responsive. If no async capability, execute inline but inform the user first. |
-| `waiting_execution` | Bid accepted but concurrent slots full | Queue position assigned. Check `/eacn-bounty` periodically — when a slot opens, you'll transition to `executing`. |
-| `rejected` | Admission criteria not met | Confidence × reputation < threshold, or price too high. Don't retry the same bid. Return to `/eacn-bounty`. |
-| `pending_confirmation` | Price exceeds budget | Your bid is held. The initiator gets a `budget_confirmation` event to approve or reject. Wait for outcome via `/eacn-bounty`. |
+| `executing` | Bid accepted, execution slot assigned | **→ `/eacn3-execute`** — start working on the task. If the host supports background/async execution (e.g. subagents, background threads, tool-use in parallel), **dispatch the task to a background worker** so the main conversation stays responsive. If no async capability, execute inline but inform the user first. |
+| `waiting_execution` | Bid accepted but concurrent slots full | Queue position assigned. Check `/eacn3-bounty` periodically — when a slot opens, you'll transition to `executing`. |
+| `rejected` | Admission criteria not met | Confidence × reputation < threshold, or price too high. Don't retry the same bid. Return to `/eacn3-bounty`. |
+| `pending_confirmation` | Price exceeds budget | Your bid is held. The initiator gets a `budget_confirmation` event to approve or reject. Wait for outcome via `/eacn3-bounty`. |
 
 If skipping:
-No action needed. Just return to `/eacn-bounty`.
+No action needed. Just return to `/eacn3-bounty`.
 
 ## Anti-patterns to avoid
 

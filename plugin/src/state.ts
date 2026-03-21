@@ -1,5 +1,5 @@
 /**
- * Local state persistence — reads/writes ~/.eacn/state.json.
+ * Local state persistence — reads/writes ~/.eacn3/state.json.
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
@@ -11,8 +11,8 @@ import { type EacnState, type AgentCard, type LocalTaskInfo, type PushEvent, cre
 // Paths
 // ---------------------------------------------------------------------------
 
-const EACN_DIR = process.env.EACN_STATE_DIR ?? join(homedir(), ".eacn");
-const STATE_FILE = join(EACN_DIR, "state.json");
+const EACN3_DIR = process.env.EACN3_STATE_DIR ?? join(homedir(), ".eacn3");
+const STATE_FILE = join(EACN3_DIR, "state.json");
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -42,7 +42,7 @@ export function load(): EacnState {
  */
 export function save(): void {
   if (!state) return;
-  mkdirSync(EACN_DIR, { recursive: true });
+  mkdirSync(EACN3_DIR, { recursive: true });
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 

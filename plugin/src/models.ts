@@ -1,5 +1,5 @@
 /**
- * EACN data models — TypeScript interfaces matching network-api.md structures.
+ * EACN3 data models — TypeScript interfaces matching network-api.md structures.
  */
 
 // ---------------------------------------------------------------------------
@@ -278,15 +278,15 @@ export interface EacnState {
 }
 
 /**
- * Default network endpoint. Override with EACN_NETWORK_URL env var.
+ * Default network endpoint. Override with EACN3_NETWORK_URL env var.
  */
-export const EACN_DEFAULT_NETWORK_ENDPOINT =
-  process.env.EACN_NETWORK_URL ?? "https://network.eacn.dev";
+export const EACN3_DEFAULT_NETWORK_ENDPOINT =
+  process.env.EACN3_NETWORK_URL ?? "https://network.eacn3.dev";
 
 export function createDefaultState(networkEndpoint?: string): EacnState {
   return {
     server_card: null,
-    network_endpoint: networkEndpoint ?? EACN_DEFAULT_NETWORK_ENDPOINT,
+    network_endpoint: networkEndpoint ?? EACN3_DEFAULT_NETWORK_ENDPOINT,
     agents: {},
     local_tasks: {},
     reputation_cache: {},

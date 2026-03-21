@@ -1,5 +1,5 @@
 /**
- * HTTP client for EACN network endpoints (28 APIs).
+ * HTTP client for EACN3 network endpoints (28 APIs).
  *
  * Each method maps 1:1 to a network-api.md endpoint.
  * server_id is injected from local state — callers don't need to pass it.
@@ -33,7 +33,7 @@ function baseUrl(): string {
 
 function serverId(): string {
   const id = getServerId();
-  if (!id) throw new Error("Not connected. Call eacn_connect first.");
+  if (!id) throw new Error("Not connected. Call eacn3_connect first.");
   return id;
 }
 

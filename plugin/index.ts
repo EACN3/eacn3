@@ -1,11 +1,11 @@
 /**
- * EACN — Native OpenClaw plugin entry point.
+ * EACN3 — Native OpenClaw plugin entry point.
  *
  * Registers the same 32 tools as server.ts but via api.registerTool().
  * All logic delegates to the same src/ modules.
  */
 
-import { type AgentCard, type PushEvent, EACN_DEFAULT_NETWORK_ENDPOINT } from "./src/models.js";
+import { type AgentCard, type PushEvent, EACN3_DEFAULT_NETWORK_ENDPOINT } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
 import * as ws from "./src/ws-manager.js";
@@ -47,7 +47,7 @@ function resolveAgentId(provided?: string): string {
   if (provided) return provided;
   const agents = state.listAgents();
   if (agents.length === 1) return agents[0].agent_id;
-  if (agents.length === 0) throw new Error("No agents registered. Call eacn_register_agent first.");
+  if (agents.length === 0) throw new Error("No agents registered. Call eacn3_register_agent first.");
   throw new Error(`Multiple agents registered (${agents.map(a => a.agent_id).join(", ")}). Specify agent_id explicitly.`);
 }
 
@@ -135,10 +135,10 @@ export default function (api: any) {
   // Health / Cluster (2)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // #0a eacn_health
+  // #0a eacn3_health
   api.registerTool({
-    name: "eacn_health",
-    description: "Probe network node health. Works before eacn_connect — use to verify a node is reachable.",
+    name: "eacn3_health",
+    description: "Probe network node health. Works before eacn3_connect — use to verify a node is reachable.",
     parameters: {
       type: "object",
       properties: {
@@ -156,9 +156,9 @@ export default function (api: any) {
     },
   });
 
-  // #0b eacn_cluster_status
+  // #0b eacn3_cluster_status
   api.registerTool({
-    name: "eacn_cluster_status",
+    name: "eacn3_cluster_status",
     description: "Get cluster topology: all member nodes, their status, and seed node list.",
     parameters: {
       type: "object",
@@ -181,19 +181,19 @@ export default function (api: any) {
   // Server Management (4)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // #1 eacn_connect
+  // #1 eacn3_connect
   api.registerTool({
-    name: "eacn_connect",
-    description: "Connect to EACN network. Health-checks the endpoint first; if unreachable, falls back to other seed nodes.",
+    name: "eacn3_connect",
+    description: "Connect to EACN3 network. Health-checks the endpoint first; if unreachable, falls back to other seed nodes.",
     parameters: {
       type: "object",
       properties: {
-        network_endpoint: { type: "string", description: `Network URL. Defaults to ${EACN_DEFAULT_NETWORK_ENDPOINT}` },
+        network_endpoint: { type: "string", description: `Network URL. Defaults to ${EACN3_DEFAULT_NETWORK_ENDPOINT}` },
         seed_nodes: { type: "array", items: { type: "string" }, description: "Additional seed node URLs for fallback" },
       },
     },
     async execute(_id: string, params: any) {
-      const preferred = params.network_endpoint ?? EACN_DEFAULT_NETWORK_ENDPOINT;
+      const preferred = params.network_endpoint ?? EACN3_DEFAULT_NETWORK_ENDPOINT;
       const s = state.getState();
 
       // Health probe + fallback
@@ -216,10 +216,10 @@ export default function (api: any) {
     },
   });
 
-  // #2 eacn_disconnect
+  // #2 eacn3_disconnect
   api.registerTool({
-    name: "eacn_disconnect",
-    description: "Disconnect from EACN network. Unregisters server and closes all WebSocket connections.",
+    name: "eacn3_disconnect",
+    description: "Disconnect from EACN3 network. Unregisters server and closes all WebSocket connections.",
     parameters: { type: "object", properties: {} },
     async execute() {
       stopHeartbeat(); ws.disconnectAll();
@@ -230,17 +230,17 @@ export default function (api: any) {
     },
   });
 
-  // #3 eacn_heartbeat
+  // #3 eacn3_heartbeat
   api.registerTool({
-    name: "eacn_heartbeat",
+    name: "eacn3_heartbeat",
     description: "Send heartbeat to network. Background interval auto-sends every 60s; this is for manual trigger.",
     parameters: { type: "object", properties: {} },
     async execute() { return ok(await net.heartbeat()); },
   });
 
-  // #4 eacn_server_info
+  // #4 eacn3_server_info
   api.registerTool({
-    name: "eacn_server_info",
+    name: "eacn3_server_info",
     description: "Get current server status: connection state, registered agents, local tasks.",
     parameters: { type: "object", properties: {} },
     async execute() {
@@ -255,9 +255,9 @@ export default function (api: any) {
   // Agent Management (7)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // #5 eacn_register_agent
+  // #5 eacn3_register_agent
   api.registerTool({
-    name: "eacn_register_agent",
+    name: "eacn3_register_agent",
     description: "Register an Agent on the network. Assembles AgentCard, validates, registers with network, and opens WebSocket.",
     parameters: {
       type: "object",
@@ -274,7 +274,7 @@ export default function (api: any) {
     },
     async execute(_id: string, params: any) {
       const s = state.getState();
-      if (!s.server_card) return err("Not connected. Call eacn_connect first.");
+      if (!s.server_card) return err("Not connected. Call eacn3_connect first.");
       if (!params.name?.trim()) return err("name cannot be empty");
       if (!params.domains?.length) return err("domains cannot be empty");
       const agentId = params.agent_id ?? `agent-${Date.now().toString(36)}`;
@@ -290,9 +290,9 @@ export default function (api: any) {
     },
   });
 
-  // #6 eacn_get_agent
+  // #6 eacn3_get_agent
   api.registerTool({
-    name: "eacn_get_agent",
+    name: "eacn3_get_agent",
     description: "Get any Agent's details (AgentCard) by ID.",
     parameters: { type: "object", properties: { agent_id: { type: "string" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
@@ -302,9 +302,9 @@ export default function (api: any) {
     },
   });
 
-  // #7 eacn_update_agent
+  // #7 eacn3_update_agent
   api.registerTool({
-    name: "eacn_update_agent",
+    name: "eacn3_update_agent",
     description: "Update an Agent's info (name, domains, skills, description).",
     parameters: {
       type: "object",
@@ -331,9 +331,9 @@ export default function (api: any) {
     },
   });
 
-  // #8 eacn_unregister_agent
+  // #8 eacn3_unregister_agent
   api.registerTool({
-    name: "eacn_unregister_agent",
+    name: "eacn3_unregister_agent",
     description: "Unregister an Agent from the network.",
     parameters: { type: "object", properties: { agent_id: { type: "string" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
@@ -343,9 +343,9 @@ export default function (api: any) {
     },
   });
 
-  // #9 eacn_list_my_agents
+  // #9 eacn3_list_my_agents
   api.registerTool({
-    name: "eacn_list_my_agents",
+    name: "eacn3_list_my_agents",
     description: "List all Agents registered under this server.",
     parameters: { type: "object", properties: {} },
     async execute() {
@@ -354,9 +354,9 @@ export default function (api: any) {
     },
   });
 
-  // #10 eacn_discover_agents
+  // #10 eacn3_discover_agents
   api.registerTool({
-    name: "eacn_discover_agents",
+    name: "eacn3_discover_agents",
     description: "Discover Agents by domain. Searches network via Gossip → DHT → Bootstrap fallback.",
     parameters: { type: "object", properties: { domain: { type: "string" }, requester_id: { type: "string" } }, required: ["domain"] },
     async execute(_id: string, params: any) {
@@ -364,9 +364,9 @@ export default function (api: any) {
     },
   });
 
-  // #11 eacn_list_agents
+  // #11 eacn3_list_agents
   api.registerTool({
-    name: "eacn_list_agents",
+    name: "eacn3_list_agents",
     description: "List Agents from the network. Filter by domain or server_id.",
     parameters: {
       type: "object",
@@ -385,25 +385,25 @@ export default function (api: any) {
   // Task Query (4)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // #12 eacn_get_task
+  // #12 eacn3_get_task
   api.registerTool({
-    name: "eacn_get_task",
+    name: "eacn3_get_task",
     description: "Get full task details including content, bids, and results.",
     parameters: { type: "object", properties: { task_id: { type: "string" } }, required: ["task_id"] },
     async execute(_id: string, params: any) { return ok(await net.getTask(params.task_id)); },
   });
 
-  // #13 eacn_get_task_status
+  // #13 eacn3_get_task_status
   api.registerTool({
-    name: "eacn_get_task_status",
+    name: "eacn3_get_task_status",
     description: "Query task status and bid list (initiator only, no results).",
     parameters: { type: "object", properties: { task_id: { type: "string" }, agent_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id"] },
     async execute(_id: string, params: any) { const agentId = resolveAgentId(params.agent_id); return ok(await net.getTaskStatus(params.task_id, agentId)); },
   });
 
-  // #14 eacn_list_open_tasks
+  // #14 eacn3_list_open_tasks
   api.registerTool({
-    name: "eacn_list_open_tasks",
+    name: "eacn3_list_open_tasks",
     description: "List tasks open for bidding. Optionally filter by domains.",
     parameters: { type: "object", properties: { domains: { type: "string", description: "Comma-separated domain filter" }, limit: { type: "number" }, offset: { type: "number" } } },
     async execute(_id: string, params: any) {
@@ -412,9 +412,9 @@ export default function (api: any) {
     },
   });
 
-  // #15 eacn_list_tasks
+  // #15 eacn3_list_tasks
   api.registerTool({
-    name: "eacn_list_tasks",
+    name: "eacn3_list_tasks",
     description: "List tasks with optional filters (status, initiator).",
     parameters: { type: "object", properties: { status: { type: "string" }, initiator_id: { type: "string" }, limit: { type: "number" }, offset: { type: "number" } } },
     async execute(_id: string, params: any) {
@@ -427,9 +427,9 @@ export default function (api: any) {
   // Task Operations — Initiator (7)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // #16 eacn_create_task
+  // #16 eacn3_create_task
   api.registerTool({
-    name: "eacn_create_task",
+    name: "eacn3_create_task",
     description: "Create a new task. Checks local agents first, then broadcasts to network.",
     parameters: {
       type: "object",
@@ -480,49 +480,49 @@ export default function (api: any) {
     },
   });
 
-  // #17 eacn_get_task_results
+  // #17 eacn3_get_task_results
   api.registerTool({
-    name: "eacn_get_task_results",
+    name: "eacn3_get_task_results",
     description: "Retrieve task results and adjudications. First call transitions task from awaiting_retrieval to completed.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.getTaskResults(params.task_id, initiatorId)); },
   });
 
-  // #18 eacn_select_result
+  // #18 eacn3_select_result
   api.registerTool({
-    name: "eacn_select_result",
+    name: "eacn3_select_result",
     description: "Select the winning result. Triggers economic settlement.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, agent_id: { type: "string", description: "ID of the agent whose result to select" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "agent_id"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.selectResult(params.task_id, initiatorId, params.agent_id)); },
   });
 
-  // #19 eacn_close_task
+  // #19 eacn3_close_task
   api.registerTool({
-    name: "eacn_close_task",
+    name: "eacn3_close_task",
     description: "Manually close a task (stop accepting bids/results).",
     parameters: { type: "object", properties: { task_id: { type: "string" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.closeTask(params.task_id, initiatorId)); },
   });
 
-  // #20 eacn_update_deadline
+  // #20 eacn3_update_deadline
   api.registerTool({
-    name: "eacn_update_deadline",
+    name: "eacn3_update_deadline",
     description: "Update task deadline.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, new_deadline: { type: "string", description: "New ISO 8601 deadline" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "new_deadline"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.updateDeadline(params.task_id, initiatorId, params.new_deadline)); },
   });
 
-  // #21 eacn_update_discussions
+  // #21 eacn3_update_discussions
   api.registerTool({
-    name: "eacn_update_discussions",
+    name: "eacn3_update_discussions",
     description: "Add a discussion message to a task. Synced to all bidders.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, message: { type: "string" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "message"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.updateDiscussions(params.task_id, initiatorId, params.message)); },
   });
 
-  // #22 eacn_confirm_budget
+  // #22 eacn3_confirm_budget
   api.registerTool({
-    name: "eacn_confirm_budget",
+    name: "eacn3_confirm_budget",
     description: "Respond to a budget confirmation request (when a bid exceeds current budget).",
     parameters: { type: "object", properties: { task_id: { type: "string" }, approved: { type: "boolean" }, new_budget: { type: "number" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "approved"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.confirmBudget(params.task_id, initiatorId, params.approved, params.new_budget)); },
@@ -532,9 +532,9 @@ export default function (api: any) {
   // Task Operations — Executor (5)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // #23 eacn_submit_bid
+  // #23 eacn3_submit_bid
   api.registerTool({
-    name: "eacn_submit_bid",
+    name: "eacn3_submit_bid",
     description: "Submit a bid on a task (confidence + price).",
     parameters: { type: "object", properties: { task_id: { type: "string" }, confidence: { type: "number", description: "0.0-1.0 confidence in ability to complete" }, price: { type: "number", description: "Bid price" }, agent_id: { type: "string", description: "Bidder agent ID (auto-injected if omitted)" } }, required: ["task_id", "confidence", "price"] },
     async execute(_id: string, params: any) {
@@ -547,9 +547,9 @@ export default function (api: any) {
     },
   });
 
-  // #24 eacn_submit_result
+  // #24 eacn3_submit_result
   api.registerTool({
-    name: "eacn_submit_result",
+    name: "eacn3_submit_result",
     description: "Submit execution result for a task.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, content: { type: "object", description: "Result content object" }, agent_id: { type: "string", description: "Executor agent ID (auto-injected if omitted)" } }, required: ["task_id", "content"] },
     async execute(_id: string, params: any) {
@@ -560,9 +560,9 @@ export default function (api: any) {
     },
   });
 
-  // #25 eacn_reject_task
+  // #25 eacn3_reject_task
   api.registerTool({
-    name: "eacn_reject_task",
+    name: "eacn3_reject_task",
     description: "Reject/return a task. Frees the execution slot. Note: rejection affects reputation.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, reason: { type: "string" }, agent_id: { type: "string", description: "Executor agent ID (auto-injected if omitted)" } }, required: ["task_id"] },
     async execute(_id: string, params: any) {
@@ -573,9 +573,9 @@ export default function (api: any) {
     },
   });
 
-  // #26 eacn_create_subtask
+  // #26 eacn3_create_subtask
   api.registerTool({
-    name: "eacn_create_subtask",
+    name: "eacn3_create_subtask",
     description: "Create a subtask under a parent task. Budget is carved from parent's escrow.",
     parameters: {
       type: "object",
@@ -594,10 +594,10 @@ export default function (api: any) {
     },
   });
 
-  // #27 eacn_send_message
+  // #27 eacn3_send_message
   // A2A direct — agent.md:358-362: 点对点，不经过 Network
   api.registerTool({
-    name: "eacn_send_message",
+    name: "eacn3_send_message",
     description: "Send a direct message to another Agent (A2A point-to-point). Local agents receive instantly; remote agents are reached via their URL callback.",
     parameters: { type: "object", properties: { agent_id: { type: "string", description: "Target agent ID" }, content: { type: "string" }, sender_id: { type: "string", description: "Your agent ID (auto-injected if omitted)" } }, required: ["agent_id", "content"] },
     async execute(_id: string, params: any) {
@@ -655,9 +655,9 @@ export default function (api: any) {
   // Reputation (2)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // #28 eacn_report_event
+  // #28 eacn3_report_event
   api.registerTool({
-    name: "eacn_report_event",
+    name: "eacn3_report_event",
     description: "Report a reputation event. Usually called automatically by other tools, but exposed for special cases.",
     parameters: { type: "object", properties: { agent_id: { type: "string" }, event_type: { type: "string", description: "task_completed | task_rejected | task_timeout | bid_declined" } }, required: ["agent_id", "event_type"] },
     async execute(_id: string, params: any) {
@@ -667,9 +667,9 @@ export default function (api: any) {
     },
   });
 
-  // #29 eacn_get_reputation
+  // #29 eacn3_get_reputation
   api.registerTool({
-    name: "eacn_get_reputation",
+    name: "eacn3_get_reputation",
     description: "Query an Agent's global reputation score.",
     parameters: { type: "object", properties: { agent_id: { type: "string" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
@@ -683,9 +683,9 @@ export default function (api: any) {
   // Economy (2)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // #30 eacn_get_balance
+  // #30 eacn3_get_balance
   api.registerTool({
-    name: "eacn_get_balance",
+    name: "eacn3_get_balance",
     description: "Query an Agent's account balance: available funds and frozen (escrowed) funds.",
     parameters: { type: "object", properties: { agent_id: { type: "string", description: "Agent ID to check balance for" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
@@ -693,9 +693,9 @@ export default function (api: any) {
     },
   });
 
-  // #31 eacn_deposit
+  // #31 eacn3_deposit
   api.registerTool({
-    name: "eacn_deposit",
+    name: "eacn3_deposit",
     description: "Deposit funds into an Agent's account. Increases available balance.",
     parameters: { type: "object", properties: { agent_id: { type: "string", description: "Agent ID to deposit funds for" }, amount: { type: "number", description: "Amount to deposit (must be > 0)" } }, required: ["agent_id", "amount"] },
     async execute(_id: string, params: any) {
@@ -707,9 +707,9 @@ export default function (api: any) {
   // Events (1)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // #32 eacn_get_events
+  // #32 eacn3_get_events
   api.registerTool({
-    name: "eacn_get_events",
+    name: "eacn3_get_events",
     description: "Get pending events. WebSocket connections buffer events in memory; this drains the buffer.",
     parameters: { type: "object", properties: {} },
     async execute() {

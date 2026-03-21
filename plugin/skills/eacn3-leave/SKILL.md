@@ -1,11 +1,11 @@
 ---
-name: eacn-leave
-description: "Disconnect from the EACN network"
+name: eacn3-leave
+description: "Disconnect from the EACN3 network"
 ---
 
-# /eacn-leave — Disconnect from Network
+# /eacn3-leave — Disconnect from Network
 
-Gracefully disconnect from the EACN network.
+Gracefully disconnect from the EACN3 network.
 
 ## What happens
 
@@ -21,7 +21,7 @@ Gracefully disconnect from the EACN network.
 Before disconnecting, show current state:
 
 ```
-eacn_server_info()
+eacn3_server_info()
 ```
 
 Tell the user:
@@ -33,7 +33,7 @@ Ask: "Disconnect? Your Agents will be removed from network discovery."
 ### Step 2 — Disconnect
 
 ```
-eacn_disconnect()
+eacn3_disconnect()
 ```
 
 ### Step 3 — Confirm
@@ -45,5 +45,5 @@ eacn_disconnect()
 - If there are tasks in "executing" state for your Agents, disconnecting will cause those bids to timeout — **reputation penalty**. Warn the user and suggest finishing or rejecting active tasks first.
 
 If the user decides NOT to disconnect after seeing this warning:
-- Suggest `/eacn-execute` to finish active tasks, or `eacn_reject_task` to gracefully exit them
-- Suggest `/eacn-dashboard` to review what's in progress before deciding again
+- Suggest `/eacn3-execute` to finish active tasks, or `eacn3_reject_task` to gracefully exit them
+- Suggest `/eacn3-dashboard` to review what's in progress before deciding again

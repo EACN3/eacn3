@@ -1,5 +1,5 @@
 /**
- * EACN MCP Server — exposes 32 tools via stdio transport.
+ * EACN3 MCP Server — exposes 32 tools via stdio transport.
  *
  * All intelligence lives in Skills (host LLM). This server is just
  * state management + network API wrapper. No adapter, no registry —
@@ -10,7 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { type EacnState, type AgentCard, type PushEvent, createDefaultState, EACN_DEFAULT_NETWORK_ENDPOINT } from "./src/models.js";
+import { type EacnState, type AgentCard, type PushEvent, createDefaultState, EACN3_DEFAULT_NETWORK_ENDPOINT } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
 import * as ws from "./src/ws-manager.js";
@@ -36,7 +36,7 @@ function resolveAgentId(provided?: string): string {
   if (provided) return provided;
   const agents = state.listAgents();
   if (agents.length === 1) return agents[0].agent_id;
-  if (agents.length === 0) throw new Error("No agents registered. Call eacn_register_agent first.");
+  if (agents.length === 0) throw new Error("No agents registered. Call eacn3_register_agent first.");
   throw new Error(`Multiple agents registered (${agents.map(a => a.agent_id).join(", ")}). Specify agent_id explicitly.`);
 }
 
@@ -70,10 +70,10 @@ const server = new McpServer({ name: "eacn3", version: "0.1.0" });
 // Health / Cluster (2)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #0a eacn_health
+// #0a eacn3_health
 server.tool(
-  "eacn_health",
-  "Probe network node health. Works before eacn_connect — use to verify a node is reachable.",
+  "eacn3_health",
+  "Probe network node health. Works before eacn3_connect — use to verify a node is reachable.",
   {
     endpoint: z.string().optional().describe("Node URL to probe. Defaults to configured network endpoint."),
   },
@@ -88,9 +88,9 @@ server.tool(
   },
 );
 
-// #0b eacn_cluster_status
+// #0b eacn3_cluster_status
 server.tool(
-  "eacn_cluster_status",
+  "eacn3_cluster_status",
   "Get cluster topology: all member nodes, their status, and seed node list.",
   {
     endpoint: z.string().optional().describe("Node URL to query. Defaults to configured network endpoint."),
@@ -110,16 +110,16 @@ server.tool(
 // Server Management (4)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #1 eacn_connect
+// #1 eacn3_connect
 server.tool(
-  "eacn_connect",
-  "Connect to EACN network. Health-checks the endpoint first; if unreachable, falls back to other seed nodes.",
+  "eacn3_connect",
+  "Connect to EACN3 network. Health-checks the endpoint first; if unreachable, falls back to other seed nodes.",
   {
-    network_endpoint: z.string().optional().describe(`Network URL. Defaults to ${EACN_DEFAULT_NETWORK_ENDPOINT}`),
+    network_endpoint: z.string().optional().describe(`Network URL. Defaults to ${EACN3_DEFAULT_NETWORK_ENDPOINT}`),
     seed_nodes: z.array(z.string()).optional().describe("Additional seed node URLs for fallback"),
   },
   async (params) => {
-    const preferred = params.network_endpoint ?? EACN_DEFAULT_NETWORK_ENDPOINT;
+    const preferred = params.network_endpoint ?? EACN3_DEFAULT_NETWORK_ENDPOINT;
     const s = state.getState();
 
     // Health probe + fallback
@@ -163,10 +163,10 @@ server.tool(
   },
 );
 
-// #2 eacn_disconnect
+// #2 eacn3_disconnect
 server.tool(
-  "eacn_disconnect",
-  "Disconnect from EACN network. Unregisters server and closes all WebSocket connections.",
+  "eacn3_disconnect",
+  "Disconnect from EACN3 network. Unregisters server and closes all WebSocket connections.",
   {},
   async () => {
     stopHeartbeat();
@@ -183,9 +183,9 @@ server.tool(
   },
 );
 
-// #3 eacn_heartbeat
+// #3 eacn3_heartbeat
 server.tool(
-  "eacn_heartbeat",
+  "eacn3_heartbeat",
   "Send heartbeat to network. Background interval auto-sends every 60s; this is for manual trigger.",
   {},
   async () => {
@@ -194,9 +194,9 @@ server.tool(
   },
 );
 
-// #4 eacn_server_info
+// #4 eacn3_server_info
 server.tool(
-  "eacn_server_info",
+  "eacn3_server_info",
   "Get current server status: connection state, registered agents, local tasks.",
   {},
   async () => {
@@ -225,10 +225,10 @@ server.tool(
 // Agent Management (7)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #5 eacn_register_agent
+// #5 eacn3_register_agent
 // Inlines: adapter (AgentCard assembly) + registry (validate + persist + DHT)
 server.tool(
-  "eacn_register_agent",
+  "eacn3_register_agent",
   "Register an Agent on the network. Assembles AgentCard, validates, registers with network, and opens WebSocket.",
   {
     name: z.string().describe("Agent display name"),
@@ -250,7 +250,7 @@ server.tool(
   },
   async (params) => {
     const s = state.getState();
-    if (!s.server_card) return err("Not connected. Call eacn_connect first.");
+    if (!s.server_card) return err("Not connected. Call eacn3_connect first.");
 
     // Validate
     if (!params.name.trim()) return err("name cannot be empty");
@@ -291,9 +291,9 @@ server.tool(
   },
 );
 
-// #6 eacn_get_agent
+// #6 eacn3_get_agent
 server.tool(
-  "eacn_get_agent",
+  "eacn3_get_agent",
   "Get any Agent's details (AgentCard) by ID.",
   {
     agent_id: z.string(),
@@ -309,9 +309,9 @@ server.tool(
   },
 );
 
-// #7 eacn_update_agent
+// #7 eacn3_update_agent
 server.tool(
-  "eacn_update_agent",
+  "eacn3_update_agent",
   "Update an Agent's info (name, domains, skills, description).",
   {
     agent_id: z.string(),
@@ -344,9 +344,9 @@ server.tool(
   },
 );
 
-// #8 eacn_unregister_agent
+// #8 eacn3_unregister_agent
 server.tool(
-  "eacn_unregister_agent",
+  "eacn3_unregister_agent",
   "Unregister an Agent from the network.",
   {
     agent_id: z.string(),
@@ -359,9 +359,9 @@ server.tool(
   },
 );
 
-// #9 eacn_list_my_agents
+// #9 eacn3_list_my_agents
 server.tool(
-  "eacn_list_my_agents",
+  "eacn3_list_my_agents",
   "List all Agents registered under this server.",
   {},
   async () => {
@@ -379,9 +379,9 @@ server.tool(
   },
 );
 
-// #10 eacn_discover_agents
+// #10 eacn3_discover_agents
 server.tool(
-  "eacn_discover_agents",
+  "eacn3_discover_agents",
   "Discover Agents by domain. Searches network via Gossip → DHT → Bootstrap fallback.",
   {
     domain: z.string(),
@@ -393,9 +393,9 @@ server.tool(
   },
 );
 
-// #11 eacn_list_agents
+// #11 eacn3_list_agents
 server.tool(
-  "eacn_list_agents",
+  "eacn3_list_agents",
   "List Agents from the network. Filter by domain or server_id.",
   {
     domain: z.string().optional(),
@@ -413,9 +413,9 @@ server.tool(
 // Task Query (4)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #12 eacn_get_task
+// #12 eacn3_get_task
 server.tool(
-  "eacn_get_task",
+  "eacn3_get_task",
   "Get full task details including content, bids, and results.",
   {
     task_id: z.string(),
@@ -426,9 +426,9 @@ server.tool(
   },
 );
 
-// #13 eacn_get_task_status
+// #13 eacn3_get_task_status
 server.tool(
-  "eacn_get_task_status",
+  "eacn3_get_task_status",
   "Query task status and bid list (initiator only, no results).",
   {
     task_id: z.string(),
@@ -441,9 +441,9 @@ server.tool(
   },
 );
 
-// #14 eacn_list_open_tasks
+// #14 eacn3_list_open_tasks
 server.tool(
-  "eacn_list_open_tasks",
+  "eacn3_list_open_tasks",
   "List tasks open for bidding. Optionally filter by domains.",
   {
     domains: z.string().optional().describe("Comma-separated domain filter"),
@@ -456,9 +456,9 @@ server.tool(
   },
 );
 
-// #15 eacn_list_tasks
+// #15 eacn3_list_tasks
 server.tool(
-  "eacn_list_tasks",
+  "eacn3_list_tasks",
   "List tasks with optional filters (status, initiator).",
   {
     status: z.string().optional(),
@@ -476,10 +476,10 @@ server.tool(
 // Task Operations — Initiator (7)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #16 eacn_create_task
+// #16 eacn3_create_task
 // Inlines matcher: check local agents before hitting network
 server.tool(
-  "eacn_create_task",
+  "eacn3_create_task",
   "Create a new task. Checks local agents first, then broadcasts to network.",
   {
     description: z.string(),
@@ -546,9 +546,9 @@ server.tool(
   },
 );
 
-// #17 eacn_get_task_results
+// #17 eacn3_get_task_results
 server.tool(
-  "eacn_get_task_results",
+  "eacn3_get_task_results",
   "Retrieve task results and adjudications. First call transitions task from awaiting_retrieval to completed.",
   {
     task_id: z.string(),
@@ -561,9 +561,9 @@ server.tool(
   },
 );
 
-// #18 eacn_select_result
+// #18 eacn3_select_result
 server.tool(
-  "eacn_select_result",
+  "eacn3_select_result",
   "Select the winning result. Triggers economic settlement.",
   {
     task_id: z.string(),
@@ -577,9 +577,9 @@ server.tool(
   },
 );
 
-// #19 eacn_close_task
+// #19 eacn3_close_task
 server.tool(
-  "eacn_close_task",
+  "eacn3_close_task",
   "Manually close a task (stop accepting bids/results).",
   {
     task_id: z.string(),
@@ -592,9 +592,9 @@ server.tool(
   },
 );
 
-// #20 eacn_update_deadline
+// #20 eacn3_update_deadline
 server.tool(
-  "eacn_update_deadline",
+  "eacn3_update_deadline",
   "Update task deadline.",
   {
     task_id: z.string(),
@@ -608,9 +608,9 @@ server.tool(
   },
 );
 
-// #21 eacn_update_discussions
+// #21 eacn3_update_discussions
 server.tool(
-  "eacn_update_discussions",
+  "eacn3_update_discussions",
   "Add a discussion message to a task. Synced to all bidders.",
   {
     task_id: z.string(),
@@ -624,9 +624,9 @@ server.tool(
   },
 );
 
-// #22 eacn_confirm_budget
+// #22 eacn3_confirm_budget
 server.tool(
-  "eacn_confirm_budget",
+  "eacn3_confirm_budget",
   "Respond to a budget confirmation request (when a bid exceeds current budget).",
   {
     task_id: z.string(),
@@ -647,9 +647,9 @@ server.tool(
 // Task Operations — Executor (5)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #23 eacn_submit_bid
+// #23 eacn3_submit_bid
 server.tool(
-  "eacn_submit_bid",
+  "eacn3_submit_bid",
   "Submit a bid on a task (confidence + price).",
   {
     task_id: z.string(),
@@ -677,10 +677,10 @@ server.tool(
   },
 );
 
-// #24 eacn_submit_result
+// #24 eacn3_submit_result
 // Inlines logger: auto-report reputation event
 server.tool(
-  "eacn_submit_result",
+  "eacn3_submit_result",
   "Submit execution result for a task.",
   {
     task_id: z.string(),
@@ -700,10 +700,10 @@ server.tool(
   },
 );
 
-// #25 eacn_reject_task
+// #25 eacn3_reject_task
 // Inlines logger: auto-report reputation event
 server.tool(
-  "eacn_reject_task",
+  "eacn3_reject_task",
   "Reject/return a task. Frees the execution slot. Note: rejection affects reputation.",
   {
     task_id: z.string(),
@@ -723,9 +723,9 @@ server.tool(
   },
 );
 
-// #26 eacn_create_subtask
+// #26 eacn3_create_subtask
 server.tool(
-  "eacn_create_subtask",
+  "eacn3_create_subtask",
   "Create a subtask under a parent task. Budget is carved from parent's escrow.",
   {
     parent_task_id: z.string(),
@@ -755,10 +755,10 @@ server.tool(
   },
 );
 
-// #27 eacn_send_message
+// #27 eacn3_send_message
 // A2A direct — agent.md:358-362: 点对点，不经过 Network
 server.tool(
-  "eacn_send_message",
+  "eacn3_send_message",
   "Send a direct message to another Agent (A2A point-to-point). Local agents receive instantly; remote agents are reached via their URL callback.",
   {
     agent_id: z.string().describe("Target agent ID"),
@@ -821,9 +821,9 @@ server.tool(
 // Reputation (2)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #28 eacn_report_event
+// #28 eacn3_report_event
 server.tool(
-  "eacn_report_event",
+  "eacn3_report_event",
   "Report a reputation event. Usually called automatically by other tools, but exposed for special cases.",
   {
     agent_id: z.string(),
@@ -836,9 +836,9 @@ server.tool(
   },
 );
 
-// #29 eacn_get_reputation
+// #29 eacn3_get_reputation
 server.tool(
-  "eacn_get_reputation",
+  "eacn3_get_reputation",
   "Query an Agent's global reputation score.",
   {
     agent_id: z.string(),
@@ -854,9 +854,9 @@ server.tool(
 // Economy (2)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #30 eacn_get_balance
+// #30 eacn3_get_balance
 server.tool(
-  "eacn_get_balance",
+  "eacn3_get_balance",
   "Query an Agent's account balance: available funds and frozen (escrowed) funds.",
   {
     agent_id: z.string().describe("Agent ID to check balance for"),
@@ -867,9 +867,9 @@ server.tool(
   },
 );
 
-// #31 eacn_deposit
+// #31 eacn3_deposit
 server.tool(
-  "eacn_deposit",
+  "eacn3_deposit",
   "Deposit funds into an Agent's account. Increases available balance.",
   {
     agent_id: z.string().describe("Agent ID to deposit funds for"),
@@ -885,9 +885,9 @@ server.tool(
 // Events (1)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #32 eacn_get_events
+// #32 eacn3_get_events
 server.tool(
-  "eacn_get_events",
+  "eacn3_get_events",
   "Get pending events. WebSocket connections buffer events in memory; this drains the buffer.",
   {},
   async () => {
@@ -944,7 +944,7 @@ function registerEventCallbacks(): void {
 
       case "budget_confirmation":
         // Bid exceeded budget — mark in local state for initiator to handle
-        // The event stays in the buffer for /eacn-bounty to surface
+        // The event stays in the buffer for /eacn3-bounty to surface
         break;
 
       case "task_broadcast":
@@ -980,7 +980,7 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
   }
 
   // Passed auto-filter — enrich the buffered event with a hint
-  // The skill layer (/eacn-bounty) will see this and can fast-track bidding
+  // The skill layer (/eacn3-bounty) will see this and can fast-track bidding
   state.pushEvents([{
     type: "task_broadcast",
     task_id: taskId,
@@ -1005,6 +1005,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error("EACN MCP server failed to start:", e);
+  console.error("EACN3 MCP server failed to start:", e);
   process.exit(1);
 });
