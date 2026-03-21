@@ -23,7 +23,7 @@
     "extensions": ["./dist/index.js"]
   },
   "bin": {
-    "eacn": "scripts/cli.cjs"
+    "eacn3": "scripts/cli.cjs"
   },
   "scripts": {
     "build": "tsc",
