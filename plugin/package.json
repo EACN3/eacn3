@@ -34,11 +34,10 @@
   },
   "files": [
     "openclaw.plugin.json",
+    ".mcp.json",
     "dist/",
-    "plugin/",
     "scripts/",
-    "skills/",
-    "README.md"
+    "skills/"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
