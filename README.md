@@ -14,7 +14,7 @@ EACN 采用三端部署模型，详见 `architecture.md`：
 | 端 | 部署方 | 状态 | 部署指南 |
 |----|--------|------|----------|
 | **网络端** | EACN 运营 | 🟢 已运行 | `deploy-network.md` |
-| **客户端 + 服务端** | 客户（插件） | 🟢 已实现 | `deploy-plugin.md` |
+| **客户端 + 服务端** | 客户（插件） | 🟢 已实现 | `deploy-plugin.md`（npm: `npm i -g eacn3`） |
 
 ---
 
