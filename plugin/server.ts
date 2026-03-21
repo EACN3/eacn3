@@ -64,7 +64,7 @@ function stopHeartbeat(): void {
 // MCP Server
 // ---------------------------------------------------------------------------
 
-const server = new McpServer({ name: "eacn3", version: "0.1.0" });
+const server = new McpServer({ name: "eacn3", version: "0.3.0" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Health / Cluster (2)
@@ -135,10 +135,10 @@ server.tool(
     s.network_endpoint = endpoint;
 
     // Register as server
-    const res = await net.registerServer("0.1.0", "plugin://local", "plugin-user");
+    const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
     s.server_card = {
       server_id: res.server_id,
-      version: "0.1.0",
+      version: "0.3.0",
       endpoint: "plugin://local",
       owner: "plugin-user",
       status: "online",

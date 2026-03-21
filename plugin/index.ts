@@ -207,8 +207,8 @@ export default function (api: any) {
       }
 
       s.network_endpoint = endpoint;
-      const res = await net.registerServer("0.1.0", "plugin://local", "plugin-user");
-      s.server_card = { server_id: res.server_id, version: "0.1.0", endpoint: "plugin://local", owner: "plugin-user", status: "online" };
+      const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
+      s.server_card = { server_id: res.server_id, version: "0.3.0", endpoint: "plugin://local", owner: "plugin-user", status: "online" };
       state.save();
       startHeartbeat();
       for (const agentId of Object.keys(s.agents)) ws.connect(agentId);
