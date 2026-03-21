@@ -31,10 +31,10 @@ class Network:
         db: "Database | None" = None,
         config: "NetworkConfig | None" = None,
     ) -> None:
-        from eacn.network.config import NetworkConfig
+        from eacn.network.config import NetworkConfig, load_config
         from eacn.network.db.database import Database
 
-        self.config = config or NetworkConfig()
+        self.config = config or load_config()
         self.db = db or Database()
 
         # Core modules — config + db injected
