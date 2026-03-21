@@ -148,7 +148,8 @@ export type PushEventType =
   | "subtask_completed"
   | "awaiting_retrieval"
   | "budget_confirmation"
-  | "timeout";
+  | "timeout"
+  | "direct_message";
 
 export interface PushEvent {
   type: PushEventType;

@@ -27,6 +27,19 @@ function err(message: string) {
   return { content: [{ type: "text" as const, text: JSON.stringify({ error: message }) }] };
 }
 
+/**
+ * Resolve agent ID: use provided value, or auto-inject from state.
+ * If only one agent is registered, use it. Otherwise throw.
+ * Per agent.md:116 — "agent_id 由通信层自动填充，Agent 无需传入"
+ */
+function resolveAgentId(provided?: string): string {
+  if (provided) return provided;
+  const agents = state.listAgents();
+  if (agents.length === 1) return agents[0].agent_id;
+  if (agents.length === 0) throw new Error("No agents registered. Call eacn_register_agent first.");
+  throw new Error(`Multiple agents registered (${agents.map(a => a.agent_id).join(", ")}). Specify agent_id explicitly.`);
+}
+
 // ---------------------------------------------------------------------------
 // Heartbeat background interval
 // ---------------------------------------------------------------------------
@@ -366,10 +379,11 @@ server.tool(
   "Query task status and bid list (initiator only, no results).",
   {
     task_id: z.string(),
-    agent_id: z.string().describe("Initiator agent ID"),
+    agent_id: z.string().optional().describe("Initiator agent ID (auto-injected if omitted)"),
   },
   async (params) => {
-    const status = await net.getTaskStatus(params.task_id, params.agent_id);
+    const agentId = resolveAgentId(params.agent_id);
+    const status = await net.getTaskStatus(params.task_id, agentId);
     return ok(status);
   },
 );
@@ -430,23 +444,24 @@ server.tool(
       contact_id: z.string().optional().describe("Human contact identifier"),
       timeout_s: z.number().optional().describe("Seconds to wait for human response before auto-reject"),
     }).optional().describe("Human-in-the-loop contact settings"),
-    initiator_id: z.string().describe("Agent ID of the task initiator"),
+    initiator_id: z.string().optional().describe("Agent ID of the task initiator (auto-injected if omitted)"),
   },
   async (params) => {
+    const initiatorId = resolveAgentId(params.initiator_id);
     const taskId = `t-${Date.now().toString(36)}`;
 
     // Local matching (what matcher used to do): check if any local agent covers the domains
     const localAgents = state.listAgents();
     const matchedLocal = params.domains
       ? localAgents.filter((a) =>
-          a.agent_id !== params.initiator_id &&
+          a.agent_id !== initiatorId &&
           params.domains!.some((d) => a.domains.includes(d)),
         )
       : [];
 
     const task = await net.createTask({
       task_id: taskId,
-      initiator_id: params.initiator_id,
+      initiator_id: initiatorId,
       content: {
         description: params.description,
         expected_output: params.expected_output,
@@ -484,10 +499,11 @@ server.tool(
   "Retrieve task results and adjudications. First call transitions task from awaiting_retrieval to completed.",
   {
     task_id: z.string(),
-    initiator_id: z.string(),
+    initiator_id: z.string().optional().describe("Initiator agent ID (auto-injected if omitted)"),
   },
   async (params) => {
-    const res = await net.getTaskResults(params.task_id, params.initiator_id);
+    const initiatorId = resolveAgentId(params.initiator_id);
+    const res = await net.getTaskResults(params.task_id, initiatorId);
     return ok(res);
   },
 );
@@ -499,10 +515,11 @@ server.tool(
   {
     task_id: z.string(),
     agent_id: z.string().describe("ID of the agent whose result to select"),
-    initiator_id: z.string(),
+    initiator_id: z.string().optional().describe("Initiator agent ID (auto-injected if omitted)"),
   },
   async (params) => {
-    const res = await net.selectResult(params.task_id, params.initiator_id, params.agent_id);
+    const initiatorId = resolveAgentId(params.initiator_id);
+    const res = await net.selectResult(params.task_id, initiatorId, params.agent_id);
     return ok(res);
   },
 );
@@ -513,10 +530,11 @@ server.tool(
   "Manually close a task (stop accepting bids/results).",
   {
     task_id: z.string(),
-    initiator_id: z.string(),
+    initiator_id: z.string().optional().describe("Initiator agent ID (auto-injected if omitted)"),
   },
   async (params) => {
-    const res = await net.closeTask(params.task_id, params.initiator_id);
+    const initiatorId = resolveAgentId(params.initiator_id);
+    const res = await net.closeTask(params.task_id, initiatorId);
     return ok(res);
   },
 );
@@ -528,10 +546,11 @@ server.tool(
   {
     task_id: z.string(),
     new_deadline: z.string().describe("New ISO 8601 deadline"),
-    initiator_id: z.string(),
+    initiator_id: z.string().optional().describe("Initiator agent ID (auto-injected if omitted)"),
   },
   async (params) => {
-    const res = await net.updateDeadline(params.task_id, params.initiator_id, params.new_deadline);
+    const initiatorId = resolveAgentId(params.initiator_id);
+    const res = await net.updateDeadline(params.task_id, initiatorId, params.new_deadline);
     return ok(res);
   },
 );
@@ -543,10 +562,11 @@ server.tool(
   {
     task_id: z.string(),
     message: z.string(),
-    initiator_id: z.string(),
+    initiator_id: z.string().optional().describe("Initiator agent ID (auto-injected if omitted)"),
   },
   async (params) => {
-    const res = await net.updateDiscussions(params.task_id, params.initiator_id, params.message);
+    const initiatorId = resolveAgentId(params.initiator_id);
+    const res = await net.updateDiscussions(params.task_id, initiatorId, params.message);
     return ok(res);
   },
 );
@@ -559,11 +579,12 @@ server.tool(
     task_id: z.string(),
     approved: z.boolean(),
     new_budget: z.number().optional(),
-    initiator_id: z.string(),
+    initiator_id: z.string().optional().describe("Initiator agent ID (auto-injected if omitted)"),
   },
   async (params) => {
+    const initiatorId = resolveAgentId(params.initiator_id);
     const res = await net.confirmBudget(
-      params.task_id, params.initiator_id, params.approved, params.new_budget,
+      params.task_id, initiatorId, params.approved, params.new_budget,
     );
     return ok(res);
   },
@@ -581,10 +602,11 @@ server.tool(
     task_id: z.string(),
     confidence: z.number().min(0).max(1).describe("0.0-1.0 confidence in ability to complete"),
     price: z.number().describe("Bid price"),
-    agent_id: z.string(),
+    agent_id: z.string().optional().describe("Bidder agent ID (auto-injected if omitted)"),
   },
   async (params) => {
-    const res = await net.submitBid(params.task_id, params.agent_id, params.confidence, params.price);
+    const agentId = resolveAgentId(params.agent_id);
+    const res = await net.submitBid(params.task_id, agentId, params.confidence, params.price);
 
     // Track locally if not rejected (status could be "executing", "waiting_execution", etc.)
     if (res.status && res.status !== "rejected") {
@@ -610,14 +632,15 @@ server.tool(
   {
     task_id: z.string(),
     content: z.record(z.string(), z.unknown()).describe("Result content object"),
-    agent_id: z.string(),
+    agent_id: z.string().optional().describe("Executor agent ID (auto-injected if omitted)"),
   },
   async (params) => {
-    const res = await net.submitResult(params.task_id, params.agent_id, params.content);
+    const agentId = resolveAgentId(params.agent_id);
+    const res = await net.submitResult(params.task_id, agentId, params.content);
 
     // Auto-report reputation event (what logger used to do)
     try {
-      await net.reportEvent(params.agent_id, "task_completed");
+      await net.reportEvent(agentId, "task_completed");
     } catch { /* non-critical */ }
 
     return ok(res);
@@ -632,14 +655,15 @@ server.tool(
   {
     task_id: z.string(),
     reason: z.string().optional(),
-    agent_id: z.string(),
+    agent_id: z.string().optional().describe("Executor agent ID (auto-injected if omitted)"),
   },
   async (params) => {
-    const res = await net.rejectTask(params.task_id, params.agent_id, params.reason);
+    const agentId = resolveAgentId(params.agent_id);
+    const res = await net.rejectTask(params.task_id, agentId, params.reason);
 
     // Auto-report reputation event
     try {
-      await net.reportEvent(params.agent_id, "task_rejected");
+      await net.reportEvent(agentId, "task_rejected");
     } catch { /* non-critical */ }
 
     return ok(res);
@@ -656,12 +680,13 @@ server.tool(
     domains: z.array(z.string()),
     budget: z.number(),
     deadline: z.string().optional(),
-    initiator_id: z.string().describe("Agent ID of the executor creating the subtask"),
+    initiator_id: z.string().optional().describe("Agent ID of the executor creating the subtask (auto-injected if omitted)"),
   },
   async (params) => {
+    const initiatorId = resolveAgentId(params.initiator_id);
     const task = await net.createSubtask(
       params.parent_task_id,
-      params.initiator_id,
+      initiatorId,
       { description: params.description },
       params.domains,
       params.budget,
@@ -678,23 +703,64 @@ server.tool(
 );
 
 // #27 eacn_send_message
+// A2A direct — agent.md:358-362: 点对点，不经过 Network
 server.tool(
   "eacn_send_message",
-  "Send a direct message to another Agent (A2A point-to-point).",
+  "Send a direct message to another Agent (A2A point-to-point). Local agents receive instantly; remote agents are reached via their URL callback.",
   {
     agent_id: z.string().describe("Target agent ID"),
     content: z.string(),
-    sender_id: z.string().describe("Your agent ID"),
+    sender_id: z.string().optional().describe("Your agent ID (auto-injected if omitted)"),
   },
   async (params) => {
-    // A2A direct message — for now, use task discussions as transport
-    // Future: direct WebSocket routing
-    return ok({
-      sent: true,
-      to: params.agent_id,
-      from: params.sender_id,
-      note: "Direct A2A messaging will use WebSocket routing in future versions.",
-    });
+    const senderId = params.sender_id ?? resolveAgentId();
+    const targetId = params.agent_id;
+
+    const message: PushEvent = {
+      type: "direct_message",
+      task_id: "",
+      payload: { from: senderId, content: params.content },
+      received_at: Date.now(),
+    };
+
+    // Local agent — direct push to event buffer
+    const localAgent = state.getAgent(targetId);
+    if (localAgent) {
+      state.pushEvents([message]);
+      return ok({ sent: true, to: targetId, from: senderId, local: true });
+    }
+
+    // Remote agent — POST to their URL callback (A2A direct, agent.md:160-168)
+    let agentCard;
+    try {
+      agentCard = await net.getAgentInfo(targetId);
+    } catch {
+      return err(`Agent ${targetId} not found`);
+    }
+
+    if (!agentCard.url || agentCard.url.startsWith("plugin://")) {
+      return err(`Agent ${targetId} has no reachable URL: ${agentCard.url}`);
+    }
+
+    // POST /events on agent's URL (agent.md:164)
+    const eventsUrl = agentCard.url.replace(/\/$/, "") + "/events";
+    try {
+      const res = await fetch(eventsUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "direct_message",
+          from: senderId,
+          content: params.content,
+        }),
+      });
+      if (!res.ok) {
+        return err(`POST ${eventsUrl} failed: ${res.status}`);
+      }
+      return ok({ sent: true, to: targetId, from: senderId, local: false });
+    } catch (e) {
+      return err(`Failed to reach agent at ${eventsUrl}: ${(e as Error).message}`);
+    }
   },
 );
 
