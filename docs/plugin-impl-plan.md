@@ -23,16 +23,18 @@ plugin/
 ├── src/
 │   ├── models.ts                 # TypeScript 接口：AgentCard, Task, Bid, Result, Event, EacnState
 │   ├── state.ts                  # 本地状态持久化（~/.eacn/state.json）
-│   ├── network-client.ts         # HTTP 客户端，封装 28 个网络端接口
+│   ├── network-client.ts         # HTTP 客户端，封装 29 个网络端接口
 │   └── ws-manager.ts             # WebSocket 管理：每个 Agent 一条连接，事件缓冲
 │
-└── skills/                       # 12 个 Skill（厚认知引导）
+└── skills/                       # 14 个 Skill（厚认知引导）
     ├── eacn-join/SKILL.md             # /eacn-join — 连接网络
     ├── eacn-leave/SKILL.md            # /eacn-leave — 断开网络
     ├── eacn-register/SKILL.md         # /eacn-register — 注册 Agent
     ├── eacn-task/SKILL.md             # /eacn-task — 发布任务
     ├── eacn-collect/SKILL.md          # /eacn-collect — 收取结果
-    ├── eacn-bounty/SKILL.md             # /eacn-bounty — 工作循环
+    ├── eacn-budget/SKILL.md           # /eacn-budget — 预算确认
+    ├── eacn-delegate/SKILL.md         # /eacn-delegate — 委托任务
+    ├── eacn-bounty/SKILL.md           # /eacn-bounty — 工作循环
     ├── eacn-bid/SKILL.md              # /eacn-bid — 评估竞标
     ├── eacn-execute/SKILL.md          # /eacn-execute — 执行任务
     ├── eacn-clarify/SKILL.md          # /eacn-clarify — 请求澄清
@@ -74,7 +76,7 @@ plugin/
 提供：`load()`, `save()`, `getState()`, `setState()`, 以及便捷方法 `addAgent()`, `removeAgent()`, `updateTask()` 等。
 
 ### network-client.ts
-HTTP 客户端，封装 28 个网络端接口。按 network-api.md 的分组：
+HTTP 客户端，封装 29 个网络端接口。按 network-api.md 的分组：
 - Discovery — Server（4）：registerServer, getServer, heartbeat, unregisterServer
 - Discovery — Agent（6）：registerAgent, getAgent, updateAgent, unregisterAgent, discoverAgents, listAgents
 - Tasks — 查询（5）：createTask, getOpenTasks, getTask, getTaskStatus, listTasks
@@ -94,7 +96,7 @@ WebSocket 管理器：
 - 自动 ping 保活
 - 连接断开自动重连
 
-## 29 个 MCP 工具
+## 32 个 MCP 工具
 
 按 plugin-impl-tools.md 完整实现。每个工具是网络端 HTTP 接口的薄封装：
 
@@ -116,7 +118,7 @@ WebSocket 管理器：
 ```ts
 export default function(api: any) {
   api.registerTool({ name: "eacn_connect", ... });
-  // ... 29 tools
+  // ... 32 tools
 }
 ```
 
@@ -124,7 +126,7 @@ export default function(api: any) {
 ```ts
 const server = new McpServer({ name: "eacn", version: "0.1.0" });
 server.tool("eacn_connect", "Connect to EACN network", { ... }, async (params) => { ... });
-// ... 29 tools
+// ... 32 tools
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -133,7 +135,7 @@ async function main() {
 
 两个入口共享 `src/` 下的模块，工具实现逻辑相同。
 
-## 12 个 Skill（厚认知引导）
+## 14 个 Skill（厚认知引导）
 
 每个 SKILL.md 包含：
 1. **决策框架** — 不是"做不做"，而是怎么判断、权衡什么
@@ -149,5 +151,5 @@ async function main() {
 3. state.ts
 4. network-client.ts
 5. ws-manager.ts
-6. server.ts + index.ts（29 个 MCP 工具）
-7. 12 个 Skills
+6. server.ts + index.ts（32 个 MCP 工具）
+7. 14 个 Skills

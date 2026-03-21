@@ -50,6 +50,13 @@ class Result(BaseModel):
     adjudications: list[Adjudication] = Field(default_factory=list)
 
 
+class HumanContact(BaseModel):
+    """Whether human owner can be contacted for decisions."""
+    allowed: bool = False
+    contact_id: str | None = None
+    timeout_s: int | None = None
+
+
 class Task(BaseModel):
     id: str
     content: dict[str, Any] = Field(
@@ -72,6 +79,7 @@ class Task(BaseModel):
     bids: list[Bid] = Field(default_factory=list)
     results: list[Result] = Field(default_factory=list)
     budget_locked: bool = False  # True when concurrent slots full
+    human_contact: HumanContact | None = None
 
     @property
     def executing_agents(self) -> list[str]:

@@ -43,6 +43,10 @@ def _task_to_response(task) -> TaskResponse:
 @router.post("/tasks", response_model=TaskResponse, status_code=201)
 async def create_task(req: CreateTaskRequest):
     try:
+        from eacn.core.models import HumanContact
+        human_contact = None
+        if req.human_contact:
+            human_contact = HumanContact(**req.human_contact.model_dump())
         task = await _net().create_task(
             task_id=req.task_id,
             initiator_id=req.initiator_id,
@@ -52,6 +56,7 @@ async def create_task(req: CreateTaskRequest):
             deadline=req.deadline,
             max_concurrent_bidders=req.max_concurrent_bidders,
             max_depth=req.max_depth,
+            human_contact=human_contact,
         )
         return _task_to_response(task)
     except BudgetError as e:
