@@ -398,6 +398,39 @@ async def deposit(req: DepositRequest):
     )
 
 
+@router.get("/cluster/status")
+async def cluster_status():
+    """查看集群状态: 本节点信息、所有已知成员、集群模式。"""
+    net = _net()
+    cluster = net.cluster
+    local = cluster.local_node
+    members = cluster.members.all_nodes()
+    return {
+        "mode": "standalone" if cluster.standalone else "cluster",
+        "local": {
+            "node_id": local.node_id,
+            "endpoint": local.endpoint,
+            "domains": local.domains,
+            "status": local.status,
+            "version": local.version,
+            "joined_at": local.joined_at,
+        },
+        "members": [
+            {
+                "node_id": n.node_id,
+                "endpoint": n.endpoint,
+                "domains": n.domains,
+                "status": n.status,
+                "last_seen": n.last_seen,
+            }
+            for n in members
+        ],
+        "member_count": len(members),
+        "online_count": len(cluster.members.all_online()),
+        "seed_nodes": list(cluster.config.seed_nodes),
+    }
+
+
 @router.get("/admin/config")
 async def get_config():
     """读取当前全部超参数。"""
