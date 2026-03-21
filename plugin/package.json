@@ -37,6 +37,7 @@
     "dist/",
     "plugin/",
     "scripts/",
+    "skills/",
     "README.md"
   ],
   "dependencies": {
