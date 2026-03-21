@@ -11,7 +11,7 @@ import { type EacnState, type AgentCard, type LocalTaskInfo, type PushEvent, cre
 // Paths
 // ---------------------------------------------------------------------------
 
-const EACN_DIR = join(homedir(), ".eacn");
+const EACN_DIR = process.env.EACN_STATE_DIR ?? join(homedir(), ".eacn");
 const STATE_FILE = join(EACN_DIR, "state.json");
 
 // ---------------------------------------------------------------------------
