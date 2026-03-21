@@ -132,29 +132,87 @@ export default function (api: any) {
   registerEventCallbacks();
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // Health / Cluster (2)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // #0a eacn_health
+  api.registerTool({
+    name: "eacn_health",
+    description: "Probe network node health. Works before eacn_connect — use to verify a node is reachable.",
+    parameters: {
+      type: "object",
+      properties: {
+        endpoint: { type: "string", description: "Node URL to probe. Defaults to configured network endpoint." },
+      },
+    },
+    async execute(_id: string, params: any) {
+      const target = params.endpoint ?? state.getState().network_endpoint;
+      try {
+        const health = await net.checkHealth(target);
+        return ok({ endpoint: target, ...health });
+      } catch (e) {
+        return err(`Health check failed for ${target}: ${(e as Error).message}`);
+      }
+    },
+  });
+
+  // #0b eacn_cluster_status
+  api.registerTool({
+    name: "eacn_cluster_status",
+    description: "Get cluster topology: all member nodes, their status, and seed node list.",
+    parameters: {
+      type: "object",
+      properties: {
+        endpoint: { type: "string", description: "Node URL to query. Defaults to configured network endpoint." },
+      },
+    },
+    async execute(_id: string, params: any) {
+      const target = params.endpoint ?? state.getState().network_endpoint;
+      try {
+        const cluster = await net.getClusterStatus(target);
+        return ok(cluster);
+      } catch (e) {
+        return err(`Cluster status failed for ${target}: ${(e as Error).message}`);
+      }
+    },
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // Server Management (4)
   // ═══════════════════════════════════════════════════════════════════════════
 
   // #1 eacn_connect
   api.registerTool({
     name: "eacn_connect",
-    description: "Connect to EACN network. Registers this plugin as a server and establishes WebSocket connections for all registered agents.",
+    description: "Connect to EACN network. Health-checks the endpoint first; if unreachable, falls back to other seed nodes.",
     parameters: {
       type: "object",
       properties: {
         network_endpoint: { type: "string", description: `Network URL. Defaults to ${EACN_DEFAULT_NETWORK_ENDPOINT}` },
+        seed_nodes: { type: "array", items: { type: "string" }, description: "Additional seed node URLs for fallback" },
       },
     },
     async execute(_id: string, params: any) {
-      const endpoint = params.network_endpoint ?? EACN_DEFAULT_NETWORK_ENDPOINT;
+      const preferred = params.network_endpoint ?? EACN_DEFAULT_NETWORK_ENDPOINT;
       const s = state.getState();
+
+      // Health probe + fallback
+      let endpoint: string;
+      let fallback = false;
+      try {
+        endpoint = await net.findHealthyEndpoint(preferred, params.seed_nodes);
+        fallback = endpoint !== preferred;
+      } catch (e) {
+        return err(`Cannot reach any network node: ${(e as Error).message}`);
+      }
+
       s.network_endpoint = endpoint;
       const res = await net.registerServer("0.1.0", "plugin://local", "plugin-user");
       s.server_card = { server_id: res.server_id, version: "0.1.0", endpoint: "plugin://local", owner: "plugin-user", status: "online" };
       state.save();
       startHeartbeat();
       for (const agentId of Object.keys(s.agents)) ws.connect(agentId);
-      return ok({ connected: true, server_id: res.server_id, network_endpoint: endpoint, agents_online: Object.keys(s.agents).length });
+      return ok({ connected: true, server_id: res.server_id, network_endpoint: endpoint, fallback, agents_online: Object.keys(s.agents).length });
     },
   });
 

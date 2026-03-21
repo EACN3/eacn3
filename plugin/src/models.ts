@@ -223,6 +223,39 @@ export interface DepositResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Cluster / Health
+// ---------------------------------------------------------------------------
+
+export interface ClusterMember {
+  node_id: string;
+  endpoint: string;
+  domains: string[];
+  status: "online" | "offline";
+  last_seen: string;
+}
+
+export interface ClusterStatus {
+  mode: "standalone" | "cluster";
+  local: {
+    node_id: string;
+    endpoint: string;
+    domains: string[];
+    status: "online" | "offline";
+    version: string;
+    joined_at: string;
+  };
+  members: ClusterMember[];
+  member_count: number;
+  online_count: number;
+  seed_nodes: string[];
+}
+
+export interface HealthResponse {
+  status: "ok" | "degraded" | "down";
+  [key: string]: unknown;
+}
+
+// ---------------------------------------------------------------------------
 // Local State
 // ---------------------------------------------------------------------------
 

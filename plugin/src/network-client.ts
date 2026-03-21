@@ -18,6 +18,8 @@ import {
   type TaskResultsResponse,
   type BalanceResponse,
   type DepositResponse,
+  type ClusterStatus,
+  type HealthResponse,
 } from "./models.js";
 import { getState, getServerId } from "./state.js";
 
@@ -69,6 +71,79 @@ async function request<T>(
   }
 
   return (await res.json()) as T;
+}
+
+// ---------------------------------------------------------------------------
+// Health / Cluster (2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Probe a network endpoint for health. Uses a short timeout so it can be
+ * used for fast fail-over. If `endpoint` is omitted, probes the current
+ * configured endpoint.
+ */
+export async function checkHealth(endpoint?: string): Promise<HealthResponse> {
+  const url = `${endpoint ?? baseUrl()}/health`;
+  const res = await fetch(url, {
+    method: "GET",
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!res.ok) {
+    throw new Error(`GET /health → ${res.status}`);
+  }
+  return (await res.json()) as HealthResponse;
+}
+
+/**
+ * Get cluster topology: members, seed nodes, online count.
+ */
+export async function getClusterStatus(endpoint?: string): Promise<ClusterStatus> {
+  const url = `${endpoint ?? baseUrl()}/api/cluster/status`;
+  const res = await fetch(url, {
+    method: "GET",
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!res.ok) {
+    throw new Error(`GET /api/cluster/status → ${res.status}`);
+  }
+  return (await res.json()) as ClusterStatus;
+}
+
+/**
+ * Try to find a healthy endpoint. Probes the primary endpoint first, then
+ * falls back to seed nodes discovered from cluster status.
+ * Returns the first reachable endpoint URL.
+ */
+export async function findHealthyEndpoint(primary: string, seeds?: string[]): Promise<string> {
+  // Try primary first
+  try {
+    await checkHealth(primary);
+    return primary;
+  } catch { /* primary down, try seeds */ }
+
+  // Try known seeds
+  const candidates = seeds ?? [];
+  for (const seed of candidates) {
+    if (seed === primary) continue;
+    try {
+      await checkHealth(seed);
+      return seed;
+    } catch { /* try next */ }
+  }
+
+  // Last resort: try to get cluster info from primary (may have partial connectivity)
+  try {
+    const cluster = await getClusterStatus(primary);
+    for (const member of cluster.members) {
+      if (member.endpoint === primary || member.status !== "online") continue;
+      try {
+        await checkHealth(member.endpoint);
+        return member.endpoint;
+      } catch { /* try next */ }
+    }
+  } catch { /* no cluster info available */ }
+
+  throw new Error(`No healthy endpoint found. Tried: ${primary}${candidates.length ? `, ${candidates.join(", ")}` : ""}`);
 }
 
 // ---------------------------------------------------------------------------

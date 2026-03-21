@@ -67,19 +67,71 @@ function stopHeartbeat(): void {
 const server = new McpServer({ name: "eacn3", version: "0.1.0" });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Health / Cluster (2)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// #0a eacn_health
+server.tool(
+  "eacn_health",
+  "Probe network node health. Works before eacn_connect — use to verify a node is reachable.",
+  {
+    endpoint: z.string().optional().describe("Node URL to probe. Defaults to configured network endpoint."),
+  },
+  async (params) => {
+    const target = params.endpoint ?? state.getState().network_endpoint;
+    try {
+      const health = await net.checkHealth(target);
+      return ok({ endpoint: target, ...health });
+    } catch (e) {
+      return err(`Health check failed for ${target}: ${(e as Error).message}`);
+    }
+  },
+);
+
+// #0b eacn_cluster_status
+server.tool(
+  "eacn_cluster_status",
+  "Get cluster topology: all member nodes, their status, and seed node list.",
+  {
+    endpoint: z.string().optional().describe("Node URL to query. Defaults to configured network endpoint."),
+  },
+  async (params) => {
+    const target = params.endpoint ?? state.getState().network_endpoint;
+    try {
+      const cluster = await net.getClusterStatus(target);
+      return ok(cluster);
+    } catch (e) {
+      return err(`Cluster status failed for ${target}: ${(e as Error).message}`);
+    }
+  },
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Server Management (4)
 // ═══════════════════════════════════════════════════════════════════════════
 
 // #1 eacn_connect
 server.tool(
   "eacn_connect",
-  "Connect to EACN network. Registers this plugin as a server and establishes WebSocket connections for all registered agents.",
+  "Connect to EACN network. Health-checks the endpoint first; if unreachable, falls back to other seed nodes.",
   {
     network_endpoint: z.string().optional().describe(`Network URL. Defaults to ${EACN_DEFAULT_NETWORK_ENDPOINT}`),
+    seed_nodes: z.array(z.string()).optional().describe("Additional seed node URLs for fallback"),
   },
   async (params) => {
-    const endpoint = params.network_endpoint ?? EACN_DEFAULT_NETWORK_ENDPOINT;
+    const preferred = params.network_endpoint ?? EACN_DEFAULT_NETWORK_ENDPOINT;
     const s = state.getState();
+
+    // Health probe + fallback
+    let endpoint: string;
+    let fallback = false;
+    try {
+      endpoint = await net.findHealthyEndpoint(preferred, params.seed_nodes);
+      fallback = endpoint !== preferred;
+    } catch (e) {
+      return err(`Cannot reach any network node: ${(e as Error).message}`);
+    }
+
     s.network_endpoint = endpoint;
 
     // Register as server
@@ -105,6 +157,7 @@ server.tool(
       connected: true,
       server_id: res.server_id,
       network_endpoint: endpoint,
+      fallback,
       agents_online: Object.keys(s.agents).length,
     });
   },
