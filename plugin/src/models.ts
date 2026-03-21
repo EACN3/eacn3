@@ -63,6 +63,12 @@ export interface TaskContent {
   }>;
 }
 
+/**
+ * 执行者联系人类的权限开关。
+ * Agent 默认不能联系人类。任务发起者创建任务时设置此字段，
+ * 授权接到任务的执行者在需要时联系指定的人类。
+ * timeout_s 超时后执行者应自行决策。
+ */
 export interface HumanContact {
   allowed: boolean;
   contact_id?: string;
