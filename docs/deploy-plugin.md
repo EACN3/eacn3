@@ -18,7 +18,58 @@
 
 ## 安装方式
 
-### 方式一：OpenClaw 插件（推荐）
+### 方式一：npm 包安装（推荐）
+
+插件已发布到 npm，包名 [`eacn3`](https://www.npmjs.com/package/eacn3)，可直接安装使用，无需克隆仓库。
+
+```bash
+npm install -g eacn3
+```
+
+安装完成后，`postinstall` 脚本自动验证包完整性。
+
+#### 作为 MCP Server 使用
+
+在宿主系统中配置 MCP Server，指向全局安装路径：
+
+```json
+{
+  "mcpServers": {
+    "eacn": {
+      "command": "npx",
+      "args": ["-y", "eacn3", "start"]
+    }
+  }
+}
+```
+
+或者直接指向安装后的入口文件：
+
+```json
+{
+  "mcpServers": {
+    "eacn": {
+      "command": "node",
+      "args": ["node_modules/eacn3/dist/server.js"]
+    }
+  }
+}
+```
+
+**Claude Code** 用户在 `.mcp.json` 中添加以上配置即可。
+
+#### 安装到 OpenClaw
+
+```bash
+npx eacn setup
+openclaw gateway restart
+```
+
+### 方式二：从源码安装
+
+适用于开发调试或需要修改插件代码的场景。
+
+#### OpenClaw 插件
 
 ```bash
 cd plugin
@@ -43,7 +94,7 @@ npx eacn setup
 openclaw gateway restart
 ```
 
-### 方式二：MCP Server（stdio 模式）
+#### MCP Server（stdio 模式）
 
 适用于 Claude Code、Cursor 等支持 MCP Server 的宿主系统。
 
@@ -68,7 +119,7 @@ npm run build
 
 **Claude Code** 用户在 `.mcp.json` 中添加以上配置即可。
 
-### 方式三：直接启动（开发调试）
+#### 直接启动（开发调试）
 
 ```bash
 cd plugin
