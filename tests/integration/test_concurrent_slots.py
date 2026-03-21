@@ -5,7 +5,7 @@ import pytest
 
 async def _setup(mcp, funded_network, max_concurrent=1):
     """Create task with specific max_concurrent_bidders. Returns task_id."""
-    await mcp.call_tool_parsed("eacn_register_agent", {
+    await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "Slot Init",
         "description": "test",
         "domains": ["coding"],
@@ -18,7 +18,7 @@ async def _setup(mcp, funded_network, max_concurrent=1):
 
     # Register multiple executors
     for i in range(3):
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": f"Slot Worker {i}",
             "description": "test",
             "domains": ["coding"],
@@ -27,7 +27,7 @@ async def _setup(mcp, funded_network, max_concurrent=1):
         })
         funded_network.reputation._scores[f"slot-w{i}"] = 0.8
 
-    task = await mcp.call_tool_parsed("eacn_create_task", {
+    task = await mcp.call_tool_parsed("eacn3_create_task", {
         "description": "Slot test",
         "budget": 500.0,
         "domains": ["coding"],
@@ -43,7 +43,7 @@ class TestWaitingQueue:
         """With max_concurrent=1, second bid gets WAITING status."""
         task_id = await _setup(mcp, funded_network, max_concurrent=1)
 
-        bid1 = await mcp.call_tool_parsed("eacn_submit_bid", {
+        bid1 = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "slot-w0",
             "confidence": 0.9,
@@ -51,7 +51,7 @@ class TestWaitingQueue:
         })
         assert bid1["status"] == "executing"
 
-        bid2 = await mcp.call_tool_parsed("eacn_submit_bid", {
+        bid2 = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "slot-w1",
             "confidence": 0.85,
@@ -72,7 +72,7 @@ class TestWaitingQueue:
         """budget_locked becomes True when all concurrent slots are filled."""
         task_id = await _setup(mcp, funded_network, max_concurrent=1)
 
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "slot-w0",
             "confidence": 0.9,
@@ -87,7 +87,7 @@ class TestWaitingQueue:
         """When executing agent rejects, next waiting agent gets promoted."""
         task_id = await _setup(mcp, funded_network, max_concurrent=1)
 
-        bid1 = await mcp.call_tool_parsed("eacn_submit_bid", {
+        bid1 = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "slot-w0",
             "confidence": 0.9,
@@ -95,7 +95,7 @@ class TestWaitingQueue:
         })
         assert bid1["status"] == "executing"
 
-        bid2 = await mcp.call_tool_parsed("eacn_submit_bid", {
+        bid2 = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "slot-w1",
             "confidence": 0.85,
@@ -104,7 +104,7 @@ class TestWaitingQueue:
         assert bid2["status"] == "waiting"
 
         # slot-w0 rejects → slot-w1 should be promoted
-        reject = await mcp.call_tool_parsed("eacn_reject_task", {
+        reject = await mcp.call_tool_parsed("eacn3_reject_task", {
             "task_id": task_id,
             "agent_id": "slot-w0",
         })
@@ -127,7 +127,7 @@ class TestAutoCollect:
 
         # Two agents bid and get slots
         for i in range(2):
-            bid = await mcp.call_tool_parsed("eacn_submit_bid", {
+            bid = await mcp.call_tool_parsed("eacn3_submit_bid", {
                 "task_id": task_id,
                 "agent_id": f"slot-w{i}",
                 "confidence": 0.9,
@@ -137,7 +137,7 @@ class TestAutoCollect:
 
         # Both submit results
         for i in range(2):
-            result = await mcp.call_tool_parsed("eacn_submit_result", {
+            result = await mcp.call_tool_parsed("eacn3_submit_result", {
                 "task_id": task_id,
                 "agent_id": f"slot-w{i}",
                 "content": {"answer": f"result-{i}"},
@@ -149,7 +149,7 @@ class TestAutoCollect:
         assert resp.json()["status"] == "awaiting_retrieval"
 
         # Initiator can collect without closing
-        collected = await mcp.call_tool_parsed("eacn_get_task_results", {
+        collected = await mcp.call_tool_parsed("eacn3_get_task_results", {
             "task_id": task_id,
             "initiator_id": "slot-init",
         })
@@ -161,7 +161,7 @@ class TestAutoCollect:
         task_id = await _setup(mcp, funded_network, max_concurrent=2)
 
         for i in range(2):
-            await mcp.call_tool_parsed("eacn_submit_bid", {
+            await mcp.call_tool_parsed("eacn3_submit_bid", {
                 "task_id": task_id,
                 "agent_id": f"slot-w{i}",
                 "confidence": 0.9,
@@ -169,7 +169,7 @@ class TestAutoCollect:
             })
 
         # Only first submits
-        await mcp.call_tool_parsed("eacn_submit_result", {
+        await mcp.call_tool_parsed("eacn3_submit_result", {
             "task_id": task_id,
             "agent_id": "slot-w0",
             "content": {"answer": "partial"},

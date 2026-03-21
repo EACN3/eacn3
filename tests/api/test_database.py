@@ -5,7 +5,7 @@ The Database class IS an external interface — it's the persistence contract.
 
 import pytest
 
-from eacn.network.db import Database
+from eacn3.network.db import Database
 
 @pytest.fixture
 async def db():

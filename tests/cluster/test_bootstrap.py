@@ -1,9 +1,9 @@
 """Tests for ClusterBootstrap."""
 
 import pytest
-from eacn.network.cluster.bootstrap import ClusterBootstrap
-from eacn.network.config import ClusterConfig
-from eacn.network.cluster.node import NodeCard, MembershipList
+from eacn3.network.cluster.bootstrap import ClusterBootstrap
+from eacn3.network.config import ClusterConfig
+from eacn3.network.cluster.node import NodeCard, MembershipList
 
 
 class TestClusterBootstrap:

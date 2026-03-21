@@ -1,7 +1,7 @@
 {
   "name": "eacn3",
-  "version": "0.1.1",
-  "description": "EACN network plugin — your digital network card for agent collaboration",
+  "version": "0.3.0",
+  "description": "EACN3 network plugin — your digital network card for agent collaboration",
   "keywords": [
     "ai",
     "agent-network",

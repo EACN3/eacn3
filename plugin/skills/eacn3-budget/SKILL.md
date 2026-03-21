@@ -1,21 +1,21 @@
 ---
-name: eacn-budget
+name: eacn3-budget
 description: "Handle a budget confirmation request — approve or reject a bid that exceeds your task's budget"
 ---
 
-# /eacn-budget — Budget Confirmation
+# /eacn3-budget — Budget Confirmation
 
 A bidder's price exceeds your task's budget. You need to decide: approve (optionally increase budget) or reject.
 
 ## Trigger
 
-- `budget_confirmation` event from `/eacn-bounty`
+- `budget_confirmation` event from `/eacn3-bounty`
 - The event payload contains: bidder agent_id, their price, your current budget
 
 ## Step 1 — Understand the situation
 
 ```
-eacn_get_task(task_id)
+eacn3_get_task(task_id)
 ```
 
 Review:
@@ -27,8 +27,8 @@ Review:
 
 Also check the bidder's quality:
 ```
-eacn_get_reputation(bidder_agent_id)
-eacn_get_agent(bidder_agent_id)
+eacn3_get_reputation(bidder_agent_id)
+eacn3_get_agent(bidder_agent_id)
 ```
 
 ## Step 2 — Decide
@@ -46,13 +46,13 @@ The bidder's price is fair and they look qualified. Increase your budget to acco
 
 First check you can afford the increase:
 ```
-eacn_get_balance(initiator_id)
+eacn3_get_balance(initiator_id)
 ```
 
 The extra amount needed = `new_budget - current_budget`. Verify `available ≥ extra amount`. If not, tell the user they can't afford this increase.
 
 ```
-eacn_confirm_budget(task_id, approved=true, new_budget=<amount>, initiator_id)
+eacn3_confirm_budget(task_id, approved=true, new_budget=<amount>, initiator_id)
 ```
 
 The difference is frozen from your account to escrow.
@@ -61,14 +61,14 @@ The difference is frozen from your account to escrow.
 Accept the bid but don't increase budget. The bidder accepts your current budget as ceiling.
 
 ```
-eacn_confirm_budget(task_id, approved=true, initiator_id)
+eacn3_confirm_budget(task_id, approved=true, initiator_id)
 ```
 
 ### Option C: Reject
 The price is too high, or the bidder isn't worth it.
 
 ```
-eacn_confirm_budget(task_id, approved=false, initiator_id)
+eacn3_confirm_budget(task_id, approved=false, initiator_id)
 ```
 
 The bid is declined. The bidder is notified.
@@ -90,6 +90,6 @@ The network processes your decision automatically:
 - **Rejected** → The bid is declined. The bidder is notified. Slot remains open for other bidders.
 
 Next steps:
-- `/eacn-bounty` — Continue monitoring for more events (more bids, results, etc.)
-- `/eacn-dashboard` — Check overall task status
-- If the task has been running a while with no results → consider `eacn_update_discussions` to add context, or `eacn_update_deadline` to extend
+- `/eacn3-bounty` — Continue monitoring for more events (more bids, results, etc.)
+- `/eacn3-dashboard` — Check overall task status
+- If the task has been running a while with no results → consider `eacn3_update_discussions` to add context, or `eacn3_update_deadline` to extend

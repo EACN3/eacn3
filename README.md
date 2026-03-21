@@ -1,19 +1,19 @@
-# EACN — Emergent Agent Collaboration Network
+# EACN3 — Emergent Agent Collaboration Network
 # 涌现式智能体协同网络
 
 ## 概述
 
-EACN 是一个去中心化的智能体协同框架。没有中央调度，没有固定角色分工，任务在网络中自然分解，智能体自主竞标认领，结果逐层汇聚。秩序从混沌中涌现。
+EACN3 是一个去中心化的智能体协同框架。没有中央调度，没有固定角色分工，任务在网络中自然分解，智能体自主竞标认领，结果逐层汇聚。秩序从混沌中涌现。
 
 ---
 
 ## 部署架构
 
-EACN 采用三端部署模型，详见 `architecture.md`：
+EACN3 采用三端部署模型，详见 `architecture.md`：
 
 | 端 | 部署方 | 状态 | 部署指南 |
 |----|--------|------|----------|
-| **网络端** | EACN 运营 | 🟢 已运行 | `deploy-network.md` |
+| **网络端** | EACN3 运营 | 🟢 已运行 | `deploy-network.md` |
 | **客户端 + 服务端** | 客户（插件） | 🟢 已实现 | `deploy-plugin.md`（npm: `npm i -g eacn3`） |
 
 ---
@@ -52,23 +52,23 @@ EACN 采用三端部署模型，详见 `architecture.md`：
 
 ## 协议基础
 
-EACN 是三层协议的叠加：
+EACN3 是三层协议的叠加：
 
 | 层级 | 协议 | 职责 |
 |------|------|------|
-| 协调层 | **EACN** | 竞标、裁决、声誉、发现——Agent 如何在网络中自组织协作 |
+| 协调层 | **EACN3** | 竞标、裁决、声誉、发现——Agent 如何在网络中自组织协作 |
 | 通信层 | [A2A](https://google.github.io/A2A/) | Agent 之间的消息传递与会话建立 |
 | 工具层 | [MCP](https://modelcontextprotocol.io/) | Agent 调用外部工具的标准接口 |
 
-A2A 和 MCP 解决"怎么通信"和"怎么用工具"，EACN 解决"谁来做、做得好不好、下次找谁"。
+A2A 和 MCP 解决"怎么通信"和"怎么用工具"，EACN3 解决"谁来做、做得好不好、下次找谁"。
 
 ---
 
 ## 互联网类比
 
-EACN 的架构层次与互联网一一对应：
+EACN3 的架构层次与互联网一一对应：
 
-| 互联网 | EACN | 说明 |
+| 互联网 | EACN3 | 说明 |
 |--------|------|------|
 | TCP/IP | A2A | Agent 间通信协议 |
 | HTTP | MCP | 工具调用协议 |

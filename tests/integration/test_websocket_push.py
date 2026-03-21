@@ -13,7 +13,7 @@ class TestWebSocketPush:
     async def test_task_broadcast_event(self, mcp, http, funded_network):
         """Register agent → create task (via HTTP) → plugin receives task_broadcast."""
         # Register an agent in the "coding" domain via plugin
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "WS Listener",
             "description": "listens for broadcasts",
             "domains": ["coding"],
@@ -39,7 +39,7 @@ class TestWebSocketPush:
         await asyncio.sleep(1.0)
 
         # Drain events from plugin
-        result = await mcp.call_tool_parsed("eacn_get_events")
+        result = await mcp.call_tool_parsed("eacn3_get_events")
         events = result.get("events", [])
         event_types = [e.get("type") for e in events]
         assert "task_broadcast" in event_types, (
@@ -50,7 +50,7 @@ class TestWebSocketPush:
     async def test_discussions_updated_event(self, mcp, http, funded_network):
         """Executor receives discussions_updated when initiator adds a message."""
         # Register executor
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Disc Listener",
             "description": "test",
             "domains": ["coding"],
@@ -82,7 +82,7 @@ class TestWebSocketPush:
 
         # Drain events so far (clear task_broadcast)
         await asyncio.sleep(0.5)
-        await mcp.call_tool_parsed("eacn_get_events")
+        await mcp.call_tool_parsed("eacn3_get_events")
 
         # Initiator adds discussion
         resp = await http.post("/api/tasks/disc-task/discussions", json={
@@ -94,7 +94,7 @@ class TestWebSocketPush:
         # Wait for push
         await asyncio.sleep(1.0)
 
-        result = await mcp.call_tool_parsed("eacn_get_events")
+        result = await mcp.call_tool_parsed("eacn3_get_events")
         events = result.get("events", [])
         event_types = [e.get("type") for e in events]
         assert "discussions_updated" in event_types or "discussion_update" in event_types, (

@@ -1,12 +1,12 @@
 """Tests for ClusterDiscovery (three-layer orchestration)."""
 
 import pytest
-from eacn.network.cluster.discovery import ClusterDiscovery
-from eacn.network.cluster.bootstrap import ClusterBootstrap
-from eacn.network.cluster.dht import ClusterDHT
-from eacn.network.cluster.gossip import ClusterGossip
-from eacn.network.config import ClusterConfig
-from eacn.network.cluster.node import NodeCard, MembershipList
+from eacn3.network.cluster.discovery import ClusterDiscovery
+from eacn3.network.cluster.bootstrap import ClusterBootstrap
+from eacn3.network.cluster.dht import ClusterDHT
+from eacn3.network.cluster.gossip import ClusterGossip
+from eacn3.network.config import ClusterConfig
+from eacn3.network.cluster.node import NodeCard, MembershipList
 
 
 @pytest.fixture

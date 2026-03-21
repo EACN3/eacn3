@@ -9,7 +9,7 @@ class TestUpdateAgent:
     @pytest.mark.asyncio
     async def test_update_agent_name(self, mcp, http):
         """Update agent name via plugin, verify on network."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Original Name",
             "description": "test",
             "domains": ["coding"],
@@ -17,7 +17,7 @@ class TestUpdateAgent:
             "agent_id": "upd-name",
         })
 
-        result = await mcp.call_tool_parsed("eacn_update_agent", {
+        result = await mcp.call_tool_parsed("eacn3_update_agent", {
             "agent_id": "upd-name",
             "name": "Updated Name",
         })
@@ -34,7 +34,7 @@ class TestUpdateAgent:
     @pytest.mark.asyncio
     async def test_update_agent_domains(self, mcp, http):
         """Updating domains re-announces to DHT — old domain gone, new discoverable."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Domain Swap",
             "description": "test",
             "domains": ["alpha"],
@@ -43,22 +43,22 @@ class TestUpdateAgent:
         })
 
         # Should be discoverable in "alpha"
-        disc = await mcp.call_tool_parsed("eacn_discover_agents", {"domain": "alpha"})
+        disc = await mcp.call_tool_parsed("eacn3_discover_agents", {"domain": "alpha"})
         assert "domain-swap" in disc["agent_ids"]
 
         # Update domains to "beta"
-        result = await mcp.call_tool_parsed("eacn_update_agent", {
+        result = await mcp.call_tool_parsed("eacn3_update_agent", {
             "agent_id": "domain-swap",
             "domains": ["beta"],
         })
         assert result["updated"] is True
 
         # Verify REMOVED from "alpha" DHT
-        disc = await mcp.call_tool_parsed("eacn_discover_agents", {"domain": "alpha"})
+        disc = await mcp.call_tool_parsed("eacn3_discover_agents", {"domain": "alpha"})
         assert "domain-swap" not in disc["agent_ids"]
 
         # Verify ADDED to "beta" DHT
-        disc = await mcp.call_tool_parsed("eacn_discover_agents", {"domain": "beta"})
+        disc = await mcp.call_tool_parsed("eacn3_discover_agents", {"domain": "beta"})
         assert "domain-swap" in disc["agent_ids"]
 
         # Verify network card updated
@@ -68,7 +68,7 @@ class TestUpdateAgent:
     @pytest.mark.asyncio
     async def test_update_agent_skills(self, mcp, http):
         """Update agent skills, verify old replaced and new present on network."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Skill Update",
             "description": "test",
             "domains": ["coding"],
@@ -76,7 +76,7 @@ class TestUpdateAgent:
             "agent_id": "skill-upd",
         })
 
-        result = await mcp.call_tool_parsed("eacn_update_agent", {
+        result = await mcp.call_tool_parsed("eacn3_update_agent", {
             "agent_id": "skill-upd",
             "skills": [
                 {"name": "new-skill-1", "description": "new 1"},
@@ -95,7 +95,7 @@ class TestUnregisterAgent:
     @pytest.mark.asyncio
     async def test_unregister_removes_from_network(self, mcp, http):
         """Unregistered agent should return 404 on network."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "To Remove",
             "description": "test",
             "domains": ["coding"],
@@ -105,7 +105,7 @@ class TestUnregisterAgent:
         resp = await http.get("/api/discovery/agents/to-remove")
         assert resp.status_code == 200
 
-        result = await mcp.call_tool_parsed("eacn_unregister_agent", {
+        result = await mcp.call_tool_parsed("eacn3_unregister_agent", {
             "agent_id": "to-remove",
         })
         assert result["unregistered"] is True
@@ -119,19 +119,19 @@ class TestUnregisterAgent:
     @pytest.mark.asyncio
     async def test_unregister_removes_from_dht(self, mcp):
         """Unregistered agent disappears from domain discovery."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Discoverable",
             "description": "test",
             "domains": ["unreg-domain"],
             "skills": [{"name": "s", "description": "s"}],
             "agent_id": "unreg-disc",
         })
-        disc = await mcp.call_tool_parsed("eacn_discover_agents", {"domain": "unreg-domain"})
+        disc = await mcp.call_tool_parsed("eacn3_discover_agents", {"domain": "unreg-domain"})
         assert "unreg-disc" in disc["agent_ids"]
 
-        await mcp.call_tool_parsed("eacn_unregister_agent", {"agent_id": "unreg-disc"})
+        await mcp.call_tool_parsed("eacn3_unregister_agent", {"agent_id": "unreg-disc"})
 
-        disc = await mcp.call_tool_parsed("eacn_discover_agents", {"domain": "unreg-domain"})
+        disc = await mcp.call_tool_parsed("eacn3_discover_agents", {"domain": "unreg-domain"})
         assert "unreg-disc" not in disc["agent_ids"]
 
 
@@ -139,7 +139,7 @@ class TestDiscoverAgents:
     @pytest.mark.asyncio
     async def test_discover_empty_domain(self, mcp):
         """Discovering in a domain with no agents returns empty list."""
-        disc = await mcp.call_tool_parsed("eacn_discover_agents", {
+        disc = await mcp.call_tool_parsed("eacn3_discover_agents", {
             "domain": "nonexistent-domain-xyz",
         })
         assert disc["domain"] == "nonexistent-domain-xyz"
@@ -149,7 +149,7 @@ class TestDiscoverAgents:
     async def test_discover_multiple_agents(self, mcp):
         """Multiple agents in same domain all appear in discovery."""
         for i in range(3):
-            await mcp.call_tool_parsed("eacn_register_agent", {
+            await mcp.call_tool_parsed("eacn3_register_agent", {
                 "name": f"Multi Agent {i}",
                 "description": "test",
                 "domains": ["multi-domain"],
@@ -157,7 +157,7 @@ class TestDiscoverAgents:
                 "agent_id": f"multi-{i}",
             })
 
-        disc = await mcp.call_tool_parsed("eacn_discover_agents", {"domain": "multi-domain"})
+        disc = await mcp.call_tool_parsed("eacn3_discover_agents", {"domain": "multi-domain"})
         assert disc["domain"] == "multi-domain"
         assert len(disc["agent_ids"]) >= 3
         for i in range(3):
@@ -168,7 +168,7 @@ class TestListAgents:
     @pytest.mark.asyncio
     async def test_list_my_agents(self, mcp):
         """list_my_agents returns exact agent cards under this server."""
-        reg = await mcp.call_tool_parsed("eacn_register_agent", {
+        reg = await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "My Agent",
             "description": "test",
             "domains": ["coding"],
@@ -177,7 +177,7 @@ class TestListAgents:
         })
         assert reg["registered"] is True
 
-        result = await mcp.call_tool_parsed("eacn_list_my_agents")
+        result = await mcp.call_tool_parsed("eacn3_list_my_agents")
         assert result["count"] >= 1
         agent_ids = [a["agent_id"] for a in result["agents"]]
         assert "list-mine" in agent_ids
@@ -187,15 +187,15 @@ class TestListAgents:
 
     @pytest.mark.asyncio
     async def test_get_agent_full_card(self, mcp):
-        """eacn_get_agent returns complete AgentCard with all fields."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        """eacn3_get_agent returns complete AgentCard with all fields."""
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Get Me",
             "description": "a description",
             "domains": ["coding"],
             "skills": [{"name": "code", "description": "writes code"}],
             "agent_id": "get-me",
         })
-        result = await mcp.call_tool_parsed("eacn_get_agent", {"agent_id": "get-me"})
+        result = await mcp.call_tool_parsed("eacn3_get_agent", {"agent_id": "get-me"})
         assert result["agent_id"] == "get-me"
         assert result["name"] == "Get Me"
         assert result["description"] == "a description"
@@ -206,7 +206,7 @@ class TestListAgents:
     @pytest.mark.asyncio
     async def test_get_nonexistent_agent_returns_error(self, mcp):
         """Getting a non-existent agent returns error."""
-        result = await mcp.call_tool_parsed("eacn_get_agent", {
+        result = await mcp.call_tool_parsed("eacn3_get_agent", {
             "agent_id": "does-not-exist",
         })
         assert is_error(result), f"Expected error, got: {result}"

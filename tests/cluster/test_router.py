@@ -1,7 +1,7 @@
 """Tests for ClusterRouter."""
 
 import pytest
-from eacn.network.cluster.router import ClusterRouter
+from eacn3.network.cluster.router import ClusterRouter
 
 
 class TestRouting:

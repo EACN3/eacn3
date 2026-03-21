@@ -1,8 +1,8 @@
 """Tests for ClusterGossip."""
 
 import pytest
-from eacn.network.cluster.gossip import ClusterGossip
-from eacn.network.cluster.node import NodeCard, MembershipList
+from eacn3.network.cluster.gossip import ClusterGossip
+from eacn3.network.cluster.node import NodeCard, MembershipList
 
 
 class TestExchange:

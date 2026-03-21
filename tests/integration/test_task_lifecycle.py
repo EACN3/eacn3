@@ -9,7 +9,7 @@ import pytest
 async def _register_two_agents(mcp, funded_network):
     """Helper: register an initiator agent and an executor agent."""
     # Initiator
-    await mcp.call_tool_parsed("eacn_register_agent", {
+    await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "Initiator",
         "description": "发起任务的 Agent",
         "domains": ["coding"],
@@ -18,7 +18,7 @@ async def _register_two_agents(mcp, funded_network):
         "agent_type": "planner",
     })
     # Executor
-    await mcp.call_tool_parsed("eacn_register_agent", {
+    await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "Executor",
         "description": "执行任务的 Agent",
         "domains": ["coding"],
@@ -40,7 +40,7 @@ class TestTaskLifecycle:
         funded_network.escrow.get_or_create_account("initiator", 5000.0)
 
         # 1. Create task
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Write a hello world program",
             "budget": 100.0,
             "domains": ["coding"],
@@ -55,7 +55,7 @@ class TestTaskLifecycle:
         assert resp.json()["status"] in ("unclaimed", "bidding")
 
         # 3. Executor bids
-        bid_result = await mcp.call_tool_parsed("eacn_submit_bid", {
+        bid_result = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "executor",
             "confidence": 0.9,
@@ -64,27 +64,27 @@ class TestTaskLifecycle:
         assert bid_result["status"] in ("accepted", "executing")
 
         # 4. Executor submits result
-        await mcp.call_tool_parsed("eacn_submit_result", {
+        await mcp.call_tool_parsed("eacn3_submit_result", {
             "task_id": task_id,
             "agent_id": "executor",
             "content": {"code": "print('hello world')"},
         })
 
         # 5. Close task
-        await mcp.call_tool_parsed("eacn_close_task", {
+        await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id,
             "initiator_id": "initiator",
         })
 
         # 6. Collect results
-        results = await mcp.call_tool_parsed("eacn_get_task_results", {
+        results = await mcp.call_tool_parsed("eacn3_get_task_results", {
             "task_id": task_id,
             "initiator_id": "initiator",
         })
         assert len(results["results"]) >= 1
 
         # 7. Select result
-        await mcp.call_tool_parsed("eacn_select_result", {
+        await mcp.call_tool_parsed("eacn3_select_result", {
             "task_id": task_id,
             "agent_id": "executor",
             "initiator_id": "initiator",
@@ -99,7 +99,7 @@ class TestTaskLifecycle:
     @pytest.mark.asyncio
     async def test_human_contact_passthrough(self, mcp, http, funded_network):
         """human_contact set at creation should be visible in task response."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "HC-Test",
             "description": "test",
             "domains": ["coding"],
@@ -109,7 +109,7 @@ class TestTaskLifecycle:
         funded_network.escrow.get_or_create_account("hc-init", 5000.0)
         funded_network.reputation._scores["hc-init"] = 0.8
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Task with human contact",
             "budget": 50.0,
             "domains": ["coding"],
@@ -138,7 +138,7 @@ class TestTaskLifecycle:
         funded_network.escrow.get_or_create_account("initiator", 5000.0)
 
         # Create parent
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Big project",
             "budget": 500.0,
             "domains": ["coding"],
@@ -147,7 +147,7 @@ class TestTaskLifecycle:
         parent_id = task["task_id"]
 
         # Executor bids on parent
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": parent_id,
             "agent_id": "executor",
             "confidence": 0.9,
@@ -155,7 +155,7 @@ class TestTaskLifecycle:
         })
 
         # Executor creates subtask
-        sub = await mcp.call_tool_parsed("eacn_create_subtask", {
+        sub = await mcp.call_tool_parsed("eacn3_create_subtask", {
             "parent_task_id": parent_id,
             "description": "Sub work",
             "budget": 100.0,

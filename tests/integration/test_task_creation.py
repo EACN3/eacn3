@@ -7,7 +7,7 @@ from tests.integration.conftest import is_error
 
 async def _setup_agent(mcp, funded_network, agent_id="tc-init", balance=10000.0):
     """Register agent and fund account."""
-    await mcp.call_tool_parsed("eacn_register_agent", {
+    await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "TC Agent",
         "description": "test",
         "domains": ["coding", "design"],
@@ -21,10 +21,10 @@ async def _setup_agent(mcp, funded_network, agent_id="tc-init", balance=10000.0)
 class TestTaskCreationOptions:
     @pytest.mark.asyncio
     async def test_create_task_returns_correct_shape(self, mcp, funded_network):
-        """eacn_create_task returns {task_id, status, budget, local_matches}."""
+        """eacn3_create_task returns {task_id, status, budget, local_matches}."""
         await _setup_agent(mcp, funded_network)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Shape test",
             "budget": 100.0,
             "domains": ["coding"],
@@ -40,7 +40,7 @@ class TestTaskCreationOptions:
         """max_concurrent_bidders persisted exactly on network."""
         await _setup_agent(mcp, funded_network)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Concurrent test",
             "budget": 100.0,
             "domains": ["coding"],
@@ -57,7 +57,7 @@ class TestTaskCreationOptions:
         """Task with multiple domains stores them all."""
         await _setup_agent(mcp, funded_network)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Multi-domain task",
             "budget": 200.0,
             "domains": ["coding", "design"],
@@ -75,7 +75,7 @@ class TestTaskCreationOptions:
         """human_contact field persisted with exact values."""
         await _setup_agent(mcp, funded_network)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Human contact task",
             "budget": 50.0,
             "domains": ["coding"],
@@ -100,7 +100,7 @@ class TestTaskCreationOptions:
         """human_contact with allowed=False persisted."""
         await _setup_agent(mcp, funded_network)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "No human contact",
             "budget": 50.0,
             "domains": ["coding"],
@@ -118,11 +118,11 @@ class TestTaskCreationOptions:
 class TestSubtaskCreation:
     @pytest.mark.asyncio
     async def test_subtask_returns_correct_shape(self, mcp, funded_network):
-        """eacn_create_subtask returns {subtask_id, parent_task_id, status, depth}."""
+        """eacn3_create_subtask returns {subtask_id, parent_task_id, status, depth}."""
         await _setup_agent(mcp, funded_network)
         await _setup_agent(mcp, funded_network, agent_id="sub-worker")
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Parent",
             "budget": 500.0,
             "domains": ["coding"],
@@ -130,12 +130,12 @@ class TestSubtaskCreation:
         })
         parent_id = task["task_id"]
 
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": parent_id, "agent_id": "sub-worker",
             "confidence": 0.9, "price": 400.0,
         })
 
-        sub = await mcp.call_tool_parsed("eacn_create_subtask", {
+        sub = await mcp.call_tool_parsed("eacn3_create_subtask", {
             "parent_task_id": parent_id,
             "description": "Child",
             "budget": 100.0,
@@ -153,7 +153,7 @@ class TestSubtaskCreation:
         await _setup_agent(mcp, funded_network)
         await _setup_agent(mcp, funded_network, agent_id="depth-worker")
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Depth parent",
             "budget": 500.0,
             "domains": ["coding"],
@@ -161,12 +161,12 @@ class TestSubtaskCreation:
         })
         parent_id = task["task_id"]
 
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": parent_id, "agent_id": "depth-worker",
             "confidence": 0.9, "price": 400.0,
         })
 
-        sub = await mcp.call_tool_parsed("eacn_create_subtask", {
+        sub = await mcp.call_tool_parsed("eacn3_create_subtask", {
             "parent_task_id": parent_id,
             "description": "Depth child",
             "budget": 100.0,
@@ -192,7 +192,7 @@ class TestSubtaskCreation:
         await _setup_agent(mcp, funded_network)
         await _setup_agent(mcp, funded_network, agent_id="over-sub")
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Small parent",
             "budget": 100.0,
             "domains": ["coding"],
@@ -200,12 +200,12 @@ class TestSubtaskCreation:
         })
         parent_id = task["task_id"]
 
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": parent_id, "agent_id": "over-sub",
             "confidence": 0.9, "price": 80.0,
         })
 
-        sub = await mcp.call_tool_parsed("eacn_create_subtask", {
+        sub = await mcp.call_tool_parsed("eacn3_create_subtask", {
             "parent_task_id": parent_id,
             "description": "Over-budget subtask",
             "budget": 9999.0,
@@ -220,7 +220,7 @@ class TestSubtaskCreation:
         await _setup_agent(mcp, funded_network)
         await _setup_agent(mcp, funded_network, agent_id="budget-sub")
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Budget track parent",
             "budget": 500.0,
             "domains": ["coding"],
@@ -228,13 +228,13 @@ class TestSubtaskCreation:
         })
         parent_id = task["task_id"]
 
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": parent_id, "agent_id": "budget-sub",
             "confidence": 0.9, "price": 400.0,
         })
 
         # Create subtask with 150 budget
-        await mcp.call_tool_parsed("eacn_create_subtask", {
+        await mcp.call_tool_parsed("eacn3_create_subtask", {
             "parent_task_id": parent_id,
             "description": "First child",
             "budget": 150.0,
@@ -247,7 +247,7 @@ class TestSubtaskCreation:
         assert resp.json()["remaining_budget"] == 350.0
 
         # Create second subtask with 200
-        await mcp.call_tool_parsed("eacn_create_subtask", {
+        await mcp.call_tool_parsed("eacn3_create_subtask", {
             "parent_task_id": parent_id,
             "description": "Second child",
             "budget": 200.0,

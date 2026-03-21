@@ -1,7 +1,7 @@
 /**
  * WebSocket manager — one connection per registered Agent.
  *
- * Events are buffered in memory. Host retrieves via eacn_get_events (drainEvents).
+ * Events are buffered in memory. Host retrieves via eacn3_get_events (drainEvents).
  * Auto-reconnect on disconnect. Ping keepalive.
  */
 

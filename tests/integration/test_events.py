@@ -10,17 +10,17 @@ class TestEventBuffer:
     async def test_empty_buffer_returns_zero_count(self, mcp):
         """Draining when no events returns count=0 and empty events list."""
         # Drain any existing events from connect
-        await mcp.call_tool_parsed("eacn_get_events")
+        await mcp.call_tool_parsed("eacn3_get_events")
 
         # Second drain should be definitively empty
-        result = await mcp.call_tool_parsed("eacn_get_events")
+        result = await mcp.call_tool_parsed("eacn3_get_events")
         assert result["count"] == 0
         assert result["events"] == []
 
     @pytest.mark.asyncio
     async def test_drain_clears_buffer(self, mcp, http, funded_network):
         """After draining, second drain returns 0 events."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Drain Test",
             "description": "test",
             "domains": ["coding"],
@@ -43,19 +43,19 @@ class TestEventBuffer:
         await asyncio.sleep(1.0)
 
         # First drain — should have events
-        result1 = await mcp.call_tool_parsed("eacn_get_events")
+        result1 = await mcp.call_tool_parsed("eacn3_get_events")
         assert result1["count"] > 0
         assert len(result1["events"]) == result1["count"]
 
         # Second drain — buffer cleared
-        result2 = await mcp.call_tool_parsed("eacn_get_events")
+        result2 = await mcp.call_tool_parsed("eacn3_get_events")
         assert result2["count"] == 0
         assert result2["events"] == []
 
     @pytest.mark.asyncio
     async def test_event_has_required_fields(self, mcp, http, funded_network):
         """Each event has type, task_id, payload, received_at."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Field Test",
             "description": "test",
             "domains": ["ev-domain"],
@@ -64,7 +64,7 @@ class TestEventBuffer:
         })
         funded_network.escrow.get_or_create_account("ev-field-init", 5000.0)
         await asyncio.sleep(0.5)
-        await mcp.call_tool_parsed("eacn_get_events")  # drain
+        await mcp.call_tool_parsed("eacn3_get_events")  # drain
 
         resp = await http.post("/api/tasks", json={
             "task_id": "ev-field-task",
@@ -76,7 +76,7 @@ class TestEventBuffer:
         assert resp.status_code == 201
         await asyncio.sleep(1.0)
 
-        result = await mcp.call_tool_parsed("eacn_get_events")
+        result = await mcp.call_tool_parsed("eacn3_get_events")
         assert result["count"] >= 1
         event = result["events"][0]
         assert "type" in event
@@ -88,7 +88,7 @@ class TestEventBuffer:
     @pytest.mark.asyncio
     async def test_count_matches_events_length(self, mcp, http, funded_network):
         """count field exactly equals len(events)."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Count Test",
             "description": "test",
             "domains": ["coding"],
@@ -97,7 +97,7 @@ class TestEventBuffer:
         })
         funded_network.escrow.get_or_create_account("count-init", 5000.0)
         await asyncio.sleep(0.5)
-        await mcp.call_tool_parsed("eacn_get_events")  # drain
+        await mcp.call_tool_parsed("eacn3_get_events")  # drain
 
         # Generate 2 events
         for i in range(2):
@@ -112,6 +112,6 @@ class TestEventBuffer:
             await asyncio.sleep(0.3)
 
         await asyncio.sleep(1.0)
-        result = await mcp.call_tool_parsed("eacn_get_events")
+        result = await mcp.call_tool_parsed("eacn3_get_events")
         assert result["count"] == len(result["events"])
         assert result["count"] >= 2

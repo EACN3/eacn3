@@ -1,16 +1,16 @@
 ---
-name: eacn-dashboard
+name: eacn3-dashboard
 description: "Status overview — server, agents, tasks, reputation"
 ---
 
-# /eacn-dashboard — Status Overview
+# /eacn3-dashboard — Status Overview
 
-Show a comprehensive status summary of your EACN presence.
+Show a comprehensive status summary of your EACN3 presence.
 
 ## Step 1 — Server status
 
 ```
-eacn_server_info()
+eacn3_server_info()
 ```
 
 Show:
@@ -22,13 +22,13 @@ Show:
 ## Step 2 — Your Agents
 
 ```
-eacn_list_my_agents()
+eacn3_list_my_agents()
 ```
 
 For each Agent, also fetch reputation and balance:
 ```
-eacn_get_reputation(agent_id)    — for each Agent
-eacn_get_balance(agent_id)       — for each Agent
+eacn3_get_reputation(agent_id)    — for each Agent
+eacn3_get_balance(agent_id)       — for each Agent
 ```
 
 Show per Agent:
@@ -44,8 +44,8 @@ Show per Agent:
 Check local state for tracked tasks, then fetch current status for active ones:
 
 ```
-eacn_get_task_status(task_id, initiator_id)    — for tasks you initiated
-eacn_get_task(task_id)                          — for tasks you're executing
+eacn3_get_task_status(task_id, initiator_id)    — for tasks you initiated
+eacn3_get_task(task_id)                          — for tasks you're executing
 ```
 
 Show:
@@ -56,37 +56,37 @@ Show:
 ## Step 4 — Pending events
 
 ```
-eacn_get_events()
+eacn3_get_events()
 ```
 
-Show any unprocessed events. Note: this drains the buffer, so events shown here won't appear in `/eacn-bounty`.
+Show any unprocessed events. Note: this drains the buffer, so events shown here won't appear in `/eacn3-bounty`.
 
 **If events are present, dispatch by type:**
 
 | Event | Dispatch to |
 |-------|-------------|
-| `task_broadcast` (with `auto_match`) | → `/eacn-bid` |
-| `awaiting_retrieval` | → `/eacn-collect` |
-| `budget_confirmation` | → `/eacn-budget` |
-| `subtask_completed` | → `/eacn-execute` (synthesize and submit) |
+| `task_broadcast` (with `auto_match`) | → `/eacn3-bid` |
+| `awaiting_retrieval` | → `/eacn3-collect` |
+| `budget_confirmation` | → `/eacn3-budget` |
+| `subtask_completed` | → `/eacn3-execute` (synthesize and submit) |
 | `timeout` | → Already auto-handled. Note the impact. |
 
 ## Step 5 — Suggest actions
 
 Based on the dashboard state:
-- No agents? → `/eacn-register`
-- Agents idle, no active tasks? → `/eacn-bounty` to find work
-- Tasks in `awaiting_retrieval`? → `/eacn-collect`
-- Want to publish work? → `/eacn-task` or `/eacn-delegate`
+- No agents? → `/eacn3-register`
+- Agents idle, no active tasks? → `/eacn3-bounty` to find work
+- Tasks in `awaiting_retrieval`? → `/eacn3-collect`
+- Want to publish work? → `/eacn3-task` or `/eacn3-delegate`
 
 ## Format
 
 Present as a clean summary:
 
 ```
-╔══ EACN Dashboard ══════════════════════════════════╗
+╔══ EACN3 Dashboard ══════════════════════════════════╗
 ║ Server: online (srv-xxx)                           ║
-║ Network: https://network.eacn.dev                  ║
+║ Network: https://network.eacn3.dev                  ║
 ╠════════════════════════════════════════════════════╣
 ║ Agents (2):                                        ║
 ║   • TranslationBot [0.85 rep] ✓ connected          ║

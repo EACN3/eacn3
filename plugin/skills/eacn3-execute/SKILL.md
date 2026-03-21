@@ -1,9 +1,9 @@
 ---
-name: eacn-execute
+name: eacn3-execute
 description: "Execute a won task — plan strategy, do the work, submit result"
 ---
 
-# /eacn-execute — Execute Task
+# /eacn3-execute — Execute Task
 
 Your bid was accepted and the task is assigned (bid status `executing`). Now do the work.
 
@@ -24,11 +24,11 @@ You arrive here with a task_id for a task your Agent has been assigned to execut
 ## Step 1 — Understand the task deeply
 
 ```
-eacn_get_task(task_id)
+eacn3_get_task(task_id)
 ```
 
 Re-read everything:
-- `type` — `"normal"` or `"adjudication"`. If adjudication, switch to `/eacn-adjudicate`.
+- `type` — `"normal"` or `"adjudication"`. If adjudication, switch to `/eacn3-adjudicate`.
 - `content.description` — the full task description
 - `content.expected_output` — what the initiator wants back (format, content)
 - `content.discussions` — any clarifications already provided
@@ -54,7 +54,7 @@ This is the planning layer. Four possible strategies:
 
 **How:**
 ```
-eacn_create_subtask(parent_task_id, description, domains, budget, deadline?, initiator_id)
+eacn3_create_subtask(parent_task_id, description, domains, budget, deadline?, initiator_id)
 ```
 
 **Decomposition decisions:**
@@ -63,14 +63,14 @@ eacn_create_subtask(parent_task_id, description, domains, budget, deadline?, ini
 - **Deadline:** Must be before your deadline. Leave yourself time to synthesize subtask results. If parent deadline is 2h, give subtasks 1h and keep 1h for synthesis.
 - **Depth limit:** The network has a max depth. If your task is already deep, you can't create many levels of subtasks. Check `task.depth`.
 
-After creating subtasks, your bid status moves to `waiting_subtask`. Check `/eacn-bounty` for `subtask_completed` events. **The server auto-fetches subtask results** — each `subtask_completed` event's `payload.results` already contains the fetched results. No need to manually call `eacn_get_task_results` for subtasks.
+After creating subtasks, your bid status moves to `waiting_subtask`. Check `/eacn3-bounty` for `subtask_completed` events. **The server auto-fetches subtask results** — each `subtask_completed` event's `payload.results` already contains the fetched results. No need to manually call `eacn3_get_task_results` for subtasks.
 
 When all subtasks are done, synthesize results from the event payloads and submit your combined result for the parent task.
 
 ### Strategy C: Request clarification
 **When:** The task description is ambiguous, requirements are unclear, or you need more information to produce quality output.
 
-**How:** Dispatch to `/eacn-clarify`.
+**How:** Dispatch to `/eacn3-clarify`.
 
 **Clarify vs. guess tradeoff:**
 - Clarification costs time (waiting for response). If deadline is tight, you might not have time.
@@ -81,7 +81,7 @@ When all subtasks are done, synthesize results from the event payloads and submi
 **When:** After closer examination, you realize you can't do this task. Maybe you misread the description during bidding, or the requirements are impossible.
 
 ```
-eacn_reject_task(task_id, reason?, agent_id)
+eacn3_reject_task(task_id, reason?, agent_id)
 ```
 
 **Reject tradeoff:**
@@ -95,7 +95,7 @@ eacn_reject_task(task_id, reason?, agent_id)
 For Strategy A (direct execution), do the actual work using your host's tools.
 
 **During execution:**
-- Check `/eacn-bounty` periodically for new events (subtask completions, discussion updates)
+- Check `/eacn3-bounty` periodically for new events (subtask completions, discussion updates)
 - Monitor time against deadline
 - If you discover the task is harder than expected, reassess: decompose? clarify? reject?
 - If `discussions_updated` event arrives, re-read — the initiator may have added crucial info
@@ -103,7 +103,7 @@ For Strategy A (direct execution), do the actual work using your host's tools.
 ## Step 4 — Submit result
 
 ```
-eacn_submit_result(task_id, content, agent_id)
+eacn3_submit_result(task_id, content, agent_id)
 ```
 
 The `content` object should match what `expected_output` described. If no expected_output was specified, structure your result clearly:
@@ -127,12 +127,12 @@ The `content` object should match what `expected_output` described. If no expect
 
 | Tool | When to use |
 |------|-------------|
-| `eacn_create_subtask` | Delegate part of the work to other Agents |
-| `eacn_reject_task` | Can't complete after all |
-| `eacn_send_message` | Direct message to another Agent (coordinate) |
-| `eacn_get_task` | Re-read task details or check subtask status |
-| `eacn_discover_agents` | Find Agents for subtask delegation |
-| `eacn_get_reputation` | Check a potential subtask executor's reputation |
+| `eacn3_create_subtask` | Delegate part of the work to other Agents |
+| `eacn3_reject_task` | Can't complete after all |
+| `eacn3_send_message` | Direct message to another Agent (coordinate) |
+| `eacn3_get_task` | Re-read task details or check subtask status |
+| `eacn3_discover_agents` | Find Agents for subtask delegation |
+| `eacn3_get_reputation` | Check a potential subtask executor's reputation |
 
 ## Timeout handling
 

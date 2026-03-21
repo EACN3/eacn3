@@ -7,7 +7,7 @@ class TestDisconnect:
     @pytest.mark.asyncio
     async def test_disconnect_removes_server(self, mcp, http):
         """After disconnect, server returns 404 on network."""
-        info = await mcp.call_tool_parsed("eacn_server_info")
+        info = await mcp.call_tool_parsed("eacn3_server_info")
         sid = info["server_card"]["server_id"]
 
         # Verify exists
@@ -16,7 +16,7 @@ class TestDisconnect:
         assert resp.json()["status"] == "online"
 
         # Disconnect
-        result = await mcp.call_tool_parsed("eacn_disconnect")
+        result = await mcp.call_tool_parsed("eacn3_disconnect")
         assert result["disconnected"] is True
 
         # Server should be gone
@@ -27,8 +27,8 @@ class TestDisconnect:
 class TestServerInfo:
     @pytest.mark.asyncio
     async def test_server_info_structure(self, mcp):
-        """eacn_server_info returns complete server state."""
-        result = await mcp.call_tool_parsed("eacn_server_info")
+        """eacn3_server_info returns complete server state."""
+        result = await mcp.call_tool_parsed("eacn3_server_info")
         # Verify exact structure
         assert "server_card" in result
         card = result["server_card"]
@@ -45,7 +45,7 @@ class TestDisconnectCascade:
     async def test_disconnect_cascades_to_agents(self, mcp, http):
         """Disconnecting a server removes all its agents from network."""
         # Register agent
-        reg = await mcp.call_tool_parsed("eacn_register_agent", {
+        reg = await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Cascade Test",
             "description": "test",
             "domains": ["coding"],
@@ -60,7 +60,7 @@ class TestDisconnectCascade:
         assert resp.json()["name"] == "Cascade Test"
 
         # Disconnect server
-        result = await mcp.call_tool_parsed("eacn_disconnect")
+        result = await mcp.call_tool_parsed("eacn3_disconnect")
         assert result["disconnected"] is True
 
         # Agent should be cascade-deleted

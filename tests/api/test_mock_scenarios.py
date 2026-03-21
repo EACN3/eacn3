@@ -8,16 +8,16 @@ from tests.api.conftest import create_task, bid, submit_result, close_task, sele
 
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
-from eacn.network.app import Network
-from eacn.network.config import NetworkConfig
-from eacn.network.api.routes import router as net_router, set_network
-from eacn.network.api.websocket import ws_router
+from eacn3.network.app import Network
+from eacn3.network.config import NetworkConfig
+from eacn3.network.api.routes import router as net_router, set_network
+from eacn3.network.api.websocket import ws_router
 
 
 @pytest.fixture
 async def large_network():
     """30 个 agent, 3 个领域, 梯度声望."""
-    from eacn.network.db import Database
+    from eacn3.network.db import Database
     db = Database()
     await db.connect()
     net = Network(db=db, config=NetworkConfig())

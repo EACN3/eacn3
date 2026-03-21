@@ -7,7 +7,7 @@ from tests.integration.conftest import is_error
 
 async def _setup(mcp, funded_network):
     """Register agent and fund. Returns nothing."""
-    await mcp.call_tool_parsed("eacn_register_agent", {
+    await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "State Init",
         "description": "test",
         "domains": ["coding"],
@@ -15,7 +15,7 @@ async def _setup(mcp, funded_network):
         "agent_id": "st-init",
         "agent_type": "planner",
     })
-    await mcp.call_tool_parsed("eacn_register_agent", {
+    await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "State Worker",
         "description": "test",
         "domains": ["coding"],
@@ -29,22 +29,22 @@ async def _setup(mcp, funded_network):
 
 async def _complete_task(mcp, task_id):
     """Drive a task all the way to COMPLETED status."""
-    await mcp.call_tool_parsed("eacn_submit_bid", {
+    await mcp.call_tool_parsed("eacn3_submit_bid", {
         "task_id": task_id, "agent_id": "st-worker",
         "confidence": 0.9, "price": 80.0,
     })
-    await mcp.call_tool_parsed("eacn_submit_result", {
+    await mcp.call_tool_parsed("eacn3_submit_result", {
         "task_id": task_id, "agent_id": "st-worker",
         "content": {"answer": "done"},
     })
-    await mcp.call_tool_parsed("eacn_close_task", {
+    await mcp.call_tool_parsed("eacn3_close_task", {
         "task_id": task_id, "initiator_id": "st-init",
     })
     # collect_results transitions AWAITING_RETRIEVAL → COMPLETED
-    await mcp.call_tool_parsed("eacn_get_task_results", {
+    await mcp.call_tool_parsed("eacn3_get_task_results", {
         "task_id": task_id, "initiator_id": "st-init",
     })
-    await mcp.call_tool_parsed("eacn_select_result", {
+    await mcp.call_tool_parsed("eacn3_select_result", {
         "task_id": task_id, "agent_id": "st-worker",
         "initiator_id": "st-init",
     })
@@ -56,10 +56,10 @@ class TestNoOneAbleRefund:
         """Close task with no results → NO_ONE_ABLE, full budget refunded."""
         await _setup(mcp, funded_network)
 
-        before = await mcp.call_tool_parsed("eacn_get_balance", {"agent_id": "st-init"})
+        before = await mcp.call_tool_parsed("eacn3_get_balance", {"agent_id": "st-init"})
         assert before["available"] == 10000.0
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Will have no results",
             "budget": 200.0,
             "domains": ["coding"],
@@ -68,19 +68,19 @@ class TestNoOneAbleRefund:
         task_id = task["task_id"]
 
         # Budget frozen
-        mid = await mcp.call_tool_parsed("eacn_get_balance", {"agent_id": "st-init"})
+        mid = await mcp.call_tool_parsed("eacn3_get_balance", {"agent_id": "st-init"})
         assert mid["available"] == 9800.0
         assert mid["frozen"] == 200.0
 
         # Close without any bids or results
-        close_result = await mcp.call_tool_parsed("eacn_close_task", {
+        close_result = await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id,
             "initiator_id": "st-init",
         })
         assert close_result["status"] == "no_one_able"
 
         # Full refund: frozen→available
-        after = await mcp.call_tool_parsed("eacn_get_balance", {"agent_id": "st-init"})
+        after = await mcp.call_tool_parsed("eacn3_get_balance", {"agent_id": "st-init"})
         assert after["available"] == 10000.0
         assert after["frozen"] == 0.0
 
@@ -89,7 +89,7 @@ class TestNoOneAbleRefund:
         """Close task with results → AWAITING_RETRIEVAL (not NO_ONE_ABLE)."""
         await _setup(mcp, funded_network)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Has a result",
             "budget": 200.0,
             "domains": ["coding"],
@@ -97,23 +97,23 @@ class TestNoOneAbleRefund:
         })
         task_id = task["task_id"]
 
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id, "agent_id": "st-worker",
             "confidence": 0.9, "price": 80.0,
         })
-        await mcp.call_tool_parsed("eacn_submit_result", {
+        await mcp.call_tool_parsed("eacn3_submit_result", {
             "task_id": task_id, "agent_id": "st-worker",
             "content": {"answer": "done"},
         })
 
-        close_result = await mcp.call_tool_parsed("eacn_close_task", {
+        close_result = await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id,
             "initiator_id": "st-init",
         })
         assert close_result["status"] == "awaiting_retrieval"
 
         # Budget still frozen (not refunded yet, needs select)
-        bal = await mcp.call_tool_parsed("eacn_get_balance", {"agent_id": "st-init"})
+        bal = await mcp.call_tool_parsed("eacn3_get_balance", {"agent_id": "st-init"})
         assert bal["frozen"] == 200.0
 
 
@@ -124,7 +124,7 @@ class TestTerminalStates:
         await _setup(mcp, funded_network)
         funded_network.escrow.get_or_create_account("st-worker", 0.0)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Will complete",
             "budget": 200.0,
             "domains": ["coding"],
@@ -138,7 +138,7 @@ class TestTerminalStates:
         assert resp.json()["status"] == "completed"
 
         # Try to bid → should fail
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Late Bidder",
             "description": "test",
             "domains": ["coding"],
@@ -147,7 +147,7 @@ class TestTerminalStates:
         })
         funded_network.reputation._scores["late-bidder"] = 0.8
 
-        result = await mcp.call_tool_parsed("eacn_submit_bid", {
+        result = await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id,
             "agent_id": "late-bidder",
             "confidence": 0.9,
@@ -161,7 +161,7 @@ class TestTerminalStates:
         await _setup(mcp, funded_network)
         funded_network.escrow.get_or_create_account("st-worker", 0.0)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Complete then close",
             "budget": 200.0,
             "domains": ["coding"],
@@ -171,7 +171,7 @@ class TestTerminalStates:
         await _complete_task(mcp, task_id)
 
         # Try to close again → error
-        result = await mcp.call_tool_parsed("eacn_close_task", {
+        result = await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id,
             "initiator_id": "st-init",
         })
@@ -182,7 +182,7 @@ class TestTerminalStates:
         """Closing a NO_ONE_ABLE task returns error."""
         await _setup(mcp, funded_network)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Will be no_one_able",
             "budget": 100.0,
             "domains": ["coding"],
@@ -190,12 +190,12 @@ class TestTerminalStates:
         })
         task_id = task["task_id"]
 
-        r1 = await mcp.call_tool_parsed("eacn_close_task", {
+        r1 = await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id, "initiator_id": "st-init",
         })
         assert r1["status"] == "no_one_able"
 
-        r2 = await mcp.call_tool_parsed("eacn_close_task", {
+        r2 = await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id, "initiator_id": "st-init",
         })
         assert is_error(r2), f"Expected error closing no_one_able task, got: {r2}"
@@ -205,7 +205,7 @@ class TestTerminalStates:
         """Submitting result to NO_ONE_ABLE task fails."""
         await _setup(mcp, funded_network)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Dead task",
             "budget": 100.0,
             "domains": ["coding"],
@@ -214,19 +214,19 @@ class TestTerminalStates:
         task_id = task["task_id"]
 
         # Bid while alive
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id, "agent_id": "st-worker",
             "confidence": 0.9, "price": 50.0,
         })
 
         # Close (has bids but no results → no_one_able)
-        close = await mcp.call_tool_parsed("eacn_close_task", {
+        close = await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id, "initiator_id": "st-init",
         })
         assert close["status"] == "no_one_able"
 
         # Submit result on terminal task → fail
-        result = await mcp.call_tool_parsed("eacn_submit_result", {
+        result = await mcp.call_tool_parsed("eacn3_submit_result", {
             "task_id": task_id,
             "agent_id": "st-worker",
             "content": {"answer": "too late"},
@@ -240,7 +240,7 @@ class TestCollectResultsTransition:
         """First collect_results transitions AWAITING_RETRIEVAL → COMPLETED."""
         await _setup(mcp, funded_network)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Collect transition",
             "budget": 200.0,
             "domains": ["coding"],
@@ -248,15 +248,15 @@ class TestCollectResultsTransition:
         })
         task_id = task["task_id"]
 
-        await mcp.call_tool_parsed("eacn_submit_bid", {
+        await mcp.call_tool_parsed("eacn3_submit_bid", {
             "task_id": task_id, "agent_id": "st-worker",
             "confidence": 0.9, "price": 80.0,
         })
-        await mcp.call_tool_parsed("eacn_submit_result", {
+        await mcp.call_tool_parsed("eacn3_submit_result", {
             "task_id": task_id, "agent_id": "st-worker",
             "content": {"answer": "done"},
         })
-        await mcp.call_tool_parsed("eacn_close_task", {
+        await mcp.call_tool_parsed("eacn3_close_task", {
             "task_id": task_id, "initiator_id": "st-init",
         })
 
@@ -265,7 +265,7 @@ class TestCollectResultsTransition:
         assert resp.json()["status"] == "awaiting_retrieval"
 
         # Collect transitions to completed
-        collected = await mcp.call_tool_parsed("eacn_get_task_results", {
+        collected = await mcp.call_tool_parsed("eacn3_get_task_results", {
             "task_id": task_id,
             "initiator_id": "st-init",
         })
@@ -280,7 +280,7 @@ class TestCollectResultsTransition:
         """Collecting results while task is still unclaimed returns 400."""
         await _setup(mcp, funded_network)
 
-        task = await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn3_create_task", {
             "description": "Too early",
             "budget": 100.0,
             "domains": ["coding"],

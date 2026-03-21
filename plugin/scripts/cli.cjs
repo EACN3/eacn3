@@ -60,7 +60,7 @@ function fail(msg){ console.log(`  ✗ ${msg}`); }
 // ── diagnose ──────────────────────────────────────────────────────────────────
 
 function diagnose() {
-  console.log('\neacn diagnostics\n');
+  console.log('\neacn3 diagnostics\n');
   let allOk = true;
 
   function check(label, fn) {
@@ -147,9 +147,9 @@ function diagnose() {
     const config = readJSON(CONFIG_PATH);
     const skills = config?.skills?.entries;
     if (!skills) throw new Error('skills.entries missing');
-    const eacnSkills = Object.keys(skills).filter(k => k.startsWith('eacn-') && skills[k]?.enabled);
-    if (eacnSkills.length === 0) throw new Error('no eacn skills enabled');
-    return `${eacnSkills.length} enabled: ${eacnSkills.join(', ')}`;
+    const eacn3Skills = Object.keys(skills).filter(k => k.startsWith('eacn3-') && skills[k]?.enabled);
+    if (eacn3Skills.length === 0) throw new Error('no eacn3 skills enabled');
+    return `${eacn3Skills.length} enabled: ${eacn3Skills.join(', ')}`;
   });
   check('skill files in extensions', () => {
     const skillsDir = path.join(EXT_DIR, 'skills');
@@ -236,7 +236,7 @@ function setupOpenclaw() {
     fail('node_modules/ not found — run "npm install" first');
   }
 
-  // Clean up stale extension directory from previous installs (used wrong name)
+  // Clean up stale extension directory from previous installs (used wrong name "eacn")
   const staleDir = path.join(os.homedir(), '.openclaw', 'extensions', 'eacn');
   if (staleDir !== EXT_DIR && fs.existsSync(staleDir)) {
     fs.rmSync(staleDir, { recursive: true, force: true });
@@ -284,7 +284,7 @@ function setupOpenclaw() {
     source: 'path',
     sourcePath: PKG_ROOT,
     installPath: EXT_DIR,
-    version: pkg.version || '0.1.0',
+    version: pkg.version || '0.3.0',
     installedAt: new Date().toISOString()
   };
   ok('plugins.installs: metadata recorded');
@@ -313,6 +313,83 @@ function setupOpenclaw() {
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
+// ── health ────────────────────────────────────────────────────────────────────
+
+async function healthCheck(endpoint) {
+  const url = `${endpoint}/health`;
+  console.log(`\nProbing ${url} ...\n`);
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) {
+      fail(`HTTP ${res.status}`);
+      process.exit(1);
+    }
+    const data = await res.json();
+    ok(`status: ${data.status || 'ok'}`);
+    console.log(JSON.stringify(data, null, 2));
+  } catch (e) {
+    fail(`unreachable — ${e.message}`);
+    process.exit(1);
+  }
+}
+
+// ── cluster ───────────────────────────────────────────────────────────────────
+
+async function clusterStatus(endpoint) {
+  const url = `${endpoint}/api/cluster/status`;
+  console.log(`\nQuerying ${url} ...\n`);
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) {
+      fail(`HTTP ${res.status}`);
+      process.exit(1);
+    }
+    const data = await res.json();
+    ok(`mode: ${data.mode}, members: ${data.member_count}, online: ${data.online_count}`);
+    if (data.members) {
+      for (const m of data.members) {
+        const icon = m.status === 'online' ? '\u2713' : '\u2717';
+        console.log(`  ${icon} ${m.node_id}  ${m.endpoint}  [${m.status}]`);
+      }
+    }
+    if (data.seed_nodes) {
+      console.log(`\n  seed nodes: ${data.seed_nodes.join(', ')}`);
+    }
+  } catch (e) {
+    fail(`unreachable — ${e.message}`);
+    process.exit(1);
+  }
+}
+
+// ── help ──────────────────────────────────────────────────────────────────────
+
+function showHelp() {
+  console.log(`
+eacn3 — EACN3 network plugin CLI (v${readJSON(path.join(PKG_ROOT, 'package.json')).version || '0.3.0'})
+
+Usage:
+  eacn3 <command> [options]
+
+Commands:
+  setup                Install / update plugin into OpenClaw
+  diagnose | doctor    Run full diagnostics on plugin installation
+  health [endpoint]    Probe a network node's /health endpoint
+  cluster [endpoint]   Show cluster topology and member status
+
+Options:
+  --help, -h           Show this help message
+
+Examples:
+  npx eacn3 setup
+  npx eacn3 diagnose
+  npx eacn3 health http://175.102.130.69:37892
+  npx eacn3 cluster http://175.102.130.69:37892
+`);
+}
+
+// ── main ──────────────────────────────────────────────────────────────────────
+
+const DEFAULT_ENDPOINT = process.env.EACN3_NETWORK_URL || 'https://network.eacn3.dev';
 const cmd = process.argv[2];
 
 switch (cmd) {
@@ -324,9 +401,18 @@ switch (cmd) {
   case 'doctor':
     diagnose();
     break;
+  case 'health':
+    healthCheck(process.argv[3] || DEFAULT_ENDPOINT);
+    break;
+  case 'cluster':
+    clusterStatus(process.argv[3] || DEFAULT_ENDPOINT);
+    break;
+  case '--help':
+  case '-h':
+  case 'help':
+    showHelp();
+    break;
   default:
-    console.log('Usage:');
-    console.log('  npx eacn3 setup     — install plugin into OpenClaw');
-    console.log('  npx eacn3 diagnose  — run full diagnostics');
-    process.exit(0);
+    showHelp();
+    process.exit(cmd ? 1 : 0);
 }

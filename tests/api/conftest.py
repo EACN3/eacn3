@@ -8,12 +8,12 @@ import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from eacn.network.app import Network
-from eacn.network.config import NetworkConfig
-from eacn.network.db import Database
-from eacn.network.api.routes import router as net_router, set_network
-from eacn.network.api.discovery_routes import discovery_router, set_discovery_network
-from eacn.network.api.websocket import ws_router
+from eacn3.network.app import Network
+from eacn3.network.config import NetworkConfig
+from eacn3.network.db import Database
+from eacn3.network.api.routes import router as net_router, set_network
+from eacn3.network.api.discovery_routes import discovery_router, set_discovery_network
+from eacn3.network.api.websocket import ws_router
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
