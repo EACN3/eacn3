@@ -19,16 +19,16 @@ async def _setup_agent(mcp, funded_network, agent_id="query-init"):
 class TestGetTask:
     @pytest.mark.asyncio
     async def test_get_nonexistent_task(self, mcp):
-        """Getting a task that doesn't exist returns error."""
+        """Getting a task that doesn't exist returns error with 404."""
         result = await mcp.call_tool_parsed("eacn_get_task", {
             "task_id": "nonexistent-task-xyz",
         })
-        err = result.get("error") or result.get("raw", "")
-        assert "404" in str(err) or "not found" in str(err).lower()
+        assert "error" in result
+        assert "404" in str(result["error"])
 
     @pytest.mark.asyncio
-    async def test_get_task_details(self, mcp, funded_network):
-        """eacn_get_task returns full task details."""
+    async def test_get_task_returns_full_details(self, mcp, funded_network):
+        """eacn_get_task returns task with all fields populated correctly."""
         await _setup_agent(mcp, funded_network)
         task = await mcp.call_tool_parsed("eacn_create_task", {
             "description": "Detail test",
@@ -37,16 +37,25 @@ class TestGetTask:
             "initiator_id": "query-init",
         })
         task_id = task["task_id"]
+        assert task["status"] == "unclaimed"
+        assert task["budget"] == 100.0
 
         result = await mcp.call_tool_parsed("eacn_get_task", {"task_id": task_id})
         assert result["id"] == task_id
         assert result["budget"] == 100.0
-        assert "coding" in result["domains"]
+        assert result["domains"] == ["coding"]
         assert result["initiator_id"] == "query-init"
+        assert result["status"] in ("unclaimed", "bidding")
+        assert result["type"] == "normal"
+        assert result["depth"] == 0
+        assert result["parent_id"] is None
+        assert result["child_ids"] == []
+        assert isinstance(result["bids"], list)
+        assert isinstance(result["results"], list)
 
     @pytest.mark.asyncio
     async def test_get_task_status_initiator_only(self, mcp, http, funded_network):
-        """eacn_get_task_status requires initiator_id match (403 for others)."""
+        """eacn_get_task_status returns 403 for non-initiator."""
         await _setup_agent(mcp, funded_network)
         task = await mcp.call_tool_parsed("eacn_create_task", {
             "description": "Status auth test",
@@ -56,12 +65,16 @@ class TestGetTask:
         })
         task_id = task["task_id"]
 
-        # Correct initiator
+        # Correct initiator — returns task status with bids
         resp = await http.get(f"/api/tasks/{task_id}/status", params={"agent_id": "query-init"})
         assert resp.status_code == 200
-        assert resp.json()["status"] in ("unclaimed", "bidding")
+        data = resp.json()
+        assert data["id"] == task_id
+        assert data["status"] in ("unclaimed", "bidding")
+        assert data["initiator_id"] == "query-init"
+        assert isinstance(data["bids"], list)
 
-        # Wrong initiator
+        # Wrong initiator — 403
         resp = await http.get(f"/api/tasks/{task_id}/status", params={"agent_id": "imposter"})
         assert resp.status_code == 403
 
@@ -69,9 +82,9 @@ class TestGetTask:
 class TestListTasks:
     @pytest.mark.asyncio
     async def test_list_tasks_by_status(self, mcp, http, funded_network):
-        """List tasks filtered by status."""
+        """List tasks filtered by status returns only matching tasks."""
         await _setup_agent(mcp, funded_network)
-        await mcp.call_tool_parsed("eacn_create_task", {
+        task = await mcp.call_tool_parsed("eacn_create_task", {
             "description": "List status test",
             "budget": 50.0,
             "domains": ["coding"],
@@ -81,21 +94,27 @@ class TestListTasks:
         resp = await http.get("/api/tasks", params={"status": "unclaimed"})
         assert resp.status_code == 200
         tasks = resp.json()
-        assert all(t["status"] in ("unclaimed", "bidding") for t in tasks)
+        assert len(tasks) >= 1
+        # Every returned task has the filtered status
+        for t in tasks:
+            assert t["status"] == "unclaimed"
+        # Our task is in the list
+        task_ids = [t["id"] for t in tasks]
+        assert task["task_id"] in task_ids
 
     @pytest.mark.asyncio
     async def test_list_tasks_by_initiator(self, mcp, http, funded_network):
-        """List tasks filtered by initiator_id."""
+        """List tasks by initiator_id returns only that initiator's tasks."""
         await _setup_agent(mcp, funded_network)
         await _setup_agent(mcp, funded_network, agent_id="other-init")
 
-        await mcp.call_tool_parsed("eacn_create_task", {
+        t1 = await mcp.call_tool_parsed("eacn_create_task", {
             "description": "By initiator A",
             "budget": 50.0,
             "domains": ["coding"],
             "initiator_id": "query-init",
         })
-        await mcp.call_tool_parsed("eacn_create_task", {
+        t2 = await mcp.call_tool_parsed("eacn_create_task", {
             "description": "By initiator B",
             "budget": 50.0,
             "domains": ["coding"],
@@ -105,46 +124,53 @@ class TestListTasks:
         resp = await http.get("/api/tasks", params={"initiator_id": "query-init"})
         assert resp.status_code == 200
         tasks = resp.json()
-        assert all(t["initiator_id"] == "query-init" for t in tasks)
-        assert len(tasks) >= 1
+        # All returned tasks belong to query-init
+        for t in tasks:
+            assert t["initiator_id"] == "query-init"
+        task_ids = [t["id"] for t in tasks]
+        assert t1["task_id"] in task_ids
+        assert t2["task_id"] not in task_ids
 
     @pytest.mark.asyncio
     async def test_list_tasks_pagination(self, mcp, http, funded_network):
-        """List tasks with limit and offset."""
+        """Pagination: limit+offset correctly slices task list."""
         await _setup_agent(mcp, funded_network)
-        # Create 3 tasks
+        created_ids = []
         for i in range(3):
-            await mcp.call_tool_parsed("eacn_create_task", {
-                "description": f"Pagination test {i}",
+            t = await mcp.call_tool_parsed("eacn_create_task", {
+                "description": f"Page test {i}",
                 "budget": 10.0,
                 "domains": ["coding"],
                 "initiator_id": "query-init",
             })
+            created_ids.append(t["task_id"])
 
-        # Get page 1 (limit=2)
+        # limit=2 should return at most 2
         resp = await http.get("/api/tasks", params={
             "initiator_id": "query-init", "limit": 2, "offset": 0,
         })
-        assert resp.status_code == 200
         page1 = resp.json()
-        assert len(page1) <= 2
+        assert len(page1) == 2
 
-        # Get page 2 (offset=2)
+        # offset=2 gets the rest
         resp = await http.get("/api/tasks", params={
-            "initiator_id": "query-init", "limit": 2, "offset": 2,
+            "initiator_id": "query-init", "limit": 10, "offset": 2,
         })
-        assert resp.status_code == 200
         page2 = resp.json()
-        # Should have remaining tasks
-        assert len(page1) + len(page2) >= 3
+        assert len(page2) >= 1
+
+        # No overlap
+        ids1 = {t["id"] for t in page1}
+        ids2 = {t["id"] for t in page2}
+        assert ids1.isdisjoint(ids2)
 
 
 class TestOpenTasks:
     @pytest.mark.asyncio
-    async def test_list_open_tasks(self, mcp, http, funded_network):
-        """Open tasks endpoint returns unclaimed/bidding tasks."""
+    async def test_list_open_tasks_via_plugin(self, mcp, funded_network):
+        """Plugin eacn_list_open_tasks returns {count, tasks}."""
         await _setup_agent(mcp, funded_network)
-        await mcp.call_tool_parsed("eacn_create_task", {
+        t = await mcp.call_tool_parsed("eacn_create_task", {
             "description": "Open task test",
             "budget": 50.0,
             "domains": ["coding"],
@@ -154,13 +180,13 @@ class TestOpenTasks:
         result = await mcp.call_tool_parsed("eacn_list_open_tasks", {
             "domains": ["coding"],
         })
-        # Plugin returns list or dict with tasks
-        tasks = result if isinstance(result, list) else result.get("tasks", [])
-        assert len(tasks) >= 1
+        assert result["count"] >= 1
+        task_ids = [task["id"] for task in result["tasks"]]
+        assert t["task_id"] in task_ids
 
     @pytest.mark.asyncio
     async def test_open_tasks_domain_filter(self, mcp, http, funded_network):
-        """Open tasks filtered by domain."""
+        """Open tasks filtered by domain excludes other domains."""
         await _setup_agent(mcp, funded_network)
         await mcp.call_tool_parsed("eacn_create_task", {
             "description": "Design task",
@@ -168,23 +194,25 @@ class TestOpenTasks:
             "domains": ["design"],
             "initiator_id": "query-init",
         })
-        await mcp.call_tool_parsed("eacn_create_task", {
+        coding_task = await mcp.call_tool_parsed("eacn_create_task", {
             "description": "Coding task",
             "budget": 50.0,
             "domains": ["coding"],
             "initiator_id": "query-init",
         })
 
-        # Filter by design only
         resp = await http.get("/api/tasks/open", params={"domains": "design"})
         assert resp.status_code == 200
         tasks = resp.json()
         for t in tasks:
             assert "design" in t["domains"]
+        # Coding-only task should NOT be here
+        task_ids = [t["id"] for t in tasks]
+        assert coding_task["task_id"] not in task_ids
 
     @pytest.mark.asyncio
     async def test_closed_task_not_in_open(self, mcp, http, funded_network):
-        """A closed task should not appear in open tasks."""
+        """A closed task must not appear in open tasks list."""
         await _setup_agent(mcp, funded_network)
         task = await mcp.call_tool_parsed("eacn_create_task", {
             "description": "Will close",
@@ -194,13 +222,17 @@ class TestOpenTasks:
         })
         task_id = task["task_id"]
 
+        # Verify it IS in open tasks before closing
+        resp = await http.get("/api/tasks/open", params={"domains": "closing-test"})
+        assert task_id in [t["id"] for t in resp.json()]
+
         # Close it
-        await mcp.call_tool_parsed("eacn_close_task", {
+        close_result = await mcp.call_tool_parsed("eacn_close_task", {
             "task_id": task_id,
             "initiator_id": "query-init",
         })
+        assert close_result["status"] == "no_one_able"  # No results → NO_ONE_ABLE
 
+        # Should NOT be in open anymore
         resp = await http.get("/api/tasks/open", params={"domains": "closing-test"})
-        assert resp.status_code == 200
-        task_ids = [t["id"] for t in resp.json()]
-        assert task_id not in task_ids
+        assert task_id not in [t["id"] for t in resp.json()]

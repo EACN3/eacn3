@@ -5,21 +5,24 @@ import pytest
 
 class TestAdminConfig:
     @pytest.mark.asyncio
-    async def test_get_config(self, http):
-        """Admin can read current config."""
+    async def test_get_config_has_sections(self, http):
+        """Admin config returns all expected config sections."""
         resp = await http.get("/api/admin/config")
         assert resp.status_code == 200
         config = resp.json()
-        # Should have standard config sections
-        assert "reputation" in config or "economy" in config or "matcher" in config
+        assert "reputation" in config
+        assert "economy" in config
+        assert "matcher" in config
+        assert "push" in config
 
     @pytest.mark.asyncio
-    async def test_update_config_unknown_key(self, http):
-        """Updating unknown config key returns 400."""
+    async def test_update_config_unknown_key_400(self, http):
+        """Updating unknown config key returns 400 with error detail."""
         resp = await http.put("/api/admin/config", json={
             "nonexistent_section": {"key": "value"},
         })
         assert resp.status_code == 400
+        assert "nonexistent_section" in resp.json()["detail"]
 
 
 class TestScanDeadlines:
@@ -31,26 +34,73 @@ class TestScanDeadlines:
         assert resp.json()["expired"] == []
 
     @pytest.mark.asyncio
-    async def test_scan_expired_task(self, http, funded_network):
-        """Task past deadline gets expired by scan."""
+    async def test_scan_expired_task_transitions(self, http, funded_network):
+        """Expired task transitions to NO_ONE_ABLE (no results) after scan."""
         funded_network.escrow.get_or_create_account("scan-init", 5000.0)
 
-        # Create task with past deadline
         resp = await http.post("/api/tasks", json={
-            "task_id": "expired-task",
+            "task_id": "scan-expired",
             "initiator_id": "scan-init",
             "content": {"description": "Will expire"},
             "domains": ["coding"],
             "budget": 50.0,
-            "deadline": "2020-01-01T00:00:00Z",  # Already past
+            "deadline": "2020-01-01T00:00:00Z",
         })
         assert resp.status_code == 201
 
-        # Scan
-        resp = await http.post("/api/admin/scan-deadlines")
+        scan = await http.post("/api/admin/scan-deadlines")
+        assert scan.status_code == 200
+        assert "scan-expired" in scan.json()["expired"]
+
+        # Verify task status changed
+        resp = await http.get("/api/tasks/scan-expired")
+        assert resp.json()["status"] == "no_one_able"
+
+    @pytest.mark.asyncio
+    async def test_scan_expired_with_results_awaits(self, http, funded_network):
+        """Expired task WITH results transitions to awaiting_retrieval."""
+        funded_network.escrow.get_or_create_account("scan-init2", 5000.0)
+        funded_network.reputation._scores["scan-worker"] = 0.8
+
+        # Create task with past deadline
+        resp = await http.post("/api/tasks", json={
+            "task_id": "scan-has-result",
+            "initiator_id": "scan-init2",
+            "content": {"description": "Has result before deadline"},
+            "domains": ["coding"],
+            "budget": 100.0,
+            "deadline": "2099-01-01T00:00:00Z",  # Future, will update below
+        })
+        assert resp.status_code == 201
+
+        # Bid and submit result
+        resp = await http.post("/api/tasks/scan-has-result/bid", json={
+            "agent_id": "scan-worker",
+            "confidence": 0.9,
+            "price": 80.0,
+        })
         assert resp.status_code == 200
-        expired = resp.json()["expired"]
-        assert "expired-task" in expired
+
+        resp = await http.post("/api/tasks/scan-has-result/result", json={
+            "agent_id": "scan-worker",
+            "content": {"answer": "done before deadline"},
+        })
+        assert resp.status_code == 200
+
+        # Now set deadline to past
+        resp = await http.put("/api/tasks/scan-has-result/deadline", json={
+            "initiator_id": "scan-init2",
+            "deadline": "2020-01-01T00:00:00Z",
+        })
+        assert resp.status_code == 200
+
+        # Scan
+        scan = await http.post("/api/admin/scan-deadlines")
+        assert "scan-has-result" in scan.json()["expired"]
+
+        # Should be awaiting_retrieval (has results)
+        resp = await http.get("/api/tasks/scan-has-result")
+        assert resp.json()["status"] == "awaiting_retrieval"
 
 
 class TestAdminLogs:
@@ -65,7 +115,7 @@ class TestAdminLogs:
 
     @pytest.mark.asyncio
     async def test_query_logs_after_task(self, http, funded_network):
-        """Logs are generated after task operations."""
+        """Task creation generates at least one log entry."""
         funded_network.escrow.get_or_create_account("log-init", 5000.0)
 
         resp = await http.post("/api/tasks", json={
@@ -77,11 +127,9 @@ class TestAdminLogs:
         })
         assert resp.status_code == 201
 
-        # Query logs for this task
-        resp = await http.get("/api/admin/logs", params={
-            "task_id": "logged-task",
-        })
+        resp = await http.get("/api/admin/logs", params={"task_id": "logged-task"})
         assert resp.status_code == 200
         logs = resp.json()
-        # Should have at least one log entry for task creation
         assert len(logs) >= 1
+        # Log entry should reference the task
+        assert any(log.get("task_id") == "logged-task" for log in logs)

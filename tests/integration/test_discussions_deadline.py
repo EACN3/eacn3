@@ -6,7 +6,7 @@ import pytest
 
 
 async def _setup(mcp, funded_network):
-    """Register agents + fund + create task. Returns task_id."""
+    """Register agents + fund + create task in bidding state. Returns task_id."""
     await mcp.call_tool_parsed("eacn_register_agent", {
         "name": "DD Init",
         "description": "test",
@@ -37,8 +37,8 @@ async def _setup(mcp, funded_network):
 
 class TestDeadline:
     @pytest.mark.asyncio
-    async def test_update_deadline(self, mcp, http, funded_network):
-        """Initiator can update task deadline."""
+    async def test_update_deadline_value(self, mcp, http, funded_network):
+        """Initiator updates deadline, exact value persisted on network."""
         task_id = await _setup(mcp, funded_network)
 
         result = await mcp.call_tool_parsed("eacn_update_deadline", {
@@ -46,11 +46,13 @@ class TestDeadline:
             "new_deadline": "2026-12-31T23:59:59Z",
             "initiator_id": "dd-init",
         })
-        assert result.get("id") == task_id or result.get("deadline")
+        # Plugin returns Task object
+        assert result["id"] == task_id
+        assert result["deadline"] == "2026-12-31T23:59:59Z"
 
         # Verify on network
         resp = await http.get(f"/api/tasks/{task_id}")
-        assert "2026-12-31" in resp.json().get("deadline", "")
+        assert resp.json()["deadline"] == "2026-12-31T23:59:59Z"
 
     @pytest.mark.asyncio
     async def test_create_task_with_deadline(self, mcp, http, funded_network):
@@ -74,56 +76,91 @@ class TestDeadline:
         task_id = task["task_id"]
 
         resp = await http.get(f"/api/tasks/{task_id}")
-        assert "2026-06-15" in resp.json().get("deadline", "")
+        assert resp.json()["deadline"] == "2026-06-15T12:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_scan_expired_deadline(self, http, funded_network):
+        """Task with past deadline is marked expired by scan."""
+        funded_network.escrow.get_or_create_account("scan-init", 5000.0)
+
+        resp = await http.post("/api/tasks", json={
+            "task_id": "expired-dl-task",
+            "initiator_id": "scan-init",
+            "content": {"description": "Will expire"},
+            "domains": ["coding"],
+            "budget": 50.0,
+            "deadline": "2020-01-01T00:00:00Z",
+        })
+        assert resp.status_code == 201
+
+        # Scan deadlines
+        scan = await http.post("/api/admin/scan-deadlines")
+        assert scan.status_code == 200
+        assert "expired-dl-task" in scan.json()["expired"]
+
+        # Task should now be NO_ONE_ABLE (no results)
+        resp = await http.get("/api/tasks/expired-dl-task")
+        assert resp.json()["status"] == "no_one_able"
 
 
 class TestDiscussions:
     @pytest.mark.asyncio
-    async def test_add_discussion(self, mcp, http, funded_network):
-        """Initiator adds a discussion message to a task."""
+    async def test_add_discussion_stored_in_content(self, mcp, http, funded_network):
+        """Discussion messages are stored in task.content.discussions."""
         task_id = await _setup(mcp, funded_network)
+
+        # Need task in bidding state for discussions
+        await mcp.call_tool_parsed("eacn_submit_bid", {
+            "task_id": task_id, "agent_id": "dd-worker",
+            "confidence": 0.9, "price": 80.0,
+        })
 
         result = await mcp.call_tool_parsed("eacn_update_discussions", {
             "task_id": task_id,
             "message": "请注意代码规范",
             "initiator_id": "dd-init",
         })
-        # Should succeed
-        assert result.get("id") == task_id or "discussions" in str(result).lower() or result.get("ok")
+        # Plugin returns Task object
+        assert result["id"] == task_id
+
+        # Verify via HTTP
+        resp = await http.get(f"/api/tasks/{task_id}")
+        content = resp.json()["content"]
+        discussions = content.get("discussions", [])
+        assert len(discussions) >= 1
+        assert discussions[0]["message"] == "请注意代码规范"
 
     @pytest.mark.asyncio
-    async def test_discussion_visible_on_task(self, mcp, http, funded_network):
-        """Discussion messages are stored and visible via task GET."""
+    async def test_multiple_discussions_ordered(self, mcp, http, funded_network):
+        """Multiple discussions are appended in order."""
         task_id = await _setup(mcp, funded_network)
 
+        await mcp.call_tool_parsed("eacn_submit_bid", {
+            "task_id": task_id, "agent_id": "dd-worker",
+            "confidence": 0.9, "price": 80.0,
+        })
+
         await mcp.call_tool_parsed("eacn_update_discussions", {
-            "task_id": task_id,
-            "message": "First message",
-            "initiator_id": "dd-init",
+            "task_id": task_id, "message": "First", "initiator_id": "dd-init",
         })
         await mcp.call_tool_parsed("eacn_update_discussions", {
-            "task_id": task_id,
-            "message": "Second message",
-            "initiator_id": "dd-init",
+            "task_id": task_id, "message": "Second", "initiator_id": "dd-init",
         })
 
         resp = await http.get(f"/api/tasks/{task_id}")
-        data = resp.json()
-        # Discussions may be in content or a separate field
-        task_str = str(data)
-        assert "First message" in task_str or "Second message" in task_str
+        discussions = resp.json()["content"]["discussions"]
+        assert len(discussions) == 2
+        assert discussions[0]["message"] == "First"
+        assert discussions[1]["message"] == "Second"
 
     @pytest.mark.asyncio
-    async def test_discussion_push_event(self, mcp, http, funded_network):
-        """Adding discussion triggers push event to bidders."""
+    async def test_discussion_push_event_received(self, mcp, http, funded_network):
+        """Adding discussion pushes event to bidder's event buffer."""
         task_id = await _setup(mcp, funded_network)
 
-        # Worker bids
         await mcp.call_tool_parsed("eacn_submit_bid", {
-            "task_id": task_id,
-            "agent_id": "dd-worker",
-            "confidence": 0.9,
-            "price": 80.0,
+            "task_id": task_id, "agent_id": "dd-worker",
+            "confidence": 0.9, "price": 80.0,
         })
 
         # Drain old events
@@ -139,52 +176,8 @@ class TestDiscussions:
 
         await asyncio.sleep(1.0)
         result = await mcp.call_tool_parsed("eacn_get_events")
-        events = result.get("events", [])
-        event_types = [e.get("type") for e in events]
-        # Should contain discussion update event
-        assert any("discussion" in t for t in event_types if t), (
-            f"Expected discussion event, got: {event_types}"
+        events = result["events"]
+        event_types = [e["type"] for e in events]
+        assert any("discussion" in t for t in event_types), (
+            f"Expected discussion event, got types: {event_types}"
         )
-
-
-class TestBudgetConfirmation:
-    @pytest.mark.asyncio
-    async def test_confirm_budget_approve(self, mcp, http, funded_network):
-        """Initiator approves an over-budget bid."""
-        task_id = await _setup(mcp, funded_network)
-
-        # Bid over budget (task budget=500, bid price=600)
-        bid = await mcp.call_tool_parsed("eacn_submit_bid", {
-            "task_id": task_id,
-            "agent_id": "dd-worker",
-            "confidence": 0.9,
-            "price": 600.0,
-        })
-        # If over-budget flow is implemented, confirm it
-        if bid.get("status") in ("over_budget", "pending_budget"):
-            result = await mcp.call_tool_parsed("eacn_confirm_budget", {
-                "task_id": task_id,
-                "approved": True,
-                "new_budget": 600.0,
-                "initiator_id": "dd-init",
-            })
-            assert result.get("ok") is True or "confirmed" in str(result).lower()
-
-    @pytest.mark.asyncio
-    async def test_confirm_budget_reject(self, mcp, http, funded_network):
-        """Initiator rejects an over-budget bid."""
-        task_id = await _setup(mcp, funded_network)
-
-        bid = await mcp.call_tool_parsed("eacn_submit_bid", {
-            "task_id": task_id,
-            "agent_id": "dd-worker",
-            "confidence": 0.9,
-            "price": 600.0,
-        })
-        if bid.get("status") in ("over_budget", "pending_budget"):
-            result = await mcp.call_tool_parsed("eacn_confirm_budget", {
-                "task_id": task_id,
-                "approved": False,
-                "initiator_id": "dd-init",
-            })
-            assert result.get("ok") is True or "confirmed" in str(result).lower()

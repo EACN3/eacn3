@@ -19,9 +19,12 @@ class TestUpdateAgent:
             "agent_id": "upd-name",
             "name": "Updated Name",
         })
-        assert result.get("ok") is True or "updated" in str(result).lower()
+        # Plugin returns {updated: true, agent_id, ok, message}
+        assert result["updated"] is True
+        assert result["agent_id"] == "upd-name"
+        assert result["ok"] is True
 
-        # Verify on network
+        # Verify the actual value changed on network
         resp = await http.get("/api/discovery/agents/upd-name")
         assert resp.status_code == 200
         assert resp.json()["name"] == "Updated Name"
@@ -42,22 +45,27 @@ class TestUpdateAgent:
         assert "domain-swap" in disc["agent_ids"]
 
         # Update domains to "beta"
-        await mcp.call_tool_parsed("eacn_update_agent", {
+        result = await mcp.call_tool_parsed("eacn_update_agent", {
             "agent_id": "domain-swap",
             "domains": ["beta"],
         })
+        assert result["updated"] is True
 
-        # Should NOT be in "alpha" anymore
+        # Verify REMOVED from "alpha" DHT
         disc = await mcp.call_tool_parsed("eacn_discover_agents", {"domain": "alpha"})
         assert "domain-swap" not in disc["agent_ids"]
 
-        # Should be in "beta"
+        # Verify ADDED to "beta" DHT
         disc = await mcp.call_tool_parsed("eacn_discover_agents", {"domain": "beta"})
         assert "domain-swap" in disc["agent_ids"]
 
+        # Verify network card updated
+        resp = await http.get("/api/discovery/agents/domain-swap")
+        assert resp.json()["domains"] == ["beta"]
+
     @pytest.mark.asyncio
     async def test_update_agent_skills(self, mcp, http):
-        """Update agent skills, verify on network."""
+        """Update agent skills, verify old replaced and new present on network."""
         await mcp.call_tool_parsed("eacn_register_agent", {
             "name": "Skill Update",
             "description": "test",
@@ -66,26 +74,25 @@ class TestUpdateAgent:
             "agent_id": "skill-upd",
         })
 
-        await mcp.call_tool_parsed("eacn_update_agent", {
+        result = await mcp.call_tool_parsed("eacn_update_agent", {
             "agent_id": "skill-upd",
             "skills": [
                 {"name": "new-skill-1", "description": "new 1"},
                 {"name": "new-skill-2", "description": "new 2"},
             ],
         })
+        assert result["updated"] is True
 
         resp = await http.get("/api/discovery/agents/skill-upd")
         assert resp.status_code == 200
         skill_names = [s["name"] for s in resp.json()["skills"]]
-        assert "new-skill-1" in skill_names
-        assert "new-skill-2" in skill_names
-        assert "old-skill" not in skill_names
+        assert skill_names == ["new-skill-1", "new-skill-2"]
 
 
 class TestUnregisterAgent:
     @pytest.mark.asyncio
     async def test_unregister_removes_from_network(self, mcp, http):
-        """Unregistered agent should not be findable on network."""
+        """Unregistered agent should return 404 on network."""
         await mcp.call_tool_parsed("eacn_register_agent", {
             "name": "To Remove",
             "description": "test",
@@ -93,23 +100,24 @@ class TestUnregisterAgent:
             "skills": [{"name": "code", "description": "code"}],
             "agent_id": "to-remove",
         })
-        # Verify exists
         resp = await http.get("/api/discovery/agents/to-remove")
         assert resp.status_code == 200
 
-        # Unregister
         result = await mcp.call_tool_parsed("eacn_unregister_agent", {
             "agent_id": "to-remove",
         })
-        assert result.get("ok") is True or "unregistered" in str(result).lower()
+        # Plugin returns {unregistered: true, agent_id, ok, message}
+        assert result["unregistered"] is True
+        assert result["agent_id"] == "to-remove"
+        assert result["ok"] is True
 
-        # Verify gone
+        # Network should 404
         resp = await http.get("/api/discovery/agents/to-remove")
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_unregister_removes_from_discovery(self, mcp):
-        """Unregistered agent should not appear in domain discovery."""
+    async def test_unregister_removes_from_dht(self, mcp):
+        """Unregistered agent disappears from domain discovery."""
         await mcp.call_tool_parsed("eacn_register_agent", {
             "name": "Discoverable",
             "description": "test",
@@ -133,6 +141,7 @@ class TestDiscoverAgents:
         disc = await mcp.call_tool_parsed("eacn_discover_agents", {
             "domain": "nonexistent-domain-xyz",
         })
+        assert disc["domain"] == "nonexistent-domain-xyz"
         assert disc["agent_ids"] == []
 
     @pytest.mark.asyncio
@@ -148,6 +157,8 @@ class TestDiscoverAgents:
             })
 
         disc = await mcp.call_tool_parsed("eacn_discover_agents", {"domain": "multi-domain"})
+        assert disc["domain"] == "multi-domain"
+        assert len(disc["agent_ids"]) >= 3
         for i in range(3):
             assert f"multi-{i}" in disc["agent_ids"]
 
@@ -155,39 +166,49 @@ class TestDiscoverAgents:
 class TestListAgents:
     @pytest.mark.asyncio
     async def test_list_my_agents(self, mcp):
-        """list_my_agents returns agents registered under this server."""
-        await mcp.call_tool_parsed("eacn_register_agent", {
+        """list_my_agents returns exact agent cards under this server."""
+        reg = await mcp.call_tool_parsed("eacn_register_agent", {
             "name": "My Agent",
             "description": "test",
             "domains": ["coding"],
             "skills": [{"name": "code", "description": "code"}],
             "agent_id": "list-mine",
         })
+        assert reg["registered"] is True
+
         result = await mcp.call_tool_parsed("eacn_list_my_agents")
-        agent_ids = [a["agent_id"] for a in result.get("agents", result.get("agent_ids", []))]
-        # Could be nested differently, check flexible
-        found = "list-mine" in str(result)
-        assert found, f"Expected list-mine in result: {result}"
+        # Plugin returns {count, agents: [{agent_id, name, domains, ws_connected}, ...]}
+        assert result["count"] >= 1
+        agent_ids = [a["agent_id"] for a in result["agents"]]
+        assert "list-mine" in agent_ids
+        # Verify agent entry has expected fields
+        agent = next(a for a in result["agents"] if a["agent_id"] == "list-mine")
+        assert agent["name"] == "My Agent"
+        assert "coding" in agent["domains"]
 
     @pytest.mark.asyncio
-    async def test_get_agent(self, mcp, http):
-        """eacn_get_agent retrieves a specific agent card."""
+    async def test_get_agent_full_card(self, mcp):
+        """eacn_get_agent returns complete AgentCard with all fields."""
         await mcp.call_tool_parsed("eacn_register_agent", {
             "name": "Get Me",
             "description": "a description",
             "domains": ["coding"],
-            "skills": [{"name": "code", "description": "code"}],
+            "skills": [{"name": "code", "description": "writes code"}],
             "agent_id": "get-me",
         })
         result = await mcp.call_tool_parsed("eacn_get_agent", {"agent_id": "get-me"})
         assert result["agent_id"] == "get-me"
         assert result["name"] == "Get Me"
+        assert result["description"] == "a description"
+        assert "coding" in result["domains"]
+        assert result["skills"][0]["name"] == "code"
+        assert result["skills"][0]["description"] == "writes code"
 
     @pytest.mark.asyncio
-    async def test_get_nonexistent_agent(self, mcp):
-        """Getting a non-existent agent returns error."""
+    async def test_get_nonexistent_agent_returns_error(self, mcp):
+        """Getting a non-existent agent returns error with 404."""
         result = await mcp.call_tool_parsed("eacn_get_agent", {
             "agent_id": "does-not-exist",
         })
-        err = result.get("error") or result.get("raw", "")
-        assert "404" in str(err) or "not found" in str(err).lower()
+        assert "error" in result
+        assert "404" in str(result["error"])

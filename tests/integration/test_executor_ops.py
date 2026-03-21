@@ -4,7 +4,7 @@ import pytest
 
 
 async def _setup_task(mcp, funded_network, task_desc="Executor test", budget=200.0):
-    """Register agents, fund, create task. Returns (task_id, initiator, executor)."""
+    """Register agents, fund, create task. Returns task_id."""
     await mcp.call_tool_parsed("eacn_register_agent", {
         "name": "Initiator",
         "description": "test",
@@ -52,114 +52,115 @@ class TestBidEdgeCases:
             "confidence": 0.9,
             "price": 50.0,
         })
-        err = result.get("error") or result.get("raw", "")
-        assert err, f"Expected error for non-existent task, got: {result}"
-
-    @pytest.mark.asyncio
-    async def test_bid_price_exceeds_budget(self, mcp, http, funded_network):
-        """Bid with price > task budget should be rejected or trigger over-budget flow."""
-        task_id = await _setup_task(mcp, funded_network, budget=100.0)
-
-        result = await mcp.call_tool_parsed("eacn_submit_bid", {
-            "task_id": task_id,
-            "agent_id": "exec-worker",
-            "confidence": 0.9,
-            "price": 500.0,  # Way over budget
-        })
-        # Should either be rejected or require budget confirmation
-        status = result.get("status", "")
-        if status not in ("over_budget", "pending_budget"):
-            # Some implementations just accept it with a flag
-            pass  # Not necessarily an error, depends on implementation
+        assert "error" in result
+        assert "404" in str(result["error"]) or "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
     async def test_low_confidence_rejected(self, mcp, funded_network):
-        """Bid with confidence too low to pass ability gate (conf×rep < 0.5)."""
+        """Bid with confidence × reputation < 0.5 is rejected with 'rejected' status."""
         task_id = await _setup_task(mcp, funded_network)
-        # Set low reputation so ability gate fails
+        # Set low reputation: 0.5 × 0.3 = 0.15 < 0.5 threshold
         funded_network.reputation._scores["exec-worker"] = 0.3
 
         result = await mcp.call_tool_parsed("eacn_submit_bid", {
             "task_id": task_id,
             "agent_id": "exec-worker",
-            "confidence": 0.5,  # 0.5 × 0.3 = 0.15 < 0.5
+            "confidence": 0.5,
             "price": 50.0,
         })
-        status = result.get("status", "")
-        err = result.get("error", "")
-        assert status == "rejected" or "ability" in str(err).lower() or "rejected" in str(result).lower(), (
-            f"Expected rejection for low ability, got: {result}"
-        )
+        assert result["status"] == "rejected"
+        assert result["task_id"] == task_id
+        assert result["agent_id"] == "exec-worker"
 
     @pytest.mark.asyncio
-    async def test_bid_after_close(self, mcp, http, funded_network):
-        """Bidding on a closed task should fail."""
+    async def test_bid_after_close_fails(self, mcp, http, funded_network):
+        """Bidding on a closed task returns error."""
         task_id = await _setup_task(mcp, funded_network)
 
-        # Close the task
         await mcp.call_tool_parsed("eacn_close_task", {
             "task_id": task_id,
             "initiator_id": "exec-init",
         })
 
-        # Try to bid
         result = await mcp.call_tool_parsed("eacn_submit_bid", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "confidence": 0.9,
             "price": 50.0,
         })
-        err = result.get("error") or result.get("raw", "")
-        assert err, f"Expected error for bidding on closed task, got: {result}"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_duplicate_bid_rejected(self, mcp, funded_network):
+        """Same agent bidding twice on same task returns error."""
+        task_id = await _setup_task(mcp, funded_network)
+
+        # First bid succeeds
+        r1 = await mcp.call_tool_parsed("eacn_submit_bid", {
+            "task_id": task_id,
+            "agent_id": "exec-worker",
+            "confidence": 0.9,
+            "price": 80.0,
+        })
+        assert r1["status"] == "executing"
+
+        # Second bid from same agent fails
+        r2 = await mcp.call_tool_parsed("eacn_submit_bid", {
+            "task_id": task_id,
+            "agent_id": "exec-worker",
+            "confidence": 0.95,
+            "price": 70.0,
+        })
+        assert "error" in r2
 
 
 class TestRejectTask:
     @pytest.mark.asyncio
-    async def test_reject_assigned_task(self, mcp, http, funded_network):
-        """Executor rejects an assigned task — slot is freed."""
+    async def test_reject_assigned_task_frees_slot(self, mcp, http, funded_network):
+        """Executor rejects task → bid status REJECTED, task back to bidding."""
         task_id = await _setup_task(mcp, funded_network)
 
-        # Bid
         bid = await mcp.call_tool_parsed("eacn_submit_bid", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "confidence": 0.9,
             "price": 80.0,
         })
-        assert bid["status"] in ("accepted", "executing")
+        assert bid["status"] == "executing"
 
-        # Reject
         result = await mcp.call_tool_parsed("eacn_reject_task", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "reason": "Too complex",
         })
-        assert result.get("ok") is True or "rejected" in str(result).lower()
+        assert result["ok"] is True
+        assert "rejected" in result["message"].lower()
 
-        # Task should go back to unclaimed/bidding state
+        # Task should still be open for bidding
         resp = await http.get(f"/api/tasks/{task_id}")
         assert resp.status_code == 200
-        status = resp.json()["status"]
-        assert status in ("unclaimed", "bidding"), f"Expected unclaimed/bidding after reject, got: {status}"
+        task_data = resp.json()
+        assert task_data["status"] in ("unclaimed", "bidding")
+        # The bid should be marked rejected
+        bid_entry = next(b for b in task_data["bids"] if b["agent_id"] == "exec-worker")
+        assert bid_entry["status"] == "rejected"
 
     @pytest.mark.asyncio
     async def test_reject_unassigned_task_fails(self, mcp, funded_network):
-        """Rejecting a task you're not assigned to should fail."""
+        """Rejecting a task you haven't bid on returns error."""
         task_id = await _setup_task(mcp, funded_network)
 
-        # Try to reject without bidding first
         result = await mcp.call_tool_parsed("eacn_reject_task", {
             "task_id": task_id,
             "agent_id": "exec-worker",
         })
-        err = result.get("error") or result.get("raw", "")
-        assert err, f"Expected error for rejecting unassigned task, got: {result}"
+        assert "error" in result
 
 
 class TestSubmitResult:
     @pytest.mark.asyncio
-    async def test_submit_result_without_bid(self, mcp, http, funded_network):
-        """Submitting result without being assigned should fail."""
+    async def test_submit_result_without_bid_fails(self, mcp, funded_network):
+        """Submitting result without being an active bidder returns error."""
         task_id = await _setup_task(mcp, funded_network)
 
         result = await mcp.call_tool_parsed("eacn_submit_result", {
@@ -167,12 +168,11 @@ class TestSubmitResult:
             "agent_id": "exec-worker",
             "content": {"answer": "sneaky"},
         })
-        err = result.get("error") or result.get("raw", "")
-        assert err, f"Expected error for submitting without assignment, got: {result}"
+        assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_submit_result_rich_content(self, mcp, http, funded_network):
-        """Submit result with nested object content."""
+    async def test_submit_result_stored_correctly(self, mcp, http, funded_network):
+        """Submitted result is retrievable with correct content."""
         task_id = await _setup_task(mcp, funded_network)
 
         await mcp.call_tool_parsed("eacn_submit_bid", {
@@ -185,35 +185,38 @@ class TestSubmitResult:
         rich_content = {
             "code": "print('hello')",
             "language": "python",
-            "metadata": {"lines": 1, "complexity": "low"},
-            "files": [{"path": "main.py", "content": "print('hello')"}],
+            "metadata": {"lines": 1},
         }
         result = await mcp.call_tool_parsed("eacn_submit_result", {
             "task_id": task_id,
             "agent_id": "exec-worker",
             "content": rich_content,
         })
-        assert result.get("ok") is True or "submitted" in str(result).lower()
+        assert result["ok"] is True
 
-        # Verify result stored on network
+        # Close and collect — verify content preserved
         await mcp.call_tool_parsed("eacn_close_task", {
             "task_id": task_id,
             "initiator_id": "exec-init",
         })
-        results = await mcp.call_tool_parsed("eacn_get_task_results", {
+        collected = await mcp.call_tool_parsed("eacn_get_task_results", {
             "task_id": task_id,
             "initiator_id": "exec-init",
         })
-        assert len(results["results"]) >= 1
+        assert len(collected["results"]) == 1
+        r = collected["results"][0]
+        assert r["agent_id"] == "exec-worker"
+        assert r["content"]["code"] == "print('hello')"
+        assert r["content"]["language"] == "python"
+        assert r["selected"] is False  # Not yet selected
 
 
 class TestMultipleBids:
     @pytest.mark.asyncio
-    async def test_multiple_executors_bid(self, mcp, http, funded_network):
-        """Multiple agents can bid on the same task."""
+    async def test_two_executors_both_get_slots(self, mcp, http, funded_network):
+        """Two agents bid on same task — both get EXECUTING (default 5 slots)."""
         task_id = await _setup_task(mcp, funded_network)
 
-        # Register second executor
         await mcp.call_tool_parsed("eacn_register_agent", {
             "name": "Executor 2",
             "description": "test",
@@ -236,13 +239,14 @@ class TestMultipleBids:
             "price": 70.0,
         })
 
-        # At least one should be accepted (depends on concurrent slots)
-        statuses = [bid1.get("status", ""), bid2.get("status", "")]
-        assert "accepted" in statuses or "executing" in statuses, (
-            f"Expected at least one bid accepted, got: {statuses}"
-        )
+        # Both should be executing (default max_concurrent_bidders=5)
+        assert bid1["status"] == "executing"
+        assert bid2["status"] == "executing"
 
-        # Verify bids visible on task
+        # Verify bids on task
         resp = await http.get(f"/api/tasks/{task_id}")
         task_data = resp.json()
-        assert len(task_data["bids"]) >= 1
+        assert task_data["status"] == "bidding"
+        assert len(task_data["bids"]) == 2
+        bid_agents = {b["agent_id"] for b in task_data["bids"]}
+        assert bid_agents == {"exec-worker", "exec-worker-2"}
