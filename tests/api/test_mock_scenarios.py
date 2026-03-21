@@ -9,6 +9,7 @@ from tests.api.conftest import create_task, bid, submit_result, close_task, sele
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 from eacn.network.app import Network
+from eacn.network.config import NetworkConfig
 from eacn.network.api.routes import router as net_router, set_network
 from eacn.network.api.websocket import ws_router
 
@@ -19,7 +20,7 @@ async def large_network():
     from eacn.network.db import Database
     db = Database()
     await db.connect()
-    net = Network(db=db)
+    net = Network(db=db, config=NetworkConfig())
     net.escrow.get_or_create_account("user1", 100_000.0)
     net.escrow.get_or_create_account("user2", 50_000.0)
 

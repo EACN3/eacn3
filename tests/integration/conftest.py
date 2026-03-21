@@ -26,6 +26,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from eacn.network.app import Network
+from eacn.network.config import NetworkConfig
 from eacn.network.db import Database
 from eacn.network.api.routes import router as net_router, set_network
 from eacn.network.api.discovery_routes import discovery_router, set_discovery_network
@@ -48,7 +49,7 @@ async def network():
     """Bare Network with in-memory DB."""
     db = Database()
     await db.connect()
-    net = Network(db=db)
+    net = Network(db=db, config=NetworkConfig())
     yield net
     await db.close()
 
