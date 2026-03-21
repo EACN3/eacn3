@@ -302,3 +302,18 @@ async def http(live_server):
 def seed_reputation(funded_network, agent_id: str, score: float = 0.8) -> None:
     """Pre-seed reputation so bids pass ability gate (confidence × reputation ≥ 0.5)."""
     funded_network.reputation._scores[agent_id] = score
+
+
+def is_error(result: dict) -> bool:
+    """Check if a call_tool_parsed result is an error.
+
+    Plugin errors come in two forms:
+    - {"error": "..."} — JSON-RPC level error or plugin-caught error
+    - {"raw": "POST ... → 4xx: ..."} — HTTP error returned as non-JSON text
+    """
+    if "error" in result:
+        return True
+    raw = result.get("raw", "")
+    if raw and ("→ 4" in raw or "→ 5" in raw):
+        return True
+    return False

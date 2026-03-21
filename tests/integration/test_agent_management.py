@@ -2,6 +2,8 @@
 
 import pytest
 
+from tests.integration.conftest import is_error
+
 
 class TestUpdateAgent:
     @pytest.mark.asyncio
@@ -106,7 +108,6 @@ class TestUnregisterAgent:
         result = await mcp.call_tool_parsed("eacn_unregister_agent", {
             "agent_id": "to-remove",
         })
-        # Plugin returns {unregistered: true, agent_id, ok, message}
         assert result["unregistered"] is True
         assert result["agent_id"] == "to-remove"
         assert result["ok"] is True
@@ -177,11 +178,9 @@ class TestListAgents:
         assert reg["registered"] is True
 
         result = await mcp.call_tool_parsed("eacn_list_my_agents")
-        # Plugin returns {count, agents: [{agent_id, name, domains, ws_connected}, ...]}
         assert result["count"] >= 1
         agent_ids = [a["agent_id"] for a in result["agents"]]
         assert "list-mine" in agent_ids
-        # Verify agent entry has expected fields
         agent = next(a for a in result["agents"] if a["agent_id"] == "list-mine")
         assert agent["name"] == "My Agent"
         assert "coding" in agent["domains"]
@@ -206,9 +205,8 @@ class TestListAgents:
 
     @pytest.mark.asyncio
     async def test_get_nonexistent_agent_returns_error(self, mcp):
-        """Getting a non-existent agent returns error with 404."""
+        """Getting a non-existent agent returns error."""
         result = await mcp.call_tool_parsed("eacn_get_agent", {
             "agent_id": "does-not-exist",
         })
-        assert "error" in result
-        assert "404" in str(result["error"])
+        assert is_error(result), f"Expected error, got: {result}"

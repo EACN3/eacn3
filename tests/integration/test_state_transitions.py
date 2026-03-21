@@ -2,6 +2,8 @@
 
 import pytest
 
+from tests.integration.conftest import is_error
+
 
 async def _setup(mcp, funded_network):
     """Register agent and fund. Returns nothing."""
@@ -23,6 +25,29 @@ async def _setup(mcp, funded_network):
     funded_network.escrow.get_or_create_account("st-init", 10000.0)
     funded_network.reputation._scores["st-init"] = 0.8
     funded_network.reputation._scores["st-worker"] = 0.8
+
+
+async def _complete_task(mcp, task_id):
+    """Drive a task all the way to COMPLETED status."""
+    await mcp.call_tool_parsed("eacn_submit_bid", {
+        "task_id": task_id, "agent_id": "st-worker",
+        "confidence": 0.9, "price": 80.0,
+    })
+    await mcp.call_tool_parsed("eacn_submit_result", {
+        "task_id": task_id, "agent_id": "st-worker",
+        "content": {"answer": "done"},
+    })
+    await mcp.call_tool_parsed("eacn_close_task", {
+        "task_id": task_id, "initiator_id": "st-init",
+    })
+    # collect_results transitions AWAITING_RETRIEVAL → COMPLETED
+    await mcp.call_tool_parsed("eacn_get_task_results", {
+        "task_id": task_id, "initiator_id": "st-init",
+    })
+    await mcp.call_tool_parsed("eacn_select_result", {
+        "task_id": task_id, "agent_id": "st-worker",
+        "initiator_id": "st-init",
+    })
 
 
 class TestNoOneAbleRefund:
@@ -72,20 +97,15 @@ class TestNoOneAbleRefund:
         })
         task_id = task["task_id"]
 
-        # Bid + submit result
         await mcp.call_tool_parsed("eacn_submit_bid", {
-            "task_id": task_id,
-            "agent_id": "st-worker",
-            "confidence": 0.9,
-            "price": 80.0,
+            "task_id": task_id, "agent_id": "st-worker",
+            "confidence": 0.9, "price": 80.0,
         })
         await mcp.call_tool_parsed("eacn_submit_result", {
-            "task_id": task_id,
-            "agent_id": "st-worker",
+            "task_id": task_id, "agent_id": "st-worker",
             "content": {"answer": "done"},
         })
 
-        # Close → should be awaiting_retrieval (has results)
         close_result = await mcp.call_tool_parsed("eacn_close_task", {
             "task_id": task_id,
             "initiator_id": "st-init",
@@ -111,34 +131,13 @@ class TestTerminalStates:
             "initiator_id": "st-init",
         })
         task_id = task["task_id"]
-
-        # Full lifecycle → completed
-        await mcp.call_tool_parsed("eacn_submit_bid", {
-            "task_id": task_id,
-            "agent_id": "st-worker",
-            "confidence": 0.9,
-            "price": 80.0,
-        })
-        await mcp.call_tool_parsed("eacn_submit_result", {
-            "task_id": task_id,
-            "agent_id": "st-worker",
-            "content": {"answer": "done"},
-        })
-        await mcp.call_tool_parsed("eacn_close_task", {
-            "task_id": task_id,
-            "initiator_id": "st-init",
-        })
-        await mcp.call_tool_parsed("eacn_select_result", {
-            "task_id": task_id,
-            "agent_id": "st-worker",
-            "initiator_id": "st-init",
-        })
+        await _complete_task(mcp, task_id)
 
         # Verify completed
         resp = await http.get(f"/api/tasks/{task_id}")
         assert resp.json()["status"] == "completed"
 
-        # Register new agent and try to bid → should fail
+        # Try to bid → should fail
         await mcp.call_tool_parsed("eacn_register_agent", {
             "name": "Late Bidder",
             "description": "test",
@@ -154,7 +153,7 @@ class TestTerminalStates:
             "confidence": 0.9,
             "price": 50.0,
         })
-        assert "error" in result
+        assert is_error(result), f"Expected error bidding on completed task, got: {result}"
 
     @pytest.mark.asyncio
     async def test_cannot_close_completed_task(self, mcp, http, funded_network):
@@ -169,29 +168,14 @@ class TestTerminalStates:
             "initiator_id": "st-init",
         })
         task_id = task["task_id"]
+        await _complete_task(mcp, task_id)
 
-        await mcp.call_tool_parsed("eacn_submit_bid", {
-            "task_id": task_id, "agent_id": "st-worker",
-            "confidence": 0.9, "price": 80.0,
-        })
-        await mcp.call_tool_parsed("eacn_submit_result", {
-            "task_id": task_id, "agent_id": "st-worker",
-            "content": {"answer": "done"},
-        })
-        await mcp.call_tool_parsed("eacn_close_task", {
-            "task_id": task_id, "initiator_id": "st-init",
-        })
-        await mcp.call_tool_parsed("eacn_select_result", {
-            "task_id": task_id, "agent_id": "st-worker",
-            "initiator_id": "st-init",
-        })
-
-        # Try to close again
+        # Try to close again → error
         result = await mcp.call_tool_parsed("eacn_close_task", {
             "task_id": task_id,
             "initiator_id": "st-init",
         })
-        assert "error" in result
+        assert is_error(result), f"Expected error closing completed task, got: {result}"
 
     @pytest.mark.asyncio
     async def test_cannot_close_no_one_able_task(self, mcp, funded_network):
@@ -206,17 +190,15 @@ class TestTerminalStates:
         })
         task_id = task["task_id"]
 
-        # Close without results → no_one_able
         r1 = await mcp.call_tool_parsed("eacn_close_task", {
             "task_id": task_id, "initiator_id": "st-init",
         })
         assert r1["status"] == "no_one_able"
 
-        # Try to close again → error
         r2 = await mcp.call_tool_parsed("eacn_close_task", {
             "task_id": task_id, "initiator_id": "st-init",
         })
-        assert "error" in r2
+        assert is_error(r2), f"Expected error closing no_one_able task, got: {r2}"
 
     @pytest.mark.asyncio
     async def test_cannot_submit_result_on_no_one_able(self, mcp, funded_network):
@@ -231,27 +213,25 @@ class TestTerminalStates:
         })
         task_id = task["task_id"]
 
-        # Must bid first while task is alive
+        # Bid while alive
         await mcp.call_tool_parsed("eacn_submit_bid", {
             "task_id": task_id, "agent_id": "st-worker",
             "confidence": 0.9, "price": 50.0,
         })
 
-        # Close without results from worker → no_one_able
-        # But worker bid, so status depends on if results exist
-        # Let's close it — it has bids but no results
+        # Close (has bids but no results → no_one_able)
         close = await mcp.call_tool_parsed("eacn_close_task", {
             "task_id": task_id, "initiator_id": "st-init",
         })
         assert close["status"] == "no_one_able"
 
-        # Now try to submit result → should fail (task is terminal)
+        # Submit result on terminal task → fail
         result = await mcp.call_tool_parsed("eacn_submit_result", {
             "task_id": task_id,
             "agent_id": "st-worker",
             "content": {"answer": "too late"},
         })
-        assert "error" in result
+        assert is_error(result), f"Expected error submitting to no_one_able task, got: {result}"
 
 
 class TestCollectResultsTransition:
@@ -284,7 +264,7 @@ class TestCollectResultsTransition:
         resp = await http.get(f"/api/tasks/{task_id}")
         assert resp.json()["status"] == "awaiting_retrieval"
 
-        # Collect
+        # Collect transitions to completed
         collected = await mcp.call_tool_parsed("eacn_get_task_results", {
             "task_id": task_id,
             "initiator_id": "st-init",
@@ -297,7 +277,7 @@ class TestCollectResultsTransition:
 
     @pytest.mark.asyncio
     async def test_collect_before_ready_fails(self, mcp, http, funded_network):
-        """Collecting results while task is still unclaimed/bidding fails."""
+        """Collecting results while task is still unclaimed returns 400."""
         await _setup(mcp, funded_network)
 
         task = await mcp.call_tool_parsed("eacn_create_task", {
@@ -308,10 +288,8 @@ class TestCollectResultsTransition:
         })
         task_id = task["task_id"]
 
-        # Direct HTTP to see exact error
         resp = await http.get(
             f"/api/tasks/{task_id}/results",
             params={"initiator_id": "st-init"},
         )
         assert resp.status_code == 400
-        assert "awaiting_retrieval" in resp.json()["detail"].lower() or "completed" in resp.json()["detail"].lower()

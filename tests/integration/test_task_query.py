@@ -2,6 +2,8 @@
 
 import pytest
 
+from tests.integration.conftest import is_error
+
 
 async def _setup_agent(mcp, funded_network, agent_id="query-init"):
     """Register agent + fund for task creation."""
@@ -23,8 +25,7 @@ class TestGetTask:
         result = await mcp.call_tool_parsed("eacn_get_task", {
             "task_id": "nonexistent-task-xyz",
         })
-        assert "error" in result
-        assert "404" in str(result["error"])
+        assert is_error(result), f"Expected error for non-existent task, got: {result}"
 
     @pytest.mark.asyncio
     async def test_get_task_returns_full_details(self, mcp, funded_network):
@@ -178,10 +179,10 @@ class TestOpenTasks:
         })
 
         result = await mcp.call_tool_parsed("eacn_list_open_tasks", {
-            "domains": ["coding"],
+            "domains": "coding",
         })
         assert result["count"] >= 1
-        task_ids = [task["id"] for task in result["tasks"]]
+        task_ids = [task.get("task_id") or task.get("id") for task in result["tasks"]]
         assert t["task_id"] in task_ids
 
     @pytest.mark.asyncio

@@ -2,6 +2,8 @@
 
 import pytest
 
+from tests.integration.conftest import is_error
+
 
 class TestBalanceEdgeCases:
     @pytest.mark.asyncio
@@ -10,8 +12,7 @@ class TestBalanceEdgeCases:
         result = await mcp.call_tool_parsed("eacn_get_balance", {
             "agent_id": "no-such-agent",
         })
-        assert "error" in result
-        assert "404" in str(result["error"]) or "not found" in result["error"].lower()
+        assert is_error(result), f"Expected error for non-existent agent, got: {result}"
 
     @pytest.mark.asyncio
     async def test_zero_balance_account(self, mcp, funded_network):

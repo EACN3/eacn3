@@ -2,6 +2,8 @@
 
 import pytest
 
+from tests.integration.conftest import is_error
+
 
 async def _setup_agent(mcp, funded_network, agent_id="tc-init", balance=10000.0):
     """Register agent and fund account."""
@@ -210,7 +212,7 @@ class TestSubtaskCreation:
             "domains": ["coding"],
             "initiator_id": "over-sub",
         })
-        assert "error" in sub
+        assert is_error(sub), f"Expected error for over-budget subtask, got: {sub}"
 
     @pytest.mark.asyncio
     async def test_subtask_budget_deducts_from_parent(self, mcp, http, funded_network):
