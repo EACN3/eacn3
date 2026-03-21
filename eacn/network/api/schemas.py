@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 # ── Task ─────────────────────────────────────────────────────────────
 
 class HumanContactSchema(BaseModel):
-    """执行者联系人类的权限开关。由任务发起者在创建任务时设置。"""
+    """Permission toggle for executor to contact a human. Set by task initiator at creation."""
     allowed: bool = False
     contact_id: str | None = None
     timeout_s: int | None = None

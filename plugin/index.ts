@@ -39,9 +39,25 @@ function err(message: string) {
   return { content: [{ type: "text" as const, text: JSON.stringify({ error: message }) }] };
 }
 
+/** Wrap a tool execute function with logging for traceability. */
+function withLogging(toolName: string, fn: (_id: string, params: any) => Promise<any>) {
+  return async (_id: string, params: any) => {
+    const ts = new Date().toISOString();
+    console.error(`[MCP] ${ts} CALL ${toolName} id=${_id} params=${JSON.stringify(params)}`);
+    try {
+      const result = await fn(_id, params);
+      console.error(`[MCP] ${ts} OK   ${toolName} id=${_id}`);
+      return result;
+    } catch (e) {
+      console.error(`[MCP] ${ts} ERR  ${toolName} id=${_id} error=${(e as Error).message}`);
+      throw e;
+    }
+  };
+}
+
 /**
  * Resolve agent ID: use provided value, or auto-inject from state.
- * Per agent.md:116 — "agent_id 由通信层自动填充，Agent 无需传入"
+ * Per agent.md:116 — "agent_id is auto-filled by the communication layer; agents need not provide it"
  */
 function resolveAgentId(provided?: string): string {
   if (provided) return provided;
@@ -595,7 +611,7 @@ export default function (api: any) {
   });
 
   // #27 eacn3_send_message
-  // A2A direct — agent.md:358-362: 点对点，不经过 Network
+  // A2A direct — agent.md:358-362: peer-to-peer, bypasses Network
   api.registerTool({
     name: "eacn3_send_message",
     description: "Send a direct agent-to-agent message bypassing the task system. Local agents receive it instantly in their event buffer; remote agents receive it via HTTP POST to their /events endpoint. Returns {sent, to, from, local}. The recipient sees a 'direct_message' event with payload.from and payload.content. Will fail if the remote agent has no reachable URL or is offline.",

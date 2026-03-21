@@ -94,7 +94,7 @@ class TestAgentRegistration:
         sid = await _register_server(api)
         resp = await api.post("/api/discovery/agents", json={
             "agent_id": "agent1", "name": "Translator",
-            "agent_type": "executor", "domains": ["翻译"],
+            "agent_type": "executor", "domains": ["translation"],
             "skills": [SAMPLE_SKILL], "url": "http://agent1:9000",
             "server_id": sid,
         })
@@ -129,7 +129,7 @@ class TestAgentRegistration:
         sid = await _register_server(api)
         await api.post("/api/discovery/agents", json={
             "agent_id": "agent1", "name": "Translator",
-            "agent_type": "executor", "domains": ["翻译"],
+            "agent_type": "executor", "domains": ["translation"],
             "skills": [SAMPLE_SKILL], "url": "http://agent1:9000",
             "server_id": sid,
         })
@@ -138,7 +138,7 @@ class TestAgentRegistration:
         assert resp.status_code == 200
         card = resp.json()
         assert card["agent_id"] == "agent1"
-        assert card["domains"] == ["翻译"]
+        assert card["domains"] == ["translation"]
         assert card["server_id"] == sid
 
     @pytest.mark.asyncio
@@ -151,19 +151,19 @@ class TestAgentRegistration:
         sid = await _register_server(api)
         await api.post("/api/discovery/agents", json={
             "agent_id": "agent1", "name": "Translator",
-            "agent_type": "executor", "domains": ["翻译"],
+            "agent_type": "executor", "domains": ["translation"],
             "skills": [SAMPLE_SKILL], "url": "http://agent1:9000",
             "server_id": sid,
         })
 
         resp = await api.put("/api/discovery/agents/agent1", json={
-            "domains": ["翻译", "写作"],
+            "domains": ["translation", "writing"],
             "description": "Updated description",
         })
         assert resp.status_code == 200
 
         card = (await api.get("/api/discovery/agents/agent1")).json()
-        assert set(card["domains"]) == {"翻译", "写作"}
+        assert set(card["domains"]) == {"translation", "writing"}
         assert card["description"] == "Updated description"
 
     @pytest.mark.asyncio
@@ -171,7 +171,7 @@ class TestAgentRegistration:
         sid = await _register_server(api)
         await api.post("/api/discovery/agents", json={
             "agent_id": "agent1", "name": "Translator",
-            "agent_type": "executor", "domains": ["翻译"],
+            "agent_type": "executor", "domains": ["translation"],
             "skills": [SAMPLE_SKILL], "url": "http://agent1:9000",
             "server_id": sid,
         })

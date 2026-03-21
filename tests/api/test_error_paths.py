@@ -1,6 +1,6 @@
-"""Tests: 所有接口的错误路径.
+"""Tests: Error paths for all API endpoints.
 
-验证: 400/403/404/409/422 各种错误场景.
+Covers: 400/403/404/409/422 various error scenarios.
 """
 
 import pytest

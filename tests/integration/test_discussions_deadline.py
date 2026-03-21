@@ -117,7 +117,7 @@ class TestDiscussions:
 
         result = await mcp.call_tool_parsed("eacn3_update_discussions", {
             "task_id": task_id,
-            "message": "请注意代码规范",
+            "message": "Please follow code conventions",
             "initiator_id": "dd-init",
         })
         # Plugin returns Task object
@@ -128,7 +128,7 @@ class TestDiscussions:
         content = resp.json()["content"]
         discussions = content.get("discussions", [])
         assert len(discussions) >= 1
-        assert discussions[0]["message"] == "请注意代码规范"
+        assert discussions[0]["message"] == "Please follow code conventions"
 
     @pytest.mark.asyncio
     async def test_multiple_discussions_ordered(self, mcp, http, funded_network):

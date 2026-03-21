@@ -1,14 +1,14 @@
-"""配置管理: 从 TOML 文件加载，运行时可热更新。
+"""Config management: load from TOML files, hot-reload at runtime.
 
-加载优先级:
-  1. config.toml  (用户自定义，git-ignored)
-  2. config.default.toml  (默认值，随仓库分发)
-  3. 硬编码 fallback  (万一两个文件都丢了)
+Loading priority:
+  1. config.toml  (user override, git-ignored)
+  2. config.default.toml  (defaults, shipped with repo)
+  3. Hardcoded fallback  (in case both files are missing)
 
-用法:
-  cfg = load_config()                       # 自动搜索
-  cfg = load_config("/path/to/config.toml") # 指定文件
-  save_config(cfg, "/path/to/config.toml")  # 保存修改
+Usage:
+  cfg = load_config()                       # auto-search
+  cfg = load_config("/path/to/config.toml") # explicit path
+  save_config(cfg, "/path/to/config.toml")  # persist changes
 """
 
 from __future__ import annotations
@@ -19,14 +19,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-# ── 配置文件搜索路径 ─────────────────────────────────────────────────
+# ── Config file search paths ──────────────────────────────────────────
 
 _THIS_DIR = Path(__file__).parent
 _DEFAULT_TOML = _THIS_DIR / "config.default.toml"
 _USER_TOML = _THIS_DIR / "config.toml"
 
 
-# ── Pydantic schemas (只做类型校验，默认值全部从 TOML 来) ────────────
+# ── Pydantic schemas (type validation only; defaults come from TOML) ──
 
 class ReputationConfig(BaseModel):
     max_gain: float = 0.1
@@ -103,14 +103,14 @@ class NetworkConfig(BaseModel):
     cluster: ClusterConfig = Field(default_factory=ClusterConfig)
 
 
-# ── 加载/保存 ────────────────────────────────────────────────────────
+# ── Load / Save ──────────────────────────────────────────────────────
 
 def load_config(path: str | Path | None = None) -> NetworkConfig:
-    """从 TOML 文件加载配置。
+    """Load config from a TOML file.
 
-    path=None 时自动搜索:
-      1. eacn/network/config.toml  (用户覆盖)
-      2. eacn/network/config.default.toml  (默认)
+    When path=None, auto-searches:
+      1. eacn/network/config.toml  (user override)
+      2. eacn/network/config.default.toml  (defaults)
     """
     if path is not None:
         p = Path(path)
@@ -118,7 +118,7 @@ def load_config(path: str | Path | None = None) -> NetworkConfig:
             raise FileNotFoundError(f"Config file not found: {p}")
         return _parse_toml(p)
 
-    # 先加载 default，再用 user 覆盖
+    # Load defaults first, then override with user config
     data: dict[str, Any] = {}
     if _DEFAULT_TOML.exists():
         data = _read_toml(_DEFAULT_TOML)
@@ -130,14 +130,14 @@ def load_config(path: str | Path | None = None) -> NetworkConfig:
 
 
 def save_config(config: NetworkConfig, path: str | Path | None = None) -> Path:
-    """将配置写入 TOML 文件。默认写到 config.toml。"""
+    """Write config to a TOML file. Defaults to config.toml."""
     p = Path(path) if path else _USER_TOML
     lines = _to_toml(config.model_dump())
     p.write_text(lines, encoding="utf-8")
     return p
 
 
-# ── 内部工具 ──────────────────────────────────────────────────────────
+# ── Internal utilities ────────────────────────────────────────────────
 
 def _read_toml(path: Path) -> dict[str, Any]:
     with open(path, "rb") as f:
@@ -149,7 +149,7 @@ def _parse_toml(path: Path) -> NetworkConfig:
 
 
 def _deep_merge(base: dict, override: dict) -> None:
-    """递归合并 override 到 base (in-place)。"""
+    """Recursively merge override into base (in-place)."""
     for k, v in override.items():
         if k in base and isinstance(base[k], dict) and isinstance(v, dict):
             _deep_merge(base[k], v)
@@ -158,15 +158,15 @@ def _deep_merge(base: dict, override: dict) -> None:
 
 
 def _to_toml(data: dict[str, Any]) -> str:
-    """简单 TOML 序列化 (不依赖第三方库)。"""
+    """Simple TOML serializer (no third-party dependency)."""
     lines: list[str] = []
 
-    # 先输出标量字段
+    # Output scalar fields first
     for k, v in data.items():
         if not isinstance(v, dict):
             lines.append(f"{k} = {_toml_value(v)}")
 
-    # 再输出子表
+    # Then output sub-tables
     for k, v in data.items():
         if isinstance(v, dict):
             lines.append("")
@@ -174,7 +174,7 @@ def _to_toml(data: dict[str, Any]) -> str:
             for sk, sv in v.items():
                 if not isinstance(sv, dict):
                     lines.append(f"{sk} = {_toml_value(sv)}")
-            # 嵌套子表 (e.g. reputation.event_weights)
+            # Nested sub-tables (e.g. reputation.event_weights)
             for sk, sv in v.items():
                 if isinstance(sv, dict):
                     lines.append("")

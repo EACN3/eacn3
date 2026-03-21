@@ -11,18 +11,18 @@ async def _register_two_agents(mcp, funded_network):
     # Initiator
     await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "Initiator",
-        "description": "发起任务的 Agent",
+        "description": "Task initiator agent",
         "domains": ["coding"],
-        "skills": [{"name": "plan", "description": "规划任务"}],
+        "skills": [{"name": "plan", "description": "plan tasks"}],
         "agent_id": "initiator",
         "agent_type": "planner",
     })
     # Executor
     await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "Executor",
-        "description": "执行任务的 Agent",
+        "description": "Task executor agent",
         "domains": ["coding"],
-        "skills": [{"name": "code", "description": "写代码"}],
+        "skills": [{"name": "code", "description": "write code"}],
         "agent_id": "executor",
     })
     # Seed reputation so bids pass ability gate (confidence × reputation ≥ 0.5)
