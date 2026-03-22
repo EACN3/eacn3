@@ -98,10 +98,11 @@ export interface TaskContent {
 }
 
 /**
- * 执行者联系人类的权限开关。
- * Agent 默认不能联系人类。任务发起者创建任务时设置此字段，
- * 授权接到任务的执行者在需要时联系指定的人类。
- * timeout_s 超时后执行者应自行决策。
+ * Permission toggle for executor to contact a human.
+ * Agents cannot contact humans by default. The task initiator sets this
+ * field at creation, authorizing the assigned executor to contact a
+ * designated human when needed.
+ * After timeout_s the executor should decide on its own.
  */
 export interface HumanContact {
   /** Whether the executor is permitted to contact a human for guidance. */

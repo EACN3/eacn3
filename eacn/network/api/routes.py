@@ -400,7 +400,7 @@ async def deposit(req: DepositRequest):
 
 @router.get("/cluster/status")
 async def cluster_status():
-    """查看集群状态: 本节点信息、所有已知成员、集群模式。"""
+    """View cluster status: local node info, all known members, cluster mode."""
     net = _net()
     cluster = net.cluster
     local = cluster.local_node
@@ -433,16 +433,16 @@ async def cluster_status():
 
 @router.get("/admin/config")
 async def get_config():
-    """读取当前全部超参数。"""
+    """Read all current hyperparameters."""
     return _net().config.model_dump()
 
 
 @router.put("/admin/config")
 async def update_config(patch: dict):
-    """部分更新超参数并持久化到 config.toml。
+    """Partially update hyperparameters and persist to config.toml.
 
     Example: {"reputation": {"max_gain": 0.2}, "economy": {"platform_fee_rate": 0.03}}
-    自动 reload 受影响模块 + 写入 config.toml。
+    Auto-reloads affected modules and writes to config.toml.
     """
     from eacn.network.config import NetworkConfig, save_config, _deep_merge
 
@@ -464,7 +464,7 @@ async def update_config(patch: dict):
     net.push.MAX_RETRIES = new_config.push.max_retries
     net.settlement.platform_fee_rate = new_config.economy.platform_fee_rate
 
-    # 持久化
+    # Persist
     save_config(new_config)
 
     return new_config.model_dump()

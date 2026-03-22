@@ -57,6 +57,35 @@ function log(msg) { console.log(`  ${msg}`); }
 function ok(msg)  { console.log(`  ✓ ${msg}`); }
 function fail(msg){ console.log(`  ✗ ${msg}`); }
 
+function readTOML(filePath) {
+  try {
+    const text = fs.readFileSync(filePath, 'utf8');
+    return { _raw: text, _path: filePath };
+  } catch (_) {
+    return { _raw: '', _path: filePath };
+  }
+}
+
+/** Ensure dist/server.js exists, build if needed. Returns absolute path. */
+function ensureBuild() {
+  const serverJs = path.join(PKG_ROOT, 'dist', 'server.js');
+  if (!fs.existsSync(serverJs)) {
+    log('dist/server.js not found — building...');
+    const build = spawnSync('npm', ['run', 'build'], { cwd: PKG_ROOT, stdio: 'inherit' });
+    if (build.status !== 0) {
+      fail('build failed');
+      process.exit(1);
+    }
+    ok('build succeeded');
+  }
+  return serverJs;
+}
+
+/** Get absolute path to AGENT_GUIDE.md */
+function agentGuidePath() {
+  return path.join(PKG_ROOT, 'AGENT_GUIDE.md');
+}
+
 // ── diagnose ──────────────────────────────────────────────────────────────────
 
 function diagnose() {
@@ -311,7 +340,159 @@ function setupOpenclaw() {
   }
 }
 
-// ── main ──────────────────────────────────────────────────────────────────────
+// ── setup: Claude Code ────────────────────────────────────────────────────────
+
+function setupClaudeCode(scope) {
+  console.log('\neacn3 setup — Claude Code\n');
+  const serverJs = ensureBuild();
+
+  let configPath;
+  if (scope === 'global') {
+    configPath = path.join(os.homedir(), '.claude.json');
+  } else {
+    configPath = path.join(process.cwd(), '.mcp.json');
+  }
+
+  const config = readJSON(configPath);
+  if (!config.mcpServers) config.mcpServers = {};
+  config.mcpServers.eacn3 = {
+    type: 'stdio',
+    command: 'node',
+    args: [serverJs],
+  };
+
+  writeJSON(configPath, config);
+  ok(`MCP server registered in ${configPath}`);
+
+  // Hint about AGENT_GUIDE
+  const guide = agentGuidePath();
+  if (fs.existsSync(guide)) {
+    log('');
+    log(`Tip: AGENT_GUIDE.md is at ${guide}`);
+    log('Add to your CLAUDE.md or project instructions for best results:');
+    log(`  "Read ${guide} before using eacn3_* tools."`);
+  }
+
+  console.log(`\nDone. Restart Claude Code to load the eacn3 MCP server.\n`);
+}
+
+// ── setup: Cursor ─────────────────────────────────────────────────────────────
+
+function setupCursor(scope) {
+  console.log('\neacn3 setup — Cursor\n');
+  const serverJs = ensureBuild();
+
+  let configPath;
+  if (scope === 'global') {
+    configPath = path.join(os.homedir(), '.cursor', 'mcp.json');
+  } else {
+    configPath = path.join(process.cwd(), '.cursor', 'mcp.json');
+  }
+
+  const config = readJSON(configPath);
+  if (!config.mcpServers) config.mcpServers = {};
+  config.mcpServers.eacn3 = {
+    command: 'node',
+    args: [serverJs],
+  };
+
+  writeJSON(configPath, config);
+  ok(`MCP server registered in ${configPath}`);
+
+  const guide = agentGuidePath();
+  if (fs.existsSync(guide)) {
+    log('');
+    log(`Tip: AGENT_GUIDE.md is at ${guide}`);
+    log('Add to your .cursorrules for best results:');
+    log(`  "Read ${guide} before using eacn3_* tools."`);
+  }
+
+  console.log(`\nDone. Restart Cursor to load the eacn3 MCP server.\n`);
+}
+
+// ── setup: Codex ──────────────────────────────────────────────────────────────
+
+function setupCodex(scope) {
+  console.log('\neacn3 setup — Codex\n');
+  const serverJs = ensureBuild();
+
+  let configPath;
+  if (scope === 'global') {
+    configPath = path.join(os.homedir(), '.codex', 'config.toml');
+  } else {
+    configPath = path.join(process.cwd(), '.codex', 'config.toml');
+  }
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+
+  // Read existing TOML content
+  let toml = '';
+  try { toml = fs.readFileSync(configPath, 'utf8'); } catch (_) {}
+
+  // Remove existing [mcp_servers.eacn3] block if present
+  toml = toml.replace(/\[mcp_servers\.eacn3\][^\[]*/, '');
+
+  // Append new block
+  const block = [
+    '',
+    '[mcp_servers.eacn3]',
+    `command = "node"`,
+    `args = [${JSON.stringify(serverJs)}]`,
+    'enabled = true',
+    '',
+  ].join('\n');
+
+  toml = toml.trimEnd() + '\n' + block;
+  fs.writeFileSync(configPath, toml, 'utf8');
+  ok(`MCP server registered in ${configPath}`);
+
+  const guide = agentGuidePath();
+  if (fs.existsSync(guide)) {
+    log('');
+    log(`Tip: AGENT_GUIDE.md is at ${guide}`);
+    log('Add to your AGENTS.md for best results:');
+    log(`  "Read ${guide} before using eacn3_* tools."`);
+  }
+
+  console.log(`\nDone. Restart Codex to load the eacn3 MCP server.\n`);
+}
+
+// ── setup router ──────────────────────────────────────────────────────────────
+
+function setupRouter() {
+  const target = process.argv[3];
+  const flags = process.argv.slice(4);
+  const scope = flags.includes('--global') ? 'global' : 'project';
+
+  switch (target) {
+    case 'claude-code':
+    case 'claude':
+      setupClaudeCode(scope);
+      break;
+    case 'cursor':
+      setupCursor(scope);
+      break;
+    case 'codex':
+      setupCodex(scope);
+      break;
+    case undefined:
+    case 'openclaw':
+      setupOpenclaw();
+      break;
+    default:
+      console.log(`\nUnknown target: "${target}"\n`);
+      console.log('Supported targets:');
+      console.log('  npx eacn3 setup                  # OpenClaw (default)');
+      console.log('  npx eacn3 setup claude-code       # Claude Code');
+      console.log('  npx eacn3 setup cursor            # Cursor');
+      console.log('  npx eacn3 setup codex             # Codex');
+      console.log('');
+      console.log('Options:');
+      console.log('  --global    Install to user-level config (default: project-level)');
+      console.log('');
+      process.exit(1);
+  }
+}
 
 // ── health ────────────────────────────────────────────────────────────────────
 
@@ -368,22 +549,31 @@ function showHelp() {
 eacn3 — EACN3 network plugin CLI (v${readJSON(path.join(PKG_ROOT, 'package.json')).version || '0.3.0'})
 
 Usage:
-  eacn3 <command> [options]
+  eacn3 <command> [target] [options]
 
 Commands:
-  setup                Install / update plugin into OpenClaw
+  setup [target]       Install plugin for a specific client
   diagnose | doctor    Run full diagnostics on plugin installation
   health [endpoint]    Probe a network node's /health endpoint
   cluster [endpoint]   Show cluster topology and member status
 
-Options:
-  --help, -h           Show this help message
+Setup targets:
+  setup                OpenClaw native plugin (default)
+  setup claude-code    Claude Code — writes .mcp.json or ~/.claude.json
+  setup cursor         Cursor — writes .cursor/mcp.json
+  setup codex          Codex — writes .codex/config.toml
+
+Setup options:
+  --global             Install to user-level config (default: project-level)
 
 Examples:
-  npx eacn3 setup
+  npx eacn3 setup                                    # OpenClaw
+  npx eacn3 setup claude-code                        # Claude Code (project)
+  npx eacn3 setup claude-code --global               # Claude Code (global)
+  npx eacn3 setup cursor                             # Cursor (project)
+  npx eacn3 setup codex --global                     # Codex (global)
   npx eacn3 diagnose
   npx eacn3 health http://175.102.130.69:37892
-  npx eacn3 cluster http://175.102.130.69:37892
 `);
 }
 
@@ -394,7 +584,7 @@ const cmd = process.argv[2];
 
 switch (cmd) {
   case 'setup':
-    setupOpenclaw();
+    setupRouter();
     break;
   case 'diagnose':
   case 'diag':

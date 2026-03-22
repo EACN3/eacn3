@@ -87,7 +87,7 @@ class TestWebSocketPush:
         # Initiator adds discussion
         resp = await http.post("/api/tasks/disc-task/discussions", json={
             "initiator_id": "disc-init",
-            "message": "请注意代码风格",
+            "message": "Please follow code style guidelines",
         })
         assert resp.status_code == 200
 

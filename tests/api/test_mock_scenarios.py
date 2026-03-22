@@ -1,6 +1,6 @@
-"""Tests: 大规模 mock 数据场景.
+"""Tests: Large-scale mock data scenarios.
 
-用预填充的 agent/任务集验证复杂交互.
+Validate complex interactions with pre-populated agent/task sets.
 """
 
 import pytest
@@ -16,7 +16,7 @@ from eacn3.network.api.websocket import ws_router
 
 @pytest.fixture
 async def large_network():
-    """30 个 agent, 3 个领域, 梯度声望."""
+    """30 agents, 3 domains, tiered reputation."""
     from eacn3.network.db import Database
     db = Database()
     await db.connect()
@@ -74,19 +74,19 @@ class TestMassiveBidding:
 
         statuses = [r["status"] for r in results]
         assert statuses.count("executing") == 3
-        # 剩余的要么 waiting 要么 rejected (低声望的被拒)
+        # Rest are either waiting or rejected (low reputation rejected)
         assert statuses.count("executing") + statuses.count("waiting") + statuses.count("rejected") == 10
 
     @pytest.mark.asyncio
     async def test_varied_reputation_affects_ranking(self, large_client, large_network):
-        """高声望 agent 应通过, 低声望被拒."""
+        """High reputation agent should pass, low reputation rejected."""
         await create_task(large_client, task_id="t1", budget=200.0)
 
-        # 高声望 (0.95) + 高 confidence → pass
+        # High reputation (0.95) + high confidence -> pass
         b_high = await bid(large_client, task_id="t1", agent_id="code-9", confidence=0.8, price=80.0)
         assert b_high["status"] == "executing"
 
-        # 低声望 (0.3) + 低 confidence → fail
+        # Low reputation (0.3) + low confidence -> fail
         b_low = await bid(large_client, task_id="t1", agent_id="research-0", confidence=0.3, price=80.0)
         assert b_low["status"] == "rejected"
 
@@ -94,13 +94,13 @@ class TestMassiveBidding:
 class TestMultiTaskConcurrency:
     @pytest.mark.asyncio
     async def test_5_tasks_independent_state(self, large_client):
-        """5 个任务各自独立运行."""
+        """5 tasks run independently."""
         for i in range(5):
             await create_task(
                 large_client, task_id=f"task-{i}",
                 budget=500.0, domains=["coding"],
             )
-            # 使用高声望 agent 确保通过
+            # Use high-reputation agent to ensure pass
             await bid(large_client, task_id=f"task-{i}", agent_id=f"code-{5+i}", price=100.0)
 
         for i in range(5):
@@ -110,7 +110,7 @@ class TestMultiTaskConcurrency:
 
     @pytest.mark.asyncio
     async def test_agent_bids_on_multiple_tasks(self, large_client):
-        """同一 agent 竞标多个任务."""
+        """Same agent bids on multiple tasks."""
         for i in range(3):
             await create_task(large_client, task_id=f"multi-{i}", budget=200.0)
             await bid(large_client, task_id=f"multi-{i}", agent_id="code-9", price=80.0)
@@ -123,7 +123,7 @@ class TestMultiTaskConcurrency:
 class TestComplexSubtaskTree:
     @pytest.mark.asyncio
     async def test_3_level_subtask_tree(self, large_client):
-        """三层子任务树: parent → child1, child2 → grandchild."""
+        """Three-level subtask tree: parent -> child1, child2 -> grandchild."""
         await create_task(large_client, task_id="root", budget=5000.0, max_depth=5)
 
         # Must bid on root to create subtasks
@@ -147,7 +147,7 @@ class TestComplexSubtaskTree:
             "domains": ["coding"], "budget": 500.0,
         })).json()
 
-        # 验证结构
+        # Verify structure
         root = (await large_client.get("/api/tasks/root")).json()
         assert len(root["child_ids"]) == 2
         assert root["remaining_budget"] == 2000.0  # 5000 - 2000 - 1000
@@ -165,15 +165,15 @@ class TestComplexSubtaskTree:
 class TestEndToEndSettlement:
     @pytest.mark.asyncio
     async def test_full_settlement_releases_funds(self, large_client):
-        """任务结算后资金应该释放, 可以创建新任务."""
-        # 冻结 80000
+        """After settlement, funds should be released; can create new tasks."""
+        # Freeze 80000
         await create_task(large_client, task_id="t1", budget=80000.0)
         await bid(large_client, task_id="t1", agent_id="code-9", price=50000.0)
         await submit_result(large_client, task_id="t1", agent_id="code-9")
         await close_task(large_client, task_id="t1")
         await select_result(large_client, task_id="t1", agent_id="code-9")
 
-        # 结算后应该能创建新任务 (余额 = 100000 - 50000 - fee + refund)
+        # After settlement, should be able to create new task (balance = 100000 - 50000 - fee + refund)
         resp = await large_client.post("/api/tasks", json={
             "task_id": "t2", "initiator_id": "user1",
             "content": {}, "domains": ["coding"], "budget": 40000.0,
@@ -182,11 +182,11 @@ class TestEndToEndSettlement:
 
     @pytest.mark.asyncio
     async def test_refund_on_close(self, large_client):
-        """关闭无结果任务后预算全额退回."""
+        """Closing a task with no results refunds full budget."""
         await create_task(large_client, task_id="t1", budget=90000.0)
         await close_task(large_client, task_id="t1")
 
-        # 退回后应该能再次使用全额
+        # After refund, should be able to use full amount again
         resp = await large_client.post("/api/tasks", json={
             "task_id": "t2", "initiator_id": "user1",
             "content": {}, "domains": ["coding"], "budget": 95000.0,
@@ -197,7 +197,7 @@ class TestEndToEndSettlement:
 class TestReputationProgression:
     @pytest.mark.asyncio
     async def test_reputation_increases_through_tasks(self, large_client):
-        """完成多个任务后声望应持续上升."""
+        """Reputation should keep increasing after completing multiple tasks."""
         initial = (await large_client.get("/api/reputation/code-5")).json()["score"]
 
         for i in range(3):

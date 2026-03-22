@@ -36,10 +36,10 @@ class TestRegisterAgent:
     async def test_register_agent(self, mcp):
         """Register an agent — returns agent_id and seeds."""
         result = await mcp.call_tool_parsed("eacn3_register_agent", {
-            "name": "测试翻译",
-            "description": "中英互译",
+            "name": "Translation Test",
+            "description": "EN-CN translation",
             "domains": ["translation", "english"],
-            "skills": [{"name": "translate", "description": "中英互译"}],
+            "skills": [{"name": "translate", "description": "EN-CN translation"}],
         })
         assert result["registered"] is True
         assert result["agent_id"]
@@ -49,24 +49,24 @@ class TestRegisterAgent:
     async def test_registered_agent_visible_on_network(self, mcp, http):
         """After registration, agent card is visible via network discovery."""
         result = await mcp.call_tool_parsed("eacn3_register_agent", {
-            "name": "网络可见测试",
+            "name": "Network Visibility Test",
             "description": "test",
             "domains": ["coding"],
-            "skills": [{"name": "code", "description": "写代码"}],
+            "skills": [{"name": "code", "description": "write code"}],
             "agent_id": "visible-test",
         })
         aid = result["agent_id"]
         resp = await http.get(f"/api/discovery/agents/{aid}")
         assert resp.status_code == 200
         card = resp.json()
-        assert card["name"] == "网络可见测试"
+        assert card["name"] == "Network Visibility Test"
         assert "coding" in card["domains"]
 
     @pytest.mark.asyncio
     async def test_discover_registered_agent(self, mcp):
         """Register agent in domain, then discover should find it."""
         await mcp.call_tool_parsed("eacn3_register_agent", {
-            "name": "发现测试",
+            "name": "Discovery Test",
             "description": "test",
             "domains": ["rare-domain"],
             "skills": [{"name": "rare", "description": "rare skill"}],
@@ -81,7 +81,7 @@ class TestRegisterAgent:
     async def test_register_agent_custom_id(self, mcp):
         """Register agent with explicit agent_id."""
         result = await mcp.call_tool_parsed("eacn3_register_agent", {
-            "name": "自定义ID",
+            "name": "Custom ID",
             "description": "test",
             "domains": ["coding"],
             "skills": [{"name": "code", "description": "code"}],

@@ -1,7 +1,7 @@
 """Tests: Config API + TOML-based config management.
 
 Covers: GET /api/admin/config, PUT /api/admin/config
-        TOML 文件加载/保存, config 注入到各模块.
+        TOML file loading/saving, config injection into modules.
 """
 
 import pytest
@@ -147,7 +147,7 @@ class TestConfigAffectsBehavior:
 
 class TestTOMLConfig:
     def test_load_default_toml(self):
-        """config.default.toml 应能正常加载。"""
+        """config.default.toml should load correctly."""
         from eacn3.network.config import _DEFAULT_TOML
         cfg = load_config(_DEFAULT_TOML)
         assert cfg.reputation.max_gain == 0.1
@@ -160,7 +160,7 @@ class TestTOMLConfig:
             load_config("/nonexistent/config.toml")
 
     def test_save_and_reload(self, tmp_path):
-        """保存再加载应完全一致。"""
+        """Save then reload should be identical."""
         cfg = NetworkConfig(
             reputation={"max_gain": 0.3},
             matcher={"ability_threshold": 0.2},
@@ -172,20 +172,20 @@ class TestTOMLConfig:
         reloaded = load_config(path)
         assert reloaded.reputation.max_gain == 0.3
         assert reloaded.matcher.ability_threshold == 0.2
-        # 其余应保持默认值
+        # Rest should keep default values
         assert reloaded.economy.platform_fee_rate == 0.05
 
     def test_user_override_merges(self, tmp_path):
-        """用户文件只覆盖指定的字段，其余保留默认值。"""
+        """User file only overrides specified fields; rest keep defaults."""
         user_toml = tmp_path / "config.toml"
         user_toml.write_text('[matcher]\nability_threshold = 0.1\n')
         cfg = load_config(user_toml)
         assert cfg.matcher.ability_threshold == 0.1
-        # 未指定的保持默认
+        # Unspecified fields keep defaults
         assert cfg.matcher.weight_reputation == 0.6
 
     def test_toml_readable_by_humans(self, tmp_path):
-        """生成的 TOML 文件应是可读的纯文本。"""
+        """Generated TOML file should be human-readable plain text."""
         cfg = NetworkConfig()
         path = tmp_path / "readable.toml"
         save_config(cfg, path)

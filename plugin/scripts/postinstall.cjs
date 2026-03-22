@@ -57,6 +57,12 @@ if (ok) {
   console.log('  Run "npx eacn3 diagnose" for details.\n');
 }
 
-console.log('Next steps:');
-console.log('  npx eacn3 setup    — install into OpenClaw');
-console.log('  npx eacn3 diagnose — run full diagnostics\n');
+console.log('Next steps — choose your client:\n');
+console.log('  npx eacn3 setup                  # OpenClaw');
+console.log('  npx eacn3 setup claude-code       # Claude Code');
+console.log('  npx eacn3 setup cursor            # Cursor');
+console.log('  npx eacn3 setup codex             # Codex');
+console.log('');
+console.log('  Add --global for user-level config (default: project-level)');
+console.log('');
+console.log('  npx eacn3 diagnose                # run full diagnostics\n');

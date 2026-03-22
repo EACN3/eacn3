@@ -25,8 +25,8 @@ class BidStatus(str, Enum):
     PENDING = "pending"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
-    WAITING = "waiting"       # 等待执行 (queue slot)
-    EXECUTING = "executing"   # 正在执行
+    WAITING = "waiting"       # queued for execution
+    EXECUTING = "executing"   # currently executing
 
 
 class Bid(BaseModel):
@@ -51,14 +51,15 @@ class Result(BaseModel):
 
 
 class HumanContact(BaseModel):
-    """执行者联系人类的权限开关。
+    """Permission toggle for executor to contact a human.
 
-    Agent 默认不能联系人类。任务发起者在创建任务时设置此字段，
-    授权接到任务的执行者在需要时（如需求澄清）联系指定的人类。
+    Agents cannot contact humans by default. The task initiator sets this field
+    when creating a task, authorizing the assigned executor to contact a
+    designated human when needed (e.g. for requirement clarification).
 
-    - allowed:    是否允许执行者联系人类，默认 False
-    - contact_id: 允许时，指定可被联系的人类标识
-    - timeout_s:  等待人类响应的超时秒数，超时后执行者应自行决策
+    - allowed:    whether the executor may contact a human, default False
+    - contact_id: identifier of the human to contact when allowed
+    - timeout_s:  seconds to wait for human response; executor should decide on its own after timeout
     """
     allowed: bool = False
     contact_id: str | None = None

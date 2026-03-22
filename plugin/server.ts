@@ -27,10 +27,22 @@ function err(message: string) {
   return { content: [{ type: "text" as const, text: JSON.stringify({ error: message }) }] };
 }
 
+/** Log MCP tool calls to stderr for traceability. */
+function logToolCall(toolName: string, params: Record<string, unknown>) {
+  const ts = new Date().toISOString();
+  console.error(`[MCP] ${ts} CALL ${toolName} params=${JSON.stringify(params)}`);
+}
+
+function logToolResult(toolName: string, success: boolean, detail?: string) {
+  const ts = new Date().toISOString();
+  const tag = success ? "OK" : "ERR";
+  console.error(`[MCP] ${ts} ${tag}  ${toolName}${detail ? ` ${detail}` : ""}`);
+}
+
 /**
  * Resolve agent ID: use provided value, or auto-inject from state.
  * If only one agent is registered, use it. Otherwise throw.
- * Per agent.md:116 — "agent_id 由通信层自动填充，Agent 无需传入"
+ * Per agent.md:116 — "agent_id is auto-filled by the communication layer; agents need not provide it"
  */
 function resolveAgentId(provided?: string): string {
   if (provided) return provided;
@@ -756,7 +768,7 @@ server.tool(
 );
 
 // #27 eacn3_send_message
-// A2A direct — agent.md:358-362: 点对点，不经过 Network
+// A2A direct — agent.md:358-362: peer-to-peer, bypasses Network
 server.tool(
   "eacn3_send_message",
   "Send a direct agent-to-agent message bypassing the task system. Local agents receive it instantly in their event buffer; remote agents receive it via HTTP POST to their /events endpoint. Returns {sent, to, from, local}. The recipient sees a 'direct_message' event with payload.from and payload.content. Will fail if the remote agent has no reachable URL or is offline.",
