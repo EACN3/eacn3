@@ -404,10 +404,32 @@ class TestPeerTaskOperations:
         assert subtask.parent_id == "sub-parent"
         assert subtask.budget == 50.0
 
-    async def test_push_endpoint(self, peer_client):
+    async def test_push_endpoint_no_handler(self, peer_client):
+        """Without a push handler wired, delivered count should be 0."""
         client, net = peer_client
         resp = await client.post("/peer/push", json={
-            "type": "TASK_BROADCAST",
+            "type": "task_broadcast",
+            "task_id": "t1",
+            "recipients": ["a1", "a2"],
+            "payload": {"data": "test"},
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["delivered"] == 0
+
+    async def test_push_endpoint_with_handler(self, peer_client):
+        """With a push handler wired, events are delivered locally."""
+        client, net = peer_client
+        delivered_events = []
+
+        async def mock_handler(event):
+            delivered_events.append(event)
+            return len(event.recipients)
+
+        net.cluster.set_push_handler(mock_handler)
+        resp = await client.post("/peer/push", json={
+            "type": "task_broadcast",
             "task_id": "t1",
             "recipients": ["a1", "a2"],
             "payload": {"data": "test"},
@@ -416,3 +438,4 @@ class TestPeerTaskOperations:
         data = resp.json()
         assert data["ok"] is True
         assert data["delivered"] == 2
+        assert len(delivered_events) == 1

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, TYPE_CHECKING
+from typing import Any, Callable, Awaitable, TYPE_CHECKING
 
 import httpx
 
@@ -21,7 +21,12 @@ from eacn.network.cluster.router import ClusterRouter
 from eacn.network.config import ClusterConfig
 
 if TYPE_CHECKING:
+    from eacn.core.models import PushEvent
     from eacn.network.db.database import Database
+
+# Callback that delivers a PushEvent to locally connected agents.
+# Returns the number of recipients successfully delivered.
+LocalPushHandler = Callable[["PushEvent"], Awaitable[int]]
 
 _log = logging.getLogger(__name__)
 
@@ -49,6 +54,7 @@ class ClusterService:
         self.discovery = ClusterDiscovery(node_id, self.gossip, self.dht, self.bootstrap)
         self.router = ClusterRouter(db, node_id)
 
+        self._push_handler: LocalPushHandler | None = None
         self._standalone = not bool(self.config.seed_nodes)
 
     @property
@@ -143,6 +149,12 @@ class ClusterService:
             if node_id != self.node_id:
                 await self.gossip.exchange(self.node_id, node_id)
 
+    # ── Push handler ────────────────────────────────────────────────
+
+    def set_push_handler(self, handler: LocalPushHandler) -> None:
+        """Register a callback for delivering push events to local agents."""
+        self._push_handler = handler
+
     # ── Peer request handlers (called by peer_routes) ────────────────
 
     def handle_join(self, card: NodeCard) -> list[NodeCard]:
@@ -169,4 +181,19 @@ class ClusterService:
 
     async def handle_push(self, event_type: str, task_id: str,
                           recipients: list[str], payload: dict[str, Any]) -> int:
-        return len(recipients)
+        """Deliver a forwarded push event to locally connected agents."""
+        if not self._push_handler or not recipients:
+            return 0
+        from eacn.core.models import PushEvent, PushEventType
+        try:
+            event = PushEvent(
+                type=PushEventType(event_type),
+                task_id=task_id,
+                recipients=recipients,
+                payload=payload,
+            )
+            return await self._push_handler(event)
+        except Exception:
+            _log.warning("Failed to deliver forwarded push event %s", event_type,
+                         exc_info=True)
+            return 0
