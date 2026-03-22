@@ -534,3 +534,617 @@ class TestTaskDeadlineExpiry:
             "/api/economy/balance", params={"agent_id": "user1"}
         )).json()["available"]
         assert bal_after == bal_before  # fully refunded
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 11: Invite agent (skip ability check)
+# ══════════════════════════════════════════════════════════════════════
+
+class TestInviteAgent:
+    """Initiator invites a low-reputation agent — skips ability gate."""
+
+    @pytest.mark.asyncio
+    async def test_invited_agent_bypasses_ability_check(self, client):
+        """a5 has low reputation (0.6), normally rejected.
+        But if invited, the ability check is skipped."""
+        # Create task
+        await create_task(client, task_id="invite-task", budget=200.0)
+
+        # Invite a5
+        resp = await client.post("/api/tasks/invite-task/invite", json={
+            "initiator_id": "user1", "agent_id": "a5",
+        })
+        assert resp.status_code == 200
+
+        # a5 bids with low confidence — would fail ability check normally
+        b = await bid(client, task_id="invite-task", agent_id="a5",
+                      confidence=0.3, price=80.0)
+        assert b["status"] == "executing"
+
+    @pytest.mark.asyncio
+    async def test_only_initiator_can_invite(self, client):
+        await create_task(client, task_id="inv-perm", budget=200.0)
+
+        resp = await client.post("/api/tasks/inv-perm/invite", json={
+            "initiator_id": "user2",  # not the initiator
+            "agent_id": "a3",
+        })
+        assert resp.status_code == 400
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 12: Discussions during bidding phase
+# ══════════════════════════════════════════════════════════════════════
+
+class TestDiscussions:
+    """Initiator posts discussion updates during bidding phase."""
+
+    @pytest.mark.asyncio
+    async def test_discussion_during_bidding(self, client):
+        await create_task(client, task_id="discuss-task", budget=200.0)
+        await bid(client, task_id="discuss-task", agent_id="a1", price=80.0)
+
+        # Post discussion
+        resp = await client.post("/api/tasks/discuss-task/discussions", json={
+            "initiator_id": "user1",
+            "message": "Please focus on performance optimization",
+        })
+        assert resp.status_code == 200
+        task = resp.json()
+        assert task["status"] == "bidding"
+
+        # Post second message
+        resp = await client.post("/api/tasks/discuss-task/discussions", json={
+            "initiator_id": "user1",
+            "message": "Also add unit tests",
+        })
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_non_initiator_cannot_post_discussion(self, client):
+        await create_task(client, task_id="discuss-perm", budget=200.0)
+        await bid(client, task_id="discuss-perm", agent_id="a1", price=80.0)
+
+        resp = await client.post("/api/tasks/discuss-perm/discussions", json={
+            "initiator_id": "user2",
+            "message": "hacking the discussion",
+        })
+        assert resp.status_code == 400
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 13: Deposit and balance management
+# ══════════════════════════════════════════════════════════════════════
+
+class TestDepositFlow:
+    """Deposit funds, verify balance, then spend on tasks."""
+
+    @pytest.mark.asyncio
+    async def test_deposit_increases_balance(self, client):
+        # user2 starts with 5000
+        bal = (await client.get(
+            "/api/economy/balance", params={"agent_id": "user2"}
+        )).json()
+        assert bal["available"] == 5000.0
+
+        # Deposit more
+        resp = await client.post("/api/economy/deposit", json={
+            "agent_id": "user2", "amount": 3000.0,
+        })
+        assert resp.status_code == 200
+        assert resp.json()["available"] == 8000.0
+
+        # Verify via balance endpoint
+        bal = (await client.get(
+            "/api/economy/balance", params={"agent_id": "user2"}
+        )).json()
+        assert bal["available"] == 8000.0
+
+    @pytest.mark.asyncio
+    async def test_deposit_then_create_task(self, client):
+        """New user deposits funds, then creates a task."""
+        # Deposit to fresh account
+        resp = await client.post("/api/economy/deposit", json={
+            "agent_id": "new-user", "amount": 500.0,
+        })
+        assert resp.status_code == 200
+        assert resp.json()["available"] == 500.0
+
+        # Create task with newly deposited funds
+        resp = await client.post("/api/tasks", json={
+            "task_id": "fresh-task",
+            "initiator_id": "new-user",
+            "content": {"desc": "first task"},
+            "domains": ["coding"],
+            "budget": 200.0,
+        })
+        assert resp.status_code == 201
+
+        # Balance: 500 - 200 frozen = 300 available
+        bal = (await client.get(
+            "/api/economy/balance", params={"agent_id": "new-user"}
+        )).json()
+        assert bal["available"] == 300.0
+        assert bal["frozen"] == 200.0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 14: Reputation events from servers
+# ══════════════════════════════════════════════════════════════════════
+
+class TestReputationEvents:
+    """Servers send reputation events to the network; scores aggregate."""
+
+    @pytest.mark.asyncio
+    async def test_positive_event_increases_score(self, client):
+        initial = (await client.get("/api/reputation/a1")).json()["score"]
+
+        resp = await client.post("/api/reputation/events", json={
+            "agent_id": "a1",
+            "event_type": "task_success",
+            "server_id": "srv-1",
+        })
+        assert resp.status_code == 200
+        new_score = resp.json()["score"]
+        assert new_score >= initial
+
+    @pytest.mark.asyncio
+    async def test_negative_event_decreases_score(self, client):
+        initial = (await client.get("/api/reputation/a2")).json()["score"]
+
+        resp = await client.post("/api/reputation/events", json={
+            "agent_id": "a2",
+            "event_type": "task_failure",
+            "server_id": "srv-1",
+        })
+        assert resp.status_code == 200
+        new_score = resp.json()["score"]
+        assert new_score <= initial
+
+    @pytest.mark.asyncio
+    async def test_burst_detection_blocks_spam(self, client):
+        """Rapid identical events get blocked by anomaly detection."""
+        scores = []
+        for i in range(15):
+            resp = await client.post("/api/reputation/events", json={
+                "agent_id": "a3",
+                "event_type": "task_success",
+                "server_id": "srv-spam",
+            })
+            scores.append(resp.json()["score"])
+
+        # Score should plateau — burst detection kicks in
+        # Not every event should increase the score
+        unique_scores = len(set(scores))
+        assert unique_scores < 15  # some events were blocked
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 15: Open tasks listing and filtering
+# ══════════════════════════════════════════════════════════════════════
+
+class TestOpenTasksListing:
+    """List open tasks, filter by domain, verify status transitions."""
+
+    @pytest.mark.asyncio
+    async def test_list_open_tasks(self, client):
+        await create_task(client, task_id="open-1", budget=100.0, domains=["coding"])
+        await create_task(client, task_id="open-2", budget=200.0, domains=["design"])
+        await create_task(client, task_id="open-3", budget=300.0, domains=["coding"])
+
+        resp = await client.get("/api/tasks/open")
+        assert resp.status_code == 200
+        tasks = resp.json()
+        task_ids = [t["id"] for t in tasks]
+        assert "open-1" in task_ids
+        assert "open-2" in task_ids
+        assert "open-3" in task_ids
+
+    @pytest.mark.asyncio
+    async def test_filter_open_tasks_by_domain(self, client):
+        await create_task(client, task_id="filter-c", budget=100.0, domains=["coding"])
+        await create_task(client, task_id="filter-d", budget=100.0, domains=["design"])
+
+        resp = await client.get("/api/tasks/open", params={"domains": "design"})
+        assert resp.status_code == 200
+        task_ids = [t["id"] for t in resp.json()]
+        assert "filter-d" in task_ids
+        assert "filter-c" not in task_ids
+
+    @pytest.mark.asyncio
+    async def test_completed_task_not_in_open_list(self, client):
+        """Task that is closed/completed should not appear in open tasks."""
+        await create_task(client, task_id="close-me", budget=100.0,
+                          max_concurrent_bidders=1)
+        await bid(client, task_id="close-me", agent_id="a1", price=80.0)
+        await submit_result(client, task_id="close-me", agent_id="a1", content="done")
+
+        # Close the task
+        resp = await client.post("/api/tasks/close-me/close", json={
+            "initiator_id": "user1",
+        })
+        assert resp.status_code == 200
+
+        resp = await client.get("/api/tasks/open")
+        task_ids = [t["id"] for t in resp.json()]
+        assert "close-me" not in task_ids
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 16: Task status query (initiator-only view)
+# ══════════════════════════════════════════════════════════════════════
+
+class TestTaskStatusQuery:
+    """Only the task initiator can query task status."""
+
+    @pytest.mark.asyncio
+    async def test_initiator_can_query_status(self, client):
+        await create_task(client, task_id="status-q", budget=100.0)
+        await bid(client, task_id="status-q", agent_id="a1", price=80.0)
+
+        resp = await client.get("/api/tasks/status-q/status",
+                                params={"agent_id": "user1"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "bidding"
+        assert len(data["bids"]) == 1
+        assert data["bids"][0]["agent_id"] == "a1"
+
+    @pytest.mark.asyncio
+    async def test_non_initiator_cannot_query_status(self, client):
+        await create_task(client, task_id="status-deny", budget=100.0)
+
+        resp = await client.get("/api/tasks/status-deny/status",
+                                params={"agent_id": "user2"})
+        assert resp.status_code == 403
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 17: Audit log trail
+# ══════════════════════════════════════════════════════════════════════
+
+class TestAuditLogs:
+    """All operations leave audit trail in the global logger."""
+
+    @pytest.mark.asyncio
+    async def test_task_lifecycle_logged(self, client):
+        await create_task(client, task_id="log-task", budget=200.0,
+                          max_concurrent_bidders=1)
+        await bid(client, task_id="log-task", agent_id="a1", price=80.0)
+        await submit_result(client, task_id="log-task", agent_id="a1", content="x")
+
+        # Query logs for this task
+        resp = await client.get("/api/admin/logs", params={"task_id": "log-task"})
+        assert resp.status_code == 200
+        logs = resp.json()
+        fn_names = [e["fn_name"] for e in logs]
+        assert "create_task" in fn_names
+        assert "submit_bid" in fn_names
+        assert "submit_result" in fn_names
+
+    @pytest.mark.asyncio
+    async def test_logs_filtered_by_agent(self, client):
+        await create_task(client, task_id="log-agent", budget=200.0)
+        await bid(client, task_id="log-agent", agent_id="a1", price=80.0)
+        await bid(client, task_id="log-agent", agent_id="a2", price=85.0)
+
+        resp = await client.get("/api/admin/logs",
+                                params={"agent_id": "a2"})
+        assert resp.status_code == 200
+        logs = resp.json()
+        # All returned logs should mention a2
+        for entry in logs:
+            assert entry["agent_id"] == "a2"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 18: Deadline update mid-task
+# ══════════════════════════════════════════════════════════════════════
+
+class TestDeadlineUpdate:
+    """Initiator extends deadline while agents are working."""
+
+    @pytest.mark.asyncio
+    async def test_extend_deadline(self, client):
+        await create_task(client, task_id="deadline-ext", budget=200.0,
+                          deadline="2030-01-01T00:00:00Z")
+
+        resp = await client.put("/api/tasks/deadline-ext/deadline", json={
+            "initiator_id": "user1",
+            "deadline": "2035-06-15T00:00:00Z",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["deadline"] == "2035-06-15T00:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_non_initiator_cannot_update_deadline(self, client):
+        await create_task(client, task_id="deadline-perm", budget=200.0)
+
+        resp = await client.put("/api/tasks/deadline-perm/deadline", json={
+            "initiator_id": "user2",
+            "deadline": "2099-01-01T00:00:00Z",
+        })
+        assert resp.status_code == 400
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 19: Agent unregister (individual removal)
+# ══════════════════════════════════════════════════════════════════════
+
+class TestAgentUnregister:
+    """Agent leaves the network — removed from DHT and bootstrap."""
+
+    @pytest.mark.asyncio
+    async def test_unregister_agent(self, api):
+        srv = await register_server(api, "http://unreg-srv:8000", "eve")
+        await register_agent(api, "leaving-agent", srv, ["coding"])
+
+        assert "leaving-agent" in await discover(api, "coding")
+
+        resp = await api.delete("/api/discovery/agents/leaving-agent")
+        assert resp.status_code == 200
+
+        assert "leaving-agent" not in await discover(api, "coding")
+
+        resp = await api.get("/api/discovery/agents/leaving-agent")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_unregister_one_agent_does_not_affect_others(self, api):
+        srv = await register_server(api, "http://co-srv:8000", "frank")
+        await register_agent(api, "stay-agent", srv, ["coding"])
+        await register_agent(api, "go-agent", srv, ["coding"])
+
+        await api.delete("/api/discovery/agents/go-agent")
+
+        agents = await discover(api, "coding")
+        assert "stay-agent" in agents
+        assert "go-agent" not in agents
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 20: Direct messaging between agents
+# ══════════════════════════════════════════════════════════════════════
+
+class TestDirectMessaging:
+    """Relay a message between two agents via the network."""
+
+    @pytest.mark.asyncio
+    async def test_message_to_disconnected_agent(self, network, api):
+        """Message to an agent not connected via WS → undeliverable."""
+        resp = await api.post("/api/messages", json={
+            "to": {"agent_id": "offline-agent"},
+            "from": {"agent_id": "sender-agent"},
+            "content": "hello from sender",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["method"] == "undeliverable"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 21: Same agent bids on multiple tasks concurrently
+# ══════════════════════════════════════════════════════════════════════
+
+class TestAgentMultiTasking:
+    """One agent works on multiple tasks at the same time."""
+
+    @pytest.mark.asyncio
+    async def test_agent_bids_on_multiple_tasks(self, client):
+        await create_task(client, task_id="multi-a", budget=200.0)
+        await create_task(client, task_id="multi-b", budget=200.0)
+        await create_task(client, task_id="multi-c", budget=200.0)
+
+        # a1 bids on all three
+        for tid in ["multi-a", "multi-b", "multi-c"]:
+            b = await bid(client, task_id=tid, agent_id="a1", price=80.0)
+            assert b["status"] == "executing"
+
+        # a1 submits results on all three
+        for tid in ["multi-a", "multi-b", "multi-c"]:
+            await submit_result(client, task_id=tid, agent_id="a1", content=f"result-{tid}")
+
+        # Verify all tasks have results from a1
+        for tid in ["multi-a", "multi-b", "multi-c"]:
+            task = await get_task(client, tid)
+            assert any(r["agent_id"] == "a1" for r in task["results"])
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 22: Budget confirmation flow (over-budget bid)
+# ══════════════════════════════════════════════════════════════════════
+
+class TestBudgetConfirmation:
+    """Agent bids above budget → pending → initiator approves/rejects."""
+
+    @pytest.mark.asyncio
+    async def test_over_budget_bid_needs_confirmation(self, client):
+        await create_task(client, task_id="overbudget", budget=100.0)
+
+        # Bid well above budget
+        resp = await client.post("/api/tasks/overbudget/bid", json={
+            "agent_id": "a1", "confidence": 0.95, "price": 500.0,
+        })
+        assert resp.status_code == 200
+        status = resp.json()["status"]
+        # Should be pending (needs budget confirmation) or rejected
+        assert status in ("pending", "rejected")
+
+    @pytest.mark.asyncio
+    async def test_initiator_rejects_over_budget(self, client):
+        await create_task(client, task_id="reject-over", budget=100.0)
+
+        # Try over-budget bid
+        await client.post("/api/tasks/reject-over/bid", json={
+            "agent_id": "a1", "confidence": 0.95, "price": 500.0,
+        })
+
+        # Initiator rejects
+        resp = await client.post("/api/tasks/reject-over/confirm-budget", json={
+            "initiator_id": "user1",
+            "approved": False,
+        })
+        assert resp.status_code == 200
+
+        # All pending bids should now be rejected
+        task = await get_task(client, "reject-over")
+        for b in task["bids"]:
+            if b["agent_id"] == "a1":
+                assert b["status"] == "rejected"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 23: Collect results + adjudication data
+# ══════════════════════════════════════════════════════════════════════
+
+class TestCollectResults:
+    """Initiator collects results and transitions task to completed."""
+
+    @pytest.mark.asyncio
+    async def test_collect_transitions_to_completed(self, client):
+        await create_task(client, task_id="collect-t", budget=200.0,
+                          max_concurrent_bidders=1)
+        await bid(client, task_id="collect-t", agent_id="a1", price=80.0)
+        await submit_result(client, task_id="collect-t", agent_id="a1",
+                            content="final answer")
+
+        # Task should be awaiting_retrieval
+        task = await get_task(client, "collect-t")
+        assert task["status"] == "awaiting_retrieval"
+
+        # Collect results
+        resp = await client.get("/api/tasks/collect-t/results",
+                                params={"initiator_id": "user1"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["results"]) == 1
+        assert data["results"][0]["agent_id"] == "a1"
+
+        # Task now completed
+        task = await get_task(client, "collect-t")
+        assert task["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_non_initiator_cannot_collect(self, client):
+        await create_task(client, task_id="collect-deny", budget=200.0,
+                          max_concurrent_bidders=1)
+        await bid(client, task_id="collect-deny", agent_id="a1", price=80.0)
+        await submit_result(client, task_id="collect-deny", agent_id="a1", content="x")
+
+        resp = await client.get("/api/tasks/collect-deny/results",
+                                params={"initiator_id": "user2"})
+        assert resp.status_code == 403
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 24: Close task with no results → NO_ONE_ABLE
+# ══════════════════════════════════════════════════════════════════════
+
+class TestCloseTaskNoResults:
+    """Initiator closes a task nobody bid on → budget refunded."""
+
+    @pytest.mark.asyncio
+    async def test_close_unclaimed_task_refunds(self, client):
+        bal_before = (await client.get(
+            "/api/economy/balance", params={"agent_id": "user1"}
+        )).json()["available"]
+
+        await create_task(client, task_id="ghost-task", budget=300.0)
+
+        # Nobody bids → initiator closes
+        resp = await client.post("/api/tasks/ghost-task/close", json={
+            "initiator_id": "user1",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "no_one_able"
+
+        # Budget refunded
+        bal_after = (await client.get(
+            "/api/economy/balance", params={"agent_id": "user1"}
+        )).json()["available"]
+        assert bal_after == bal_before
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 25: Config hot-reload
+# ══════════════════════════════════════════════════════════════════════
+
+class TestConfigHotReload:
+    """Admin updates config at runtime — modules pick up new values."""
+
+    @pytest.mark.asyncio
+    async def test_read_config(self, client):
+        resp = await client.get("/api/admin/config")
+        assert resp.status_code == 200
+        config = resp.json()
+        assert "reputation" in config
+        assert "economy" in config
+        assert "matcher" in config
+
+    @pytest.mark.asyncio
+    async def test_update_platform_fee(self, client):
+        resp = await client.put("/api/admin/config", json={
+            "economy": {"platform_fee_rate": 0.05},
+        })
+        assert resp.status_code == 200
+        assert resp.json()["economy"]["platform_fee_rate"] == 0.05
+
+        # Verify persisted
+        resp = await client.get("/api/admin/config")
+        assert resp.json()["economy"]["platform_fee_rate"] == 0.05
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 26: List agents by server
+# ══════════════════════════════════════════════════════════════════════
+
+class TestListAgentsByServer:
+    """List all agents belonging to a specific server."""
+
+    @pytest.mark.asyncio
+    async def test_list_agents_by_server(self, api):
+        srv = await register_server(api, "http://list-srv:8000", "greg")
+        await register_agent(api, "list-a1", srv, ["coding"])
+        await register_agent(api, "list-a2", srv, ["design"])
+        await register_agent(api, "list-a3", srv, ["coding"])
+
+        resp = await api.get("/api/discovery/agents",
+                             params={"server_id": srv})
+        assert resp.status_code == 200
+        agents = resp.json()
+        agent_ids = [a["agent_id"] for a in agents]
+        assert len(agent_ids) == 3
+        assert set(agent_ids) == {"list-a1", "list-a2", "list-a3"}
+
+    @pytest.mark.asyncio
+    async def test_list_agents_by_domain(self, api):
+        srv = await register_server(api, "http://dom-srv:8000", "helen")
+        await register_agent(api, "dom-c1", srv, ["coding"])
+        await register_agent(api, "dom-c2", srv, ["coding"])
+        await register_agent(api, "dom-d1", srv, ["design"])
+
+        resp = await api.get("/api/discovery/agents",
+                             params={"domain": "coding"})
+        assert resp.status_code == 200
+        agent_ids = [a["agent_id"] for a in resp.json()]
+        assert "dom-c1" in agent_ids
+        assert "dom-c2" in agent_ids
+        assert "dom-d1" not in agent_ids
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Scenario 27: Cluster status endpoint
+# ══════════════════════════════════════════════════════════════════════
+
+class TestClusterStatus:
+    """Verify cluster status endpoint reports correct state."""
+
+    @pytest.mark.asyncio
+    async def test_cluster_status_standalone(self, client):
+        resp = await client.get("/api/cluster/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["mode"] == "standalone"
+        assert "local" in data
+        assert data["local"]["status"] == "online"
