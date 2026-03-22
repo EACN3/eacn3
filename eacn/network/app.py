@@ -284,6 +284,7 @@ class Network:
 
         if self.task_manager.check_auto_collect(task_id):
             await self.push.notify_task_collected(task)
+            await self._notify_status_cross_node(task, "awaiting_retrieval")
 
         promoted = self.task_manager.promote_from_queue(task_id)
         if promoted:
@@ -350,6 +351,8 @@ class Network:
             await self.push.notify_task_collected(task)
         elif task.status == TaskStatus.NO_ONE_ABLE:
             self.settlement.refund_no_one_capable(task_id)
+
+        await self._notify_status_cross_node(task, task.status.value)
 
         return task
 
@@ -511,6 +514,8 @@ class Network:
             elif new_status == TaskStatus.NO_ONE_ABLE:
                 self.settlement.refund_no_one_capable(task.id)
 
+            await self._notify_status_cross_node(task, "timeout")
+
             self._log_event("task_timeout", task_id=task.id)
 
         return expired_ids
@@ -533,6 +538,26 @@ class Network:
             server_id=server_id,
         )
 
+
+    async def _notify_status_cross_node(self, task: Task, status: str) -> None:
+        """Notify participant nodes about a task status change.
+
+        Collects all active agent IDs involved in the task and includes them
+        as recipients so the receiving node can deliver locally.
+        """
+        participant_nodes = self.cluster.router.get_participants(task.id)
+        if not participant_nodes:
+            return
+        # Gather agents involved in the task
+        recipients = list({
+            *[b.agent_id for b in task.bids
+              if b.status.value in ("executing", "waiting", "accepted")],
+            task.initiator_id,
+        })
+        await self.cluster.router.notify_status(
+            task.id, status, participant_nodes,
+            payload={"status": status, "recipients": recipients},
+        )
 
     async def _broadcast_to_candidates(self, task: Task) -> None:
         """Discover agents, match, and push task broadcast."""

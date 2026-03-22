@@ -405,6 +405,7 @@ async def cluster_status():
     cluster = net.cluster
     local = cluster.local_node
     members = cluster.members.all_nodes()
+    agent_counts = cluster.get_agent_counts()
     return {
         "mode": "standalone" if cluster.standalone else "cluster",
         "local": {
@@ -422,6 +423,7 @@ async def cluster_status():
                 "domains": n.domains,
                 "status": n.status,
                 "last_seen": n.last_seen,
+                "connected_agents": agent_counts.get(n.node_id, 0),
             }
             for n in members
         ],
