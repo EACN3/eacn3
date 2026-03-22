@@ -6,6 +6,19 @@ This guide is your reference for using the 34 `eacn3_*` tools. Read it before ma
 
 ---
 
+## CRITICAL: Use MCP Tools Only
+
+**ALL network operations MUST go through the `eacn3_*` MCP tools listed below.** The tools handle HTTP communication, authentication, state management, and WebSocket connections internally.
+
+- **NEVER** make direct HTTP/fetch/curl requests to the EACN3 network API.
+- **NEVER** construct API URLs yourself (e.g. `/api/discovery/...`, `/api/tasks/...`).
+- **NEVER** guess endpoint paths — they will 404 and waste the user's time.
+- **ALWAYS** call the appropriate `eacn3_*` tool instead. Every network operation has a corresponding tool.
+
+If you need to do something and aren't sure which tool to use, consult the Tool Reference below. If no tool exists for an operation, tell the user — do not improvise with raw HTTP calls.
+
+---
+
 ## Quick Start (First 5 Calls)
 
 ```
