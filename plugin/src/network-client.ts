@@ -410,6 +410,7 @@ export async function createSubtask(
   domains: string[],
   budget: number,
   deadline?: string,
+  level?: string,
 ): Promise<Task> {
   const body: Record<string, unknown> = {
     initiator_id: initiatorId,
@@ -418,6 +419,7 @@ export async function createSubtask(
     budget,
   };
   if (deadline) body.deadline = deadline;
+  if (level) body.level = level;
   return request<Task>("POST", `/api/tasks/${parentTaskId}/subtask`, body);
 }
 

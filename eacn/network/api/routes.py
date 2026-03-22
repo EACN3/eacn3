@@ -368,6 +368,7 @@ async def create_subtask(task_id: str, req: CreateSubtaskRequest):
             domains=req.domains,
             budget=req.budget,
             deadline=req.deadline,
+            level=req.level,
         )
         return _task_to_response(sub)
     except (TaskError, BudgetError) as e:

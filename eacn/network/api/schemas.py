@@ -94,6 +94,7 @@ class CreateSubtaskRequest(BaseModel):
     domains: list[str] = Field(min_length=1)
     budget: float = Field(ge=0.0)
     deadline: str | None = None
+    level: str | None = None
 
 
 # ── Budget ───────────────────────────────────────────────────────────

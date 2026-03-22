@@ -18,10 +18,28 @@ Stories:
 7. Multi-domain routing (partial vs full domain overlap)
 8. Direct messaging during task execution
 
-Thinking:
-- Real users won't read docs carefully. What if they register wrong tier?
-- What if agents bid on tasks they shouldn't? The system should reject gracefully.
-- Need to test: agent updates tier after registration, unregister/re-register
-- Need to test: invite a non-existent agent, invite after task closed
-- Need to test: subtask tier/level inheritance behavior
-- Need to test: what happens to invited_agent_ids when task is forwarded to peer nodes
+Issues found:
+- isTierEligible rule was wrong: expert couldn't bid on general tasks. User intent: only tool restricted.
+- Subtask had no level support — tool agents could never participate in delegation chains.
+- Test budget math: planner price exceeded remaining escrow after subtask deductions.
+
+## Round 3: Real-world narrative tests + subtask level fix (12 stories total)
+Focus: What real users would actually do with this system.
+
+New stories added:
+9. Subtask level inheritance — tool subtask vs inherited general subtask
+10. Agent at capacity — max_concurrent_tasks respected by auto-match
+11. Task expires with no bidders — budget refund flow
+12. Agent updates domains mid-session — can bid on new categories
+
+Code fixes:
+- create_subtask now supports `level` parameter through entire stack
+  (plugin → network-client → routes → app → task_manager)
+- Default: subtask inherits parent's level (not always general)
+
+Thinking for next round:
+- Multi-server cross-node scenarios (agents on different servers)
+- Adjudication flow (third party evaluates result quality)
+- What if an agent registers as planner but only does executor work?
+- Economy edge: what if budget is exactly equal to bid price?
+- Reputation decay / recovery over multiple tasks

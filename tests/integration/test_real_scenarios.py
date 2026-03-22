@@ -93,7 +93,7 @@ class TestPlannerDecomposesAcrossTiers:
         await _reg(mcp, fn, "planner", "Orchestrator", tier="general", atype="planner")
         await _reg(mcp, fn, "ml-expert", "ML Specialist", tier="expert",
                    domains=["ml", "python"])
-        await _reg(mcp, fn, "formatter", "CSV Formatter", tier="expert_general",
+        await _reg(mcp, fn, "formatter", "CSV Formatter", tier="tool",
                    domains=["data-formatting"])
 
         # 1. Lab publishes the root task
@@ -119,18 +119,16 @@ class TestPlannerDecomposesAcrossTiers:
         resp = await http.get(f"/api/tasks/{ml_sub_id}")
         assert resp.status_code == 200
 
-        # 4. Planner decomposes: tool subtask for formatting
-        #    Note: subtasks inherit general level by default. For a tool-tier
-        #    agent to bid, we'd need to set level="tool" — but create_subtask
-        #    doesn't support level yet. The formatter is tool-tier, so it can
-        #    only bid on tool-level tasks. We'll work around this by making
-        #    the formatter expert_general tier instead (can bid on any level).
+        # 4. Planner decomposes: tool-level subtask for formatting
+        #    Tool-tier formatter can only bid on tool-level tasks, so we
+        #    explicitly set level="tool" on this subtask.
         fmt_sub = await mcp.call_tool_parsed("eacn3_create_subtask", {
             "parent_task_id": root_id,
             "description": "Parse and validate CSV columns",
             "domains": ["data-formatting"],
             "budget": 200,
             "initiator_id": "planner",
+            "level": "tool",
         })
         fmt_sub_id = fmt_sub.get("subtask_id") or fmt_sub.get("id") or fmt_sub.get("task_id")
         assert fmt_sub_id
@@ -633,3 +631,207 @@ class TestDirectMessageDuringTask:
         results = await _collect(mcp, task_id, "msg-pub")
         assert results[0]["content"]["error_handling"]["429"] == "exponential_backoff_retry_max_3"
         await _select(mcp, task_id, "msg-pub", "msg-worker")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Story 9: Planner creates tool-level subtask for tool-tier agent
+#
+# Now that create_subtask supports level, verify the full pipeline:
+# planner creates subtask with level="tool" → tool agent bids →
+# tool agent on general subtask is still rejected.
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestSubtaskLevelInheritance:
+    @pytest.mark.asyncio
+    async def test_tool_agent_on_tool_subtask_vs_inherited_subtask(self, mcp, http, funded_network):
+        """
+        Story: Planner creates two subtasks from a general parent.
+        Subtask A: no level specified → inherits parent's general level.
+        Subtask B: level="tool" explicitly set.
+        Tool-tier agent can bid on B but not A.
+        """
+        fn = funded_network
+
+        await _reg(mcp, fn, "boss-9", "Boss", atype="planner", balance=10000)
+        await _reg(mcp, fn, "planner-9", "Planner", atype="planner")
+        await _reg(mcp, fn, "tool-9", "ToolWorker", tier="tool", domains=["formatting"])
+
+        root = await _task(mcp, "boss-9", "Big project", budget=2000,
+                           domains=["coding", "formatting"])
+
+        # Planner takes root
+        bid = await _bid(mcp, root, "planner-9", conf=0.9, price=200)
+        assert bid["status"] in ("accepted", "executing")
+
+        # Subtask A: inherits general level
+        sub_a = await mcp.call_tool_parsed("eacn3_create_subtask", {
+            "parent_task_id": root,
+            "description": "Complex analysis subtask",
+            "domains": ["formatting"],
+            "budget": 300,
+            "initiator_id": "planner-9",
+        })
+        sub_a_id = sub_a.get("subtask_id") or sub_a.get("id")
+
+        # Subtask B: explicitly tool level
+        sub_b = await mcp.call_tool_parsed("eacn3_create_subtask", {
+            "parent_task_id": root,
+            "description": "Simple format conversion",
+            "domains": ["formatting"],
+            "budget": 100,
+            "initiator_id": "planner-9",
+            "level": "tool",
+        })
+        sub_b_id = sub_b.get("subtask_id") or sub_b.get("id")
+
+        # Verify levels via HTTP
+        resp_a = await http.get(f"/api/tasks/{sub_a_id}")
+        resp_b = await http.get(f"/api/tasks/{sub_b_id}")
+        assert resp_a.json()["level"] == "general"  # inherited
+        assert resp_b.json()["level"] == "tool"      # explicit
+
+        # Tool agent bids on inherited general subtask → rejected
+        bid_a = await _bid(mcp, sub_a_id, "tool-9", conf=0.9, price=200)
+        assert bid_a["status"] == "rejected"
+
+        # Tool agent bids on tool subtask → accepted
+        bid_b = await _bid(mcp, sub_b_id, "tool-9", conf=0.9, price=80)
+        assert bid_b["status"] in ("accepted", "executing")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Story 10: Agent at max capacity — autoBidEvaluate skips
+#
+# An agent has max_concurrent_tasks=2. After taking 2 tasks, the
+# third broadcast should not auto-match. Manually bidding still works.
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestAgentCapacityLimit:
+    @pytest.mark.asyncio
+    async def test_agent_at_capacity_can_still_manually_bid(self, mcp, http, funded_network):
+        """
+        Story: Worker registers with max_concurrent_tasks=2.
+        Takes 2 tasks. Publisher posts 3rd. Worker can still manually
+        bid (auto-match would skip, but manual bid is always possible).
+        """
+        fn = funded_network
+
+        await _reg(mcp, fn, "pub-cap", "Publisher", atype="planner", balance=20000)
+        await mcp.call_tool_parsed("eacn3_register_agent", {
+            "name": "BusyWorker",
+            "description": "Limited capacity worker",
+            "domains": ["coding"],
+            "skills": [{"name": "code", "description": "codes"}],
+            "agent_id": "busy-worker",
+            "tier": "general",
+            "capabilities": {"max_concurrent_tasks": 2, "concurrent": True},
+        })
+        fn.reputation._scores["busy-worker"] = 0.8
+        fn.escrow.get_or_create_account("busy-worker", 5000)
+
+        # Take 2 tasks
+        t1 = await _task(mcp, "pub-cap", "Task 1", budget=100)
+        t2 = await _task(mcp, "pub-cap", "Task 2", budget=100)
+
+        b1 = await _bid(mcp, t1, "busy-worker", conf=0.9, price=80)
+        b2 = await _bid(mcp, t2, "busy-worker", conf=0.9, price=80)
+        assert b1["status"] in ("accepted", "executing")
+        assert b2["status"] in ("accepted", "executing")
+
+        # 3rd task — worker can still bid manually
+        t3 = await _task(mcp, "pub-cap", "Task 3", budget=100)
+        b3 = await _bid(mcp, t3, "busy-worker", conf=0.9, price=80)
+        # Network doesn't enforce capacity — only autoBidEvaluate checks it
+        assert b3["status"] in ("accepted", "executing")
+
+        # Worker completes task 1 to free a slot
+        await _submit(mcp, t1, "busy-worker", {"done": True})
+        await _collect(mcp, t1, "pub-cap")
+        await _select(mcp, t1, "pub-cap", "busy-worker")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Story 11: Task expires with no bidders — budget refunded
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestTaskExpiresNoBidders:
+    @pytest.mark.asyncio
+    async def test_close_without_bids_refunds_budget(self, mcp, http, funded_network):
+        """
+        Story: Publisher posts task, no one bids. Publisher closes it.
+        Budget should be refunded.
+        """
+        fn = funded_network
+
+        await _reg(mcp, fn, "lonely-pub", "Lonely Publisher", atype="planner", balance=1000)
+
+        # Check initial balance
+        bal_before = await mcp.call_tool_parsed("eacn3_get_balance", {"agent_id": "lonely-pub"})
+        avail_before = bal_before["available"]
+
+        # Post a task — freezes 200 from balance
+        task_id = await _task(mcp, "lonely-pub", "Nobody wants this task",
+                              budget=200, domains=["obscure-domain"])
+
+        # Verify balance decreased
+        bal_mid = await mcp.call_tool_parsed("eacn3_get_balance", {"agent_id": "lonely-pub"})
+        assert bal_mid["frozen"] >= 200
+
+        # No bids arrive. Publisher closes.
+        close = await mcp.call_tool_parsed("eacn3_close_task", {
+            "task_id": task_id,
+            "initiator_id": "lonely-pub",
+        })
+        assert not is_error(close)
+
+        # Verify task is in terminal state
+        resp = await http.get(f"/api/tasks/{task_id}")
+        assert resp.json()["status"] in ("no_one_able", "completed")
+
+        # Budget should be refunded
+        bal_after = await mcp.call_tool_parsed("eacn3_get_balance", {"agent_id": "lonely-pub"})
+        assert bal_after["available"] >= avail_before - 1  # allow small rounding
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Story 12: Agent changes domains mid-session — gets new task types
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestAgentUpdatesDomains:
+    @pytest.mark.asyncio
+    async def test_update_domains_enables_new_tasks(self, mcp, http, funded_network):
+        """
+        Story: Agent starts with domains=["python"]. Realizes they
+        also know "rust". Updates their card. Now they can bid on
+        rust tasks too.
+        """
+        fn = funded_network
+
+        await _reg(mcp, fn, "pub-upd", "Publisher", atype="planner", balance=10000,
+                   domains=["python", "rust"])
+        await _reg(mcp, fn, "learner", "Learning Agent", tier="expert",
+                   domains=["python"])
+
+        # Learner can bid on python task
+        py_task = await _task(mcp, "pub-upd", "Python script", domains=["python"], budget=100)
+        py_bid = await _bid(mcp, py_task, "learner", conf=0.9, price=80)
+        assert py_bid["status"] in ("accepted", "executing")
+
+        # Learner updates domains to include rust
+        await mcp.call_tool_parsed("eacn3_update_agent", {
+            "agent_id": "learner",
+            "domains": ["python", "rust"],
+        })
+
+        # Verify update via HTTP
+        resp = await http.get("/api/discovery/agents/learner")
+        assert "rust" in resp.json()["domains"]
+
+        # Now learner can bid on rust tasks too
+        rust_task = await _task(mcp, "pub-upd", "Rust CLI tool", domains=["rust"], budget=150)
+        rust_bid = await _bid(mcp, rust_task, "learner", conf=0.8, price=120)
+        assert rust_bid["status"] in ("accepted", "executing")

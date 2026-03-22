@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from eacn.core.models import Task, TaskStatus, TaskType, Bid, BidStatus, Result
+from eacn.core.models import Task, TaskStatus, TaskType, TaskLevel, Bid, BidStatus, Result
 from eacn.core.exceptions import TaskError, BudgetError
 
 
@@ -171,6 +171,7 @@ class TaskManager:
         budget: float,
         initiator_id: str,
         deadline: str | None = None,
+        level: str | None = None,
     ) -> Task:
         """Create a child task, inheriting max_concurrent_bidders and depth guard."""
         parent = self.get(parent_task_id)
@@ -199,6 +200,7 @@ class TaskManager:
             remaining_budget=budget,
             deadline=deadline or parent.deadline,
             max_concurrent_bidders=parent.max_concurrent_bidders,
+            level=TaskLevel(level) if level else parent.level,
         )
 
         # Deduct from parent remaining budget

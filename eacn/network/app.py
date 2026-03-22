@@ -492,6 +492,7 @@ class Network:
         domains: list[str],
         budget: float,
         deadline: str | None = None,
+        level: str | None = None,
     ) -> Task:
         """Executor delegates subtask from parent's budget."""
         parent = self.task_manager.get(parent_task_id)
@@ -509,6 +510,7 @@ class Network:
             budget=budget,
             initiator_id=initiator_id,
             deadline=deadline,
+            level=level,
         )
 
         # Transfer escrow

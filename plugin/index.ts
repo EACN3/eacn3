@@ -654,13 +654,14 @@ export default function (api: any) {
         parent_task_id: { type: "string" }, description: { type: "string" },
         domains: { type: "array", items: { type: "string" } },
         budget: { type: "number" }, deadline: { type: "string" },
+        level: { type: "string", enum: ["general", "expert", "expert_general", "tool"], description: "Task level. If omitted, inherits from parent." },
         initiator_id: { type: "string", description: "Agent ID of the executor creating the subtask (auto-injected if omitted)" },
       },
       required: ["parent_task_id", "description", "domains", "budget"],
     },
     async execute(_id: string, params: any) {
       const initiatorId = resolveAgentId(params.initiator_id);
-      const task = await net.createSubtask(params.parent_task_id, initiatorId, { description: params.description }, params.domains, params.budget, params.deadline);
+      const task = await net.createSubtask(params.parent_task_id, initiatorId, { description: params.description }, params.domains, params.budget, params.deadline, params.level);
       return ok({ subtask_id: task.id, parent_task_id: params.parent_task_id, status: task.status, depth: task.depth });
     },
   });

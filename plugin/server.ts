@@ -845,6 +845,7 @@ server.tool(
     domains: z.array(z.string()),
     budget: z.number(),
     deadline: z.string().optional(),
+    level: z.enum(["general", "expert", "expert_general", "tool"]).optional().describe("Task level for the subtask. If omitted, inherits from parent task."),
     initiator_id: z.string().optional().describe("Agent ID of the executor creating the subtask (auto-injected if omitted)"),
   },
   async (params) => {
@@ -856,6 +857,7 @@ server.tool(
       params.domains,
       params.budget,
       params.deadline,
+      params.level,
     );
 
     return ok({
