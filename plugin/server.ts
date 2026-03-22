@@ -147,15 +147,41 @@ server.tool(
 
     s.network_endpoint = endpoint;
 
-    // Register as server
-    const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
-    s.server_card = {
-      server_id: res.server_id,
-      version: "0.3.0",
-      endpoint: "plugin://local",
-      owner: "plugin-user",
-      status: "online",
-    };
+    // Reuse existing server identity if available; otherwise register new
+    let sid: string;
+    if (s.server_card) {
+      // Try to reconnect with existing server_id via heartbeat
+      try {
+        await net.heartbeat();
+        sid = s.server_card.server_id;
+        s.server_card.status = "online";
+      } catch {
+        // Server no longer known to network — re-register
+        const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
+        sid = res.server_id;
+        s.server_card = {
+          server_id: sid,
+          version: "0.3.0",
+          endpoint: "plugin://local",
+          owner: "plugin-user",
+          status: "online",
+        };
+        // Update server_id on all persisted agents so they stay consistent
+        for (const agent of Object.values(s.agents)) {
+          agent.server_id = sid;
+        }
+      }
+    } else {
+      const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
+      sid = res.server_id;
+      s.server_card = {
+        server_id: sid,
+        version: "0.3.0",
+        endpoint: "plugin://local",
+        owner: "plugin-user",
+        status: "online",
+      };
+    }
     state.save();
 
     // Start background heartbeat
@@ -176,7 +202,7 @@ server.tool(
 
     return ok({
       connected: true,
-      server_id: res.server_id,
+      server_id: sid,
       network_endpoint: endpoint,
       fallback,
       agents_online: restoredAgents.length,
@@ -191,18 +217,18 @@ server.tool(
 // #2 eacn3_disconnect
 server.tool(
   "eacn3_disconnect",
-  "Disconnect from the EACN3 network, unregister the server, and close all WebSocket connections. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
+  "Disconnect from the EACN3 network and close all WebSocket connections. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
   {},
   async () => {
     stopHeartbeat();
     ws.disconnectAll();
 
-    try { await net.unregisterServer(); } catch { /* may already be gone */ }
-
+    // Do NOT call unregisterServer — it cascade-deletes all agents on the network side.
+    // We only go offline; identity is preserved for reconnection.
     const s = state.getState();
-    s.server_card = null;
-    // Keep agents — they are persistent identities, not ephemeral sessions.
-    // On next eacn3_connect, they will be automatically reconnected.
+    if (s.server_card) {
+      s.server_card.status = "offline";
+    }
     state.save();
 
     return ok({ disconnected: true });
