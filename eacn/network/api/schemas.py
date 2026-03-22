@@ -26,6 +26,8 @@ class CreateTaskRequest(BaseModel):
     max_concurrent_bidders: int | None = None
     max_depth: int | None = None
     human_contact: HumanContactSchema | None = None
+    level: str | None = None
+    invited_agent_ids: list[str] = Field(default_factory=list)
 
 
 class TaskResponse(BaseModel):
@@ -46,6 +48,8 @@ class TaskResponse(BaseModel):
     max_concurrent_bidders: int = 0
     budget_locked: bool = False
     human_contact: HumanContactSchema | None = None
+    level: str = "general"
+    invited_agent_ids: list[str] = Field(default_factory=list)
 
 
 # ── Reject task ──────────────────────────────────────────────────────
@@ -188,6 +192,7 @@ class RegisterAgentRequest(BaseModel):
     url: str
     server_id: str
     description: str = ""
+    tier: str = "general"
 
 
 class RegisterAgentResponse(BaseModel):
@@ -205,6 +210,7 @@ class AgentCardResponse(BaseModel):
     server_id: str
     network_id: str = ""
     description: str = ""
+    tier: str = "general"
 
 
 class UpdateAgentRequest(BaseModel):
@@ -213,6 +219,21 @@ class UpdateAgentRequest(BaseModel):
     skills: list[SkillSchema] | None = Field(default=None, min_length=1)
     url: str | None = None
     description: str | None = None
+    tier: str | None = None
+
+
+# ── Invite ──────────────────────────────────────────────────────────
+
+class InviteAgentRequest(BaseModel):
+    initiator_id: str
+    agent_id: str
+
+
+class InviteAgentResponse(BaseModel):
+    ok: bool = True
+    task_id: str
+    agent_id: str
+    message: str = ""
 
 
 # ── Discovery: Query ────────────────────────────────────────────────

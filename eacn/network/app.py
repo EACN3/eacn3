@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from eacn.core.models import (
-    Task, TaskStatus, TaskType, Bid, BidStatus, Result, LogEntry, HumanContact,
+    Task, TaskStatus, TaskType, TaskLevel, Bid, BidStatus, Result, LogEntry, HumanContact,
 )
 from eacn.core.exceptions import TaskError, BudgetError
 from eacn.network.task_manager import TaskManager
@@ -74,6 +74,8 @@ class Network:
         max_concurrent_bidders: int | None = None,
         max_depth: int | None = None,
         human_contact: HumanContact | None = None,
+        level: str | None = None,
+        invited_agent_ids: list[str] | None = None,
     ) -> Task:
         """Publish a new task: freeze budget → create → discover → broadcast."""
         self.escrow.freeze_budget(initiator_id, task_id, budget)
@@ -87,6 +89,8 @@ class Network:
             max_concurrent_bidders=max_concurrent_bidders or self.config.task.default_max_concurrent_bidders,
             max_depth=max_depth or self.config.task.default_max_depth,
             human_contact=human_contact,
+            level=TaskLevel(level) if level else TaskLevel.GENERAL,
+            invited_agent_ids=invited_agent_ids or [],
         )
         task = self.task_manager.create(task)
         self._log_event("create_task", task_id=task_id, agent_id=initiator_id)
@@ -100,6 +104,8 @@ class Network:
             "deadline": deadline,
             "content": content,
             "max_concurrent_bidders": task.max_concurrent_bidders,
+            "level": task.level.value,
+            "invited_agent_ids": task.invited_agent_ids,
         })
 
         return task
@@ -123,6 +129,15 @@ class Network:
         negotiation_gain = self.reputation.negotiation_gain(agent_id)
         is_adjudication = task.type == TaskType.ADJUDICATION
 
+        # Get agent tier from discovery registry
+        agent_tier = "general"
+        agent_card = await self.discovery.bootstrap.get_agent_card(agent_id)
+        if agent_card:
+            agent_tier = agent_card.get("tier", "general")
+
+        task_level = task.level.value if hasattr(task.level, "value") else str(task.level)
+        is_invited = agent_id in task.invited_agent_ids
+
         check = self.matcher.check_bid(
             agent_id=agent_id,
             confidence=confidence,
@@ -131,6 +146,9 @@ class Network:
             scores=scores,
             negotiation_gain=negotiation_gain,
             is_adjudication=is_adjudication,
+            agent_tier=agent_tier,
+            task_level=task_level,
+            is_invited=is_invited,
         )
 
         if not check.passed:
@@ -205,6 +223,16 @@ class Network:
 
         return bid_status
 
+
+    async def invite_agent(self, task_id: str, initiator_id: str, agent_id: str) -> None:
+        """Invite an agent to bid on a task (skips ability check)."""
+        task = self.task_manager.get(task_id)
+        if task.initiator_id != initiator_id:
+            raise TaskError("Only the task initiator can invite agents")
+        if task.status.value not in ("unclaimed", "bidding"):
+            raise TaskError("Can only invite agents while task is open")
+        if agent_id not in task.invited_agent_ids:
+            task.invited_agent_ids.append(agent_id)
 
     async def reject_task(
         self,

@@ -17,6 +17,7 @@ from eacn.network.api.schemas import (
     ReputationEventRequest, ReputationResponse,
     BalanceResponse, DepositRequest, DepositResponse,
     RelayMessageRequest,
+    InviteAgentRequest, InviteAgentResponse,
     OkResponse,
 )
 
@@ -58,6 +59,8 @@ async def create_task(req: CreateTaskRequest):
             max_concurrent_bidders=req.max_concurrent_bidders,
             max_depth=req.max_depth,
             human_contact=human_contact,
+            level=req.level,
+            invited_agent_ids=req.invited_agent_ids,
         )
         return _task_to_response(task)
     except BudgetError as e:
@@ -167,6 +170,24 @@ async def submit_bid(task_id: str, req: SubmitBidRequest):
         )
         return BidResponse(
             status=bid_status.value, task_id=task_id, agent_id=req.agent_id,
+        )
+    except TaskError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/tasks/{task_id}/invite", response_model=InviteAgentResponse)
+async def invite_agent(task_id: str, req: InviteAgentRequest):
+    """Invite an agent to bid on a task (skips ability check)."""
+    try:
+        await _net().invite_agent(
+            task_id=task_id,
+            initiator_id=req.initiator_id,
+            agent_id=req.agent_id,
+        )
+        return InviteAgentResponse(
+            task_id=task_id,
+            agent_id=req.agent_id,
+            message="Agent invited",
         )
     except TaskError as e:
         raise HTTPException(400, str(e))

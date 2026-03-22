@@ -7,6 +7,13 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 
+class AgentTier(str, Enum):
+    GENERAL = "general"
+    EXPERT = "expert"
+    EXPERT_GENERAL = "expert_general"
+    TOOL = "tool"
+
+
 class AgentType(str, Enum):
     EXECUTOR = "executor"
     PLANNER = "planner"
@@ -34,3 +41,4 @@ class AgentCard(BaseModel):
     server_id: str
     network_id: str = ""
     description: str = ""
+    tier: AgentTier = AgentTier.GENERAL

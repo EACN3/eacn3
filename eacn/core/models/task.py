@@ -8,6 +8,13 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class TaskLevel(str, Enum):
+    GENERAL = "general"
+    EXPERT = "expert"
+    EXPERT_GENERAL = "expert_general"
+    TOOL = "tool"
+
+
 class TaskStatus(str, Enum):
     UNCLAIMED = "unclaimed"
     BIDDING = "bidding"
@@ -89,6 +96,8 @@ class Task(BaseModel):
     results: list[Result] = Field(default_factory=list)
     budget_locked: bool = False  # True when concurrent slots full
     human_contact: HumanContact | None = None
+    level: TaskLevel = TaskLevel.GENERAL
+    invited_agent_ids: list[str] = Field(default_factory=list)
 
     @property
     def executing_agents(self) -> list[str]:

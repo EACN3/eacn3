@@ -80,6 +80,18 @@ class GlobalMatcher:
         candidates.sort(key=lambda x: x[0], reverse=True)
         return [agent for _, agent in candidates]
 
+    # ── Tier eligibility ────────────────────────────────────────────
+
+    TIER_HIERARCHY = ["general", "expert", "expert_general", "tool"]
+
+    def is_tier_eligible(self, agent_tier: str, task_level: str) -> bool:
+        """Check whether an agent tier is eligible to bid on a task level."""
+        if agent_tier == "tool":
+            return task_level == "tool"
+        tier_idx = self.TIER_HIERARCHY.index(agent_tier) if agent_tier in self.TIER_HIERARCHY else 0
+        level_idx = self.TIER_HIERARCHY.index(task_level) if task_level in self.TIER_HIERARCHY else 0
+        return tier_idx <= level_idx
+
     # ── Bid validation ───────────────────────────────────────────────
 
     def check_bid(
@@ -93,6 +105,9 @@ class GlobalMatcher:
         is_adjudication: bool = False,
         threshold: float | None = None,
         tolerance: float | None = None,
+        agent_tier: str | None = None,
+        task_level: str | None = None,
+        is_invited: bool = False,
     ) -> BidCheckResult:
         """Validate bid: ability gate + price gate.
 
@@ -102,6 +117,15 @@ class GlobalMatcher:
 
         Returns BidCheckResult with pass/fail and reason.
         """
+        # Tier eligibility check (skip if invited)
+        if agent_tier and task_level and not is_invited:
+            if not self.is_tier_eligible(agent_tier, task_level):
+                return BidCheckResult(
+                    passed=False,
+                    reason=f"Tier {agent_tier} not eligible for level {task_level}",
+                    needs_budget_confirmation=False,
+                )
+
         if threshold is None:
             threshold = self._ability_threshold
         if tolerance is None:
@@ -109,7 +133,11 @@ class GlobalMatcher:
         reputation = scores.get(agent_id, self._default_rep)
         ability = confidence * reputation
 
-        if ability < threshold:
+        # Skip ability check if invited
+        if is_invited:
+            # Still do price check below
+            pass
+        elif ability < threshold:
             return BidCheckResult(
                 passed=False,
                 reason=f"Ability check failed: {ability:.3f} < {threshold}",

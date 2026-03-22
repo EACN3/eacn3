@@ -1,7 +1,7 @@
 /**
  * EACN3 — Native OpenClaw plugin entry point.
  *
- * Registers the same 34 tools as server.ts but via api.registerTool().
+ * Registers the same 38 tools as server.ts but via api.registerTool().
  * All logic delegates to the same src/ modules.
  */
 
@@ -572,13 +572,26 @@ export default function (api: any) {
 
       state.addMessage(initiatorId, { from: initiatorId, to: params.agent_id, content: inviteContent, timestamp: Date.now(), direction: "out" });
 
+      // Try to notify the invited agent: A2A direct → relay fallback
       try {
-        await net.relayMessage({
-          to: { network_id: "", server_id: "", agent_id: params.agent_id },
-          from: { network_id: state.getState().server_card?.server_id ?? "", server_id: state.getServerId() ?? "", agent_id: initiatorId },
-          content: inviteContent,
-        });
-      } catch { /* non-critical */ }
+        const agentCard = await net.getAgentInfo(params.agent_id);
+        if (agentCard.url && !agentCard.url.startsWith("plugin://")) {
+          // A2A direct POST
+          const eventsUrl = agentCard.url.replace(/\/$/, "") + "/events";
+          await fetch(eventsUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: "direct_message", from: initiatorId, content: inviteContent, task_id: params.task_id, invitation: true }),
+          }).catch(() => { /* fall through to relay */ });
+        } else {
+          // Network relay with proper routing info
+          await net.relayMessage({
+            to: { network_id: agentCard.network_id ?? "", server_id: agentCard.server_id, agent_id: params.agent_id },
+            from: { network_id: state.getState().server_card?.server_id ?? "", server_id: state.getServerId() ?? "", agent_id: initiatorId },
+            content: inviteContent,
+          });
+        }
+      } catch { /* non-critical — invitation still recorded server-side */ }
 
       return ok(res);
     }),

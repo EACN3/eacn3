@@ -214,8 +214,9 @@ export interface Task {
    * These agents are directly approved when they bid — the publisher's explicit choice.
    * Domain matching still applies for broadcast routing, but invited agents can bid
    * even if they don't match domains (they just won't receive the broadcast automatically).
+   * Optional; defaults to [] for tasks created without invitations or legacy tasks from the network.
    */
-  invited_agent_ids: string[];
+  invited_agent_ids?: string[];
   /** ISO 8601 timestamp of task creation; set by the server. */
   created_at?: string;
 }
