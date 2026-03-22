@@ -10,7 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { type EacnState, type AgentCard, type PushEvent, createDefaultState, EACN3_DEFAULT_NETWORK_ENDPOINT } from "./src/models.js";
+import { type EacnState, type AgentCard, type PushEvent, type AgentTier, type TaskLevel, createDefaultState, EACN3_DEFAULT_NETWORK_ENDPOINT, isTierEligible, AGENT_TIER_HIERARCHY } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
 import * as ws from "./src/ws-manager.js";
@@ -259,6 +259,7 @@ server.tool(
       concurrent: z.boolean().describe("Whether this Agent supports concurrent execution"),
     }).optional().describe("Agent capacity limits"),
     agent_type: z.enum(["executor", "planner"]).optional().describe("Defaults to executor"),
+    tier: z.enum(["general", "expert", "expert_general", "tool"]).optional().describe("Capability tier: general (can bid on anything) > expert > expert_general > tool (only tool-level tasks). Defaults to general."),
     agent_id: z.string().optional().describe("Custom agent ID. Auto-generated if omitted."),
     a2a_port: z.number().optional().describe("Port for A2A HTTP server. Enables direct agent-to-agent messaging. Omit to use Network relay only."),
     a2a_url: z.string().optional().describe("Full public URL for A2A callbacks (e.g. 'http://my-server.com:3001'). Auto-generated from a2a_port if omitted."),
@@ -291,6 +292,7 @@ server.tool(
       agent_id: agentId,
       name: params.name,
       agent_type: params.agent_type ?? "executor",
+      tier: (params.tier as AgentTier) ?? "general",
       domains: params.domains,
       skills: params.skills ?? [],
       capabilities: params.capabilities,
@@ -532,6 +534,8 @@ server.tool(
       contact_id: z.string().optional().describe("Human contact identifier"),
       timeout_s: z.number().optional().describe("Seconds to wait for human response before auto-reject"),
     }).optional().describe("Human-in-the-loop contact settings"),
+    level: z.enum(["general", "expert", "expert_general", "tool"]).optional().describe("Task complexity level. Determines which agent tiers can bid. 'tool' = only tool-level tasks for simple tool wrappers. Defaults to 'general' (open to all)."),
+    invited_agent_ids: z.array(z.string()).optional().describe("Agent IDs to directly approve — these agents bypass bid admission filtering (confidence×reputation threshold). Use to pre-select specific agents you trust."),
     initiator_id: z.string().optional().describe("Agent ID of the task initiator (auto-injected if omitted)"),
   },
   async (params) => {
@@ -560,6 +564,8 @@ server.tool(
       max_concurrent_bidders: params.max_concurrent_bidders,
       max_depth: params.max_depth,
       human_contact: params.human_contact,
+      level: (params.level as TaskLevel) ?? "general",
+      invited_agent_ids: params.invited_agent_ids,
     });
 
     // Track locally
@@ -678,6 +684,74 @@ server.tool(
   },
 );
 
+// #22b eacn3_invite_agent
+server.tool(
+  "eacn3_invite_agent",
+  "Invite a specific agent to bid on your task, bypassing the normal bid admission filter (confidence×reputation threshold). The invited agent still needs to actively bid — this just guarantees their bid won't be rejected by the admission algorithm. Use when you know a specific agent is right for the job but they might not pass the automated filter (e.g. new agent with low reputation). Also sends a direct_message notification to the invited agent. Requires: you must be the task initiator.",
+  {
+    task_id: z.string(),
+    agent_id: z.string().describe("Agent ID to invite"),
+    message: z.string().optional().describe("Optional message to send with the invitation"),
+    initiator_id: z.string().optional().describe("Initiator agent ID (auto-injected if omitted)"),
+  },
+  async (params) => {
+    const initiatorId = resolveAgentId(params.initiator_id);
+    const res = await net.inviteAgent(params.task_id, initiatorId, params.agent_id);
+
+    // Send a direct_message notification to the invited agent
+    const inviteContent = params.message
+      ? `[Task Invitation] You've been invited to bid on task ${params.task_id}. Your bid will bypass admission filtering. Message from initiator: ${params.message}`
+      : `[Task Invitation] You've been invited to bid on task ${params.task_id}. Your bid will bypass admission filtering.`;
+
+    // Record outgoing message in session
+    state.addMessage(initiatorId, {
+      from: initiatorId,
+      to: params.agent_id,
+      content: inviteContent,
+      timestamp: Date.now(),
+      direction: "out",
+    });
+
+    // Try to notify the invited agent
+    try {
+      const agentCard = await net.getAgentInfo(params.agent_id);
+      if (agentCard.url && !agentCard.url.startsWith("plugin://")) {
+        const eventsUrl = agentCard.url.replace(/\/$/, "") + "/events";
+        await fetch(eventsUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "direct_message",
+            from: initiatorId,
+            content: inviteContent,
+            task_id: params.task_id,
+            invitation: true,
+          }),
+        }).catch(() => { /* non-critical */ });
+      } else {
+        // Relay via network
+        await net.relayMessage({
+          to: {
+            network_id: agentCard.network_id ?? "",
+            server_id: agentCard.server_id,
+            agent_id: params.agent_id,
+          },
+          from: {
+            network_id: state.getState().server_card?.server_id ?? "",
+            server_id: state.getServerId() ?? "",
+            agent_id: initiatorId,
+          },
+          content: inviteContent,
+        }).catch(() => { /* non-critical */ });
+      }
+    } catch {
+      // Agent lookup failed — invitation still recorded server-side
+    }
+
+    return ok(res);
+  },
+);
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Task Operations — Executor (5)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -685,7 +759,7 @@ server.tool(
 // #23 eacn3_submit_bid
 server.tool(
   "eacn3_submit_bid",
-  "Bid on an open task by specifying your confidence (0.0-1.0 honest ability estimate) and price in credits. Server evaluates: confidence * reputation must meet threshold or bid is rejected. Returns {status} which is one of: 'executing' (start work now), 'waiting_execution' (queued, slots full), 'rejected' (threshold not met), or 'pending_confirmation' (price > budget, awaiting initiator approval). Side effects: if accepted, tracks task locally as executor role. If price > budget, initiator gets a 'budget_confirmation' event.",
+  "Bid on an open task by specifying your confidence (0.0-1.0 honest ability estimate) and price in credits. Server evaluates: confidence * reputation must meet threshold or bid is rejected (unless you are in the task's invited_agent_ids list — invited agents bypass admission). Also checks tier/level compatibility: tool-tier agents can only bid on tool-level tasks. Returns {status} which is one of: 'executing' (start work now), 'waiting_execution' (queued, slots full), 'rejected' (threshold not met or tier mismatch), or 'pending_confirmation' (price > budget, awaiting initiator approval). Side effects: if accepted, tracks task locally as executor role.",
   {
     task_id: z.string(),
     confidence: z.number().min(0).max(1).describe("0.0-1.0 confidence in ability to complete"),
@@ -694,6 +768,29 @@ server.tool(
   },
   async (params) => {
     const agentId = resolveAgentId(params.agent_id);
+
+    // Pre-flight: tier/level compatibility check (client-side, before hitting network)
+    const agent = state.getAgent(agentId);
+    if (agent) {
+      try {
+        const taskInfo = await net.getTask(params.task_id);
+        const taskLevel = taskInfo.level ?? "general";
+        const agentTier = agent.tier ?? "general";
+        const isInvited = taskInfo.invited_agent_ids?.includes(agentId) ?? false;
+
+        if (!isInvited && !isTierEligible(agentTier, taskLevel)) {
+          return err(
+            `Tier mismatch: your agent tier "${agentTier}" cannot bid on task level "${taskLevel}". ` +
+            (agentTier === "tool"
+              ? "Tool-tier agents can only bid on tool-level tasks."
+              : `Your tier requires tasks at level "${agentTier}" or lower.`),
+          );
+        }
+      } catch {
+        // Task fetch failed — let the network-side validation handle it
+      }
+    }
+
     const res = await net.submitBid(params.task_id, agentId, params.confidence, params.price);
 
     // Track locally if not rejected (status could be "executing", "waiting_execution", etc.)

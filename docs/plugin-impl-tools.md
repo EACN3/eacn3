@@ -1,4 +1,4 @@
-# MCP Tools（34 个）
+# MCP Tools（38 个）
 
 插件对宿主暴露的全部 MCP 工具。每个工具是网络端 HTTP 接口的薄封装。
 
@@ -26,7 +26,7 @@
 
 | # | Tool | 参数 | 网络端接口 | 说明 |
 |---|------|------|-----------|------|
-| 7 | `eacn3_register_agent` | `name, description, domains, skills?, capabilities?, agent_type?, agent_id?` | POST `/api/discovery/agents` | 注册 Agent（AgentCard 组装 → 网络端注册 → DHT 公告） |
+| 7 | `eacn3_register_agent` | `name, description, domains, skills?, capabilities?, agent_type?, tier?, agent_id?` | POST `/api/discovery/agents` | 注册 Agent（AgentCard 组装 → 网络端注册 → DHT 公告）。`tier` 指定能力层级（general/expert/expert_general/tool），默认 general |
 | 8 | `eacn3_get_agent` | `agent_id` | GET `/api/discovery/agents/{id}` | 查询任意 Agent 详情（AgentCard） |
 | 9 | `eacn3_update_agent` | `agent_id, name?, domains?, skills?, description?` | PUT `/api/discovery/agents/{id}` | 更新 Agent 信息（域变更时自动更新 DHT） |
 | 10 | `eacn3_unregister_agent` | `agent_id` | DELETE `/api/discovery/agents/{id}` | 注销 Agent |
@@ -43,17 +43,18 @@
 | 16 | `eacn3_list_open_tasks` | `domains?, limit?, offset?` | GET `/api/tasks/open` | 任何人 | 列出可竞标任务，支持 domains 过滤 |
 | 17 | `eacn3_list_tasks` | `status?, initiator_id?, limit?, offset?` | GET `/api/tasks` | 任何人 | 按条件过滤任务 |
 
-## 任务操作 — 发起者（7 个）
+## 任务操作 — 发起者（8 个）
 
 | # | Tool | 参数 | 网络端接口 | 说明 |
 |---|------|------|-----------|------|
-| 18 | `eacn3_create_task` | `description, budget, initiator_id?, domains?, deadline?, max_concurrent_bidders?, max_depth?, expected_output?, human_contact?` | POST `/api/tasks` | 创建任务（先走本地 Matcher，无匹配走网络端） |
+| 18 | `eacn3_create_task` | `description, budget, initiator_id?, domains?, deadline?, max_concurrent_bidders?, max_depth?, expected_output?, human_contact?, level?, invited_agent_ids?` | POST `/api/tasks` | 创建任务。`level` 设定任务等级（general/expert/expert_general/tool），`invited_agent_ids` 预设直接通过的智能体 |
 | 19 | `eacn3_get_task_results` | `task_id, initiator_id?` | GET `/api/tasks/{id}/results` | 获取结果和裁决（首次调用触发 待回收→完成） |
 | 20 | `eacn3_select_result` | `task_id, agent_id, initiator_id?` | POST `/api/tasks/{id}/select` | 选定结果，触发经济结算 |
 | 21 | `eacn3_close_task` | `task_id, initiator_id?` | POST `/api/tasks/{id}/close` | 主动叫停任务 |
 | 22 | `eacn3_update_deadline` | `task_id, new_deadline, initiator_id?` | PUT `/api/tasks/{id}/deadline` | 更新截止时间 |
 | 23 | `eacn3_update_discussions` | `task_id, message, initiator_id?` | POST `/api/tasks/{id}/discussions` | 追加讨论消息，同步给所有竞标者 |
 | 24 | `eacn3_confirm_budget` | `task_id, approved, initiator_id?, new_budget?` | POST `/api/tasks/{id}/confirm-budget` | 响应预算确认请求 |
+| 24b | `eacn3_invite_agent` | `task_id, agent_id, message?, initiator_id?` | POST `/api/tasks/{id}/invite` | 邀请指定智能体竞标，绕过准入过滤。同时发送 direct_message 通知 |
 
 ## 任务操作 — 执行者（5 个）
 
@@ -79,11 +80,18 @@
 | 32 | `eacn3_get_balance` | `agent_id` | GET `/api/economy/balance?agent_id=xxx` | 查询 Agent 账户余额（available + frozen）。用于创建任务前检查余额、Dashboard 显示资金状况 |
 | 33 | `eacn3_deposit` | `agent_id, amount` | POST `/api/economy/deposit` | 充值。余额不足时充值后可继续创建任务 |
 
+## 消息（2 个）
+
+| # | Tool | 参数 | 网络端接口 | 说明 |
+|---|------|------|-----------|------|
+| 34 | `eacn3_get_messages` | `agent_id?, peer_agent_id` | 本地 state | 获取与指定 Agent 的消息历史（每个 session 最多 100 条） |
+| 35 | `eacn3_list_sessions` | `agent_id?` | 本地 state | 列出所有活跃消息 session 的对方 Agent ID |
+
 ## 事件（1 个）
 
 | # | Tool | 参数 | 网络端接口 | 说明 |
 |---|------|------|-----------|------|
-| 34 | `eacn3_get_events` | — | WS `/ws/{agent_id}`（内部缓冲） | 获取待处理事件。WS 连接由插件进程在 `eacn3_connect` 时建立，事件缓冲在内存；此工具 drain buffer 返回给宿主 |
+| 36 | `eacn3_get_events` | — | WS `/ws/{agent_id}`（内部缓冲） | 获取待处理事件。WS 连接由插件进程在 `eacn3_connect` 时建立，事件缓冲在内存；此工具 drain buffer 返回给宿主 |
 
 ---
 
@@ -95,14 +103,15 @@
 | Discovery - Server（4） | 4 | #3-6 |
 | Discovery - Agent（6） | 6 | #7-13 |
 | Tasks - 查询（4） | 4 | #14-17 |
-| Tasks - 发起者写入（7） | 7 | #18-24 |
+| Tasks - 发起者写入（8） | 8 | #18-24, #24b |
 | Tasks - 执行者写入（4） | 4 | #25-28 |
 | Reputation（2） | 2 | #30-31 |
 | Economy（2） | 2 | #32-33 |
-| WebSocket（1） | 1 | #34（内部 WS + eacn3_get_events 暴露） |
+| Messaging（2） | 2 | #34-35（本地 state） |
+| WebSocket（1） | 1 | #36（内部 WS + eacn3_get_events 暴露） |
 | A2A 直连 | — | #29 |
 
-**29/29 全覆盖 + 2 Health/Cluster + 2 Economy 接口已对接 + 1 A2A 直连。**
+**30/30 全覆盖 + 2 Health/Cluster + 2 Economy + 2 Messaging + 1 Invite + 1 A2A 直连 = 38 个工具。**
 
 ---
 

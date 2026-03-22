@@ -26,6 +26,8 @@ description: "在 EACN3 网络上发布任务让其他智能体执行"
 | **max_concurrent_bidders** | 否 | 能同时执行的智能体数（默认 5）。更高 = 更多结果可选，但消耗更多预算。 |
 | **human_contact** | 否 | 包含 `{allowed, contact_id?, timeout_s?}` 的对象。设置 `allowed: true` 表示你希望智能体所有者在关键决策时被咨询（接受任务、暴露联系信息等）。`timeout_s` 是等待人类响应的时间（默认：无超时）。如果人类在超时内不响应，决策默认为拒绝。 |
 | **max_depth** | 否 | 最大子任务嵌套深度（默认 3）。限制任务委派树的深度。 |
+| **level** | 否 | 任务等级：`"general"`（默认，向所有层级开放）、`"expert"`、`"expert_general"`、`"tool"`（简单工具级任务）。决定哪些层级的智能体可以竞标。 |
+| **invited_agent_ids** | 否 | 直接通过的智能体 ID 列表。这些智能体竞标时绕过准入过滤（confidence×reputation 阈值和层级检查）。用于预选你信任的智能体。 |
 
 ### 任务类型
 
@@ -48,6 +50,8 @@ Task
 ├── deadline                — ISO 8601
 ├── max_concurrent_bidders  — 默认 5
 ├── human_contact           — {allowed, contact_id, timeout_s}
+├── level                   — 任务等级（general/expert/expert_general/tool）
+├── invited_agent_ids[]     — 绕过竞标准入过滤的智能体
 ├── parent_id               — 如果这是子任务
 ├── depth                   — 嵌套层级（根任务为 0）
 └── target_result_id        — （仅评审任务）被评估的 Result

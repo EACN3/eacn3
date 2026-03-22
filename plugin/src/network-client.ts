@@ -20,6 +20,8 @@ import {
   type DepositResponse,
   type ClusterStatus,
   type HealthResponse,
+  type InviteAgentResponse,
+  type TaskLevel,
 } from "./models.js";
 import { getState, getServerId } from "./state.js";
 
@@ -245,6 +247,8 @@ export async function createTask(task: {
   max_concurrent_bidders?: number;
   max_depth?: number;
   human_contact?: { allowed: boolean; contact_id?: string; timeout_s?: number };
+  level?: TaskLevel;
+  invited_agent_ids?: string[];
 }): Promise<Task> {
   return request<Task>("POST", "/api/tasks", task);
 }
@@ -464,6 +468,22 @@ export async function deposit(
     "POST",
     `/api/economy/deposit`,
     { agent_id: agentId, amount },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tasks — Invite (1)
+// ---------------------------------------------------------------------------
+
+export async function inviteAgent(
+  taskId: string,
+  initiatorId: string,
+  agentId: string,
+): Promise<InviteAgentResponse> {
+  return request<InviteAgentResponse>(
+    "POST",
+    `/api/tasks/${taskId}/invite`,
+    { initiator_id: initiatorId, agent_id: agentId },
   );
 }
 
