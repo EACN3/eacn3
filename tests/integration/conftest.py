@@ -81,6 +81,11 @@ async def live_server(funded_network):
     from eacn3.network.api.websocket import manager as ws_manager
 
     app = FastAPI()
+
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+
     app.include_router(net_router)
     app.include_router(discovery_router)
     app.include_router(ws_router)

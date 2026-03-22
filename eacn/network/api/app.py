@@ -29,11 +29,35 @@ async def lifespan(app: FastAPI):
     network = Network(db=db)
     await network.start()
 
-    # Wire push handler → WebSocket delivery
+    # Wire push handler → WebSocket delivery + cross-node forwarding
     async def ws_push_handler(event):
-        await manager.broadcast_event(event)
+        """Deliver locally, then forward undelivered recipients to remote nodes."""
+        delivered = await manager.broadcast_event(event)
+
+        # If all recipients were delivered locally, we're done
+        if delivered >= len(event.recipients):
+            return
+
+        # Find recipients not connected to this node
+        undelivered = [r for r in event.recipients if not manager.is_connected(r)]
+        if not undelivered:
+            return
+
+        # Forward to participant nodes that may have these agents connected
+        participant_nodes = network.cluster.router.get_participants(event.task_id)
+        if participant_nodes:
+            await network.cluster.router.forward_push(
+                event.type.value,
+                event.task_id,
+                undelivered,
+                event.payload,
+                participant_nodes,
+            )
 
     network.push.set_handler(ws_push_handler)
+
+    # Wire cluster local push handler (receives forwarded events from peer nodes)
+    network.cluster.set_push_handler(manager.broadcast_event)
 
     app.state.db = db
     app.state.network = network

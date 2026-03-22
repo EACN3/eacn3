@@ -56,6 +56,7 @@ class HeartbeatRequest(BaseModel):
     node_id: str
     domains: list[str] = Field(default_factory=list)
     timestamp: str
+    connected_agents: int = 0
 
 
 class DHTStoreRequest(BaseModel):
@@ -150,7 +151,8 @@ async def peer_heartbeat(req: HeartbeatRequest):
     cs = _cs()
     if not cs.members.contains(req.node_id):
         raise HTTPException(404, f"Node {req.node_id} not found")
-    cs.handle_heartbeat(req.node_id, req.domains, req.timestamp)
+    cs.handle_heartbeat(req.node_id, req.domains, req.timestamp,
+                        connected_agents=req.connected_agents)
     return OkResponse()
 
 
@@ -194,6 +196,9 @@ async def peer_task_broadcast(req: TaskBroadcastRequest):
         return OkResponse()  # Idempotent
 
     cs.handle_broadcast(req.model_dump())
+    # Track the origin node as a participant so subsequent push events
+    # (BID_RESULT, DISCUSSION_UPDATE, etc.) can be forwarded back to it
+    cs.router.add_participant(req.task_id, req.origin)
 
     net = _net()
     all_agent_ids: set[str] = set()

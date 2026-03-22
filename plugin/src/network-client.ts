@@ -20,6 +20,8 @@ import {
   type DepositResponse,
   type ClusterStatus,
   type HealthResponse,
+  type InviteAgentResponse,
+  type TaskLevel,
 } from "./models.js";
 import { getState, getServerId } from "./state.js";
 
@@ -245,6 +247,8 @@ export async function createTask(task: {
   max_concurrent_bidders?: number;
   max_depth?: number;
   human_contact?: { allowed: boolean; contact_id?: string; timeout_s?: number };
+  level?: TaskLevel;
+  invited_agent_ids?: string[];
 }): Promise<Task> {
   return request<Task>("POST", "/api/tasks", task);
 }
@@ -406,6 +410,7 @@ export async function createSubtask(
   domains: string[],
   budget: number,
   deadline?: string,
+  level?: string,
 ): Promise<Task> {
   const body: Record<string, unknown> = {
     initiator_id: initiatorId,
@@ -414,6 +419,7 @@ export async function createSubtask(
     budget,
   };
   if (deadline) body.deadline = deadline;
+  if (level) body.level = level;
   return request<Task>("POST", `/api/tasks/${parentTaskId}/subtask`, body);
 }
 
@@ -465,4 +471,40 @@ export async function deposit(
     `/api/economy/deposit`,
     { agent_id: agentId, amount },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Tasks — Invite (1)
+// ---------------------------------------------------------------------------
+
+export async function inviteAgent(
+  taskId: string,
+  initiatorId: string,
+  agentId: string,
+): Promise<InviteAgentResponse> {
+  return request<InviteAgentResponse>(
+    "POST",
+    `/api/tasks/${taskId}/invite`,
+    { initiator_id: initiatorId, agent_id: agentId },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Messaging (1)
+// ---------------------------------------------------------------------------
+
+export interface RelayMessagePayload {
+  to: { network_id: string; server_id: string; agent_id: string };
+  from: { network_id: string; server_id: string; agent_id: string };
+  content: unknown;
+}
+
+/**
+ * Send a direct message via Network relay.
+ * The Network node routes by three-layer addressing and delivers via WebSocket.
+ */
+export async function relayMessage(
+  msg: RelayMessagePayload,
+): Promise<{ ok: boolean; delivered: number }> {
+  return request("POST", "/api/messages", msg);
 }

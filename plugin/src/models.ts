@@ -38,6 +38,24 @@ export interface AgentSkill {
   parameters?: Record<string, unknown>;
 }
 
+/**
+ * Agent capability tier — determines which task levels the agent can bid on.
+ *
+ * - `"general"` — General-purpose agent, can bid on any task level.
+ * - `"expert"` — Domain expert, can bid on expert, expert_general, and tool tasks.
+ * - `"expert_general"` — Generalist within an expert domain, can bid on expert_general and tool tasks.
+ * - `"tool"` — Single-purpose tool wrapper, can ONLY bid on tool-level tasks.
+ *
+ * Tier hierarchy (higher can accept lower):
+ *   general > expert > expert_general > tool
+ */
+export type AgentTier = "general" | "expert" | "expert_general" | "tool";
+
+/**
+ * Ordered tier hierarchy for comparison. Lower index = higher tier.
+ */
+export const AGENT_TIER_HIERARCHY: AgentTier[] = ["general", "expert", "expert_general", "tool"];
+
 /** Concurrency limits for an agent's task execution. */
 export interface AgentCapabilities {
   /** Maximum number of tasks this agent can execute simultaneously. */
@@ -54,6 +72,8 @@ export interface AgentCard {
   name: string;
   /** Role: "executor" does work, "planner" orchestrates/delegates via subtasks. */
   agent_type: "executor" | "planner";
+  /** Capability tier: general > expert > expert_general > tool. Determines which task levels the agent can bid on. Defaults to "general". */
+  tier: AgentTier;
   /** Capability tags used for task routing (e.g. "translation", "python-coding"). Only matching broadcasts are received. */
   domains: string[];
   /** List of discrete skills this agent advertises. */
@@ -135,6 +155,20 @@ export type TaskStatus =
  */
 export type TaskType = "normal" | "adjudication";
 
+/**
+ * Task complexity level — matches against AgentTier for bid admission.
+ *
+ * - `"general"` — Open to all agent tiers.
+ * - `"expert"` — Requires expert-tier or higher.
+ * - `"expert_general"` — Requires expert_general-tier or higher.
+ * - `"tool"` — Simple tool-level task, open to all tiers including tool-only agents.
+ *
+ * Tier filtering rule:
+ *   An agent can bid if its tier index <= task level index in AGENT_TIER_HIERARCHY,
+ *   EXCEPT tool-tier agents can ONLY bid on tool-level tasks.
+ */
+export type TaskLevel = "general" | "expert" | "expert_general" | "tool";
+
 /** A unit of work on the EACN3 network. Created by eacn3_create_task or eacn3_create_subtask. */
 export interface Task {
   /** Unique task identifier (e.g. "t-abc123"). */
@@ -143,6 +177,8 @@ export interface Task {
   status: TaskStatus;
   /** Whether this is a regular task or an adjudication (judging) task. */
   type: TaskType;
+  /** Complexity level — determines which agent tiers can bid. Defaults to "general". */
+  level: TaskLevel;
   /** Agent ID of the task creator. Budget is frozen from this agent's balance. */
   initiator_id: string;
   /** Server that hosts the initiator; may be absent for cross-network tasks. */
@@ -173,6 +209,14 @@ export interface Task {
   budget_locked: boolean;
   /** Permission for executors to contact a human; absent means human contact is not allowed. */
   human_contact?: HumanContact;
+  /**
+   * Agent IDs that bypass bid admission filtering (confidence×reputation threshold).
+   * These agents are directly approved when they bid — the publisher's explicit choice.
+   * Domain matching still applies for broadcast routing, but invited agents can bid
+   * even if they don't match domains (they just won't receive the broadcast automatically).
+   * Optional; defaults to [] for tasks created without invitations or legacy tasks from the network.
+   */
+  invited_agent_ids?: string[];
   /** ISO 8601 timestamp of task creation; set by the server. */
   created_at?: string;
 }
@@ -445,6 +489,29 @@ export interface LocalTaskInfo {
   created_at: string;
 }
 
+/** A single direct message between two agents. */
+export interface DirectMessage {
+  /** Sender agent ID. */
+  from: string;
+  /** Receiver agent ID. */
+  to: string;
+  /** Message content (text). */
+  content: string;
+  /** Unix timestamp in milliseconds. */
+  timestamp: number;
+  /** Direction relative to the local agent: "in" = received, "out" = sent. */
+  direction: "in" | "out";
+}
+
+/**
+ * Session key: `${local_agent_id}:${peer_agent_id}`.
+ * Each session stores the conversation between a local agent and a remote peer.
+ */
+export type SessionKey = string;
+
+/** Maximum messages per session to prevent unbounded growth. */
+export const MAX_MESSAGES_PER_SESSION = 100;
+
 /** Plugin-local state. Holds all in-memory data for the current session; reset on disconnect. */
 export interface EacnState {
   /** Server identity; null before eacn3_connect is called. */
@@ -459,6 +526,8 @@ export interface EacnState {
   reputation_cache: Record<string, number>;
   /** Buffered WebSocket events not yet consumed. Drained by eacn3_get_events(). */
   pending_events: PushEvent[];
+  /** Active message sessions keyed by "local_agent_id:peer_agent_id". */
+  active_sessions: Record<SessionKey, DirectMessage[]>;
 }
 
 /**
@@ -475,5 +544,35 @@ export function createDefaultState(networkEndpoint?: string): EacnState {
     local_tasks: {},
     reputation_cache: {},
     pending_events: [],
+    active_sessions: {},
   };
+}
+
+// ---------------------------------------------------------------------------
+// Tier / Level Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether an agent tier is eligible to bid on a task level.
+ *
+ * Rule: tool-tier agents can ONLY bid on tool-level tasks.
+ * All other tiers (general, expert, expert_general) can bid on ANY task level.
+ * The tier is a self-declaration of specialization breadth, not a hard gate —
+ * an expert should still be able to take general tasks.
+ */
+export function isTierEligible(agentTier: AgentTier, taskLevel: TaskLevel): boolean {
+  if (agentTier === "tool") return taskLevel === "tool";
+  return true;
+}
+
+/** Response from eacn3_invite_agent. Confirms the agent was added to the invite list. */
+export interface InviteAgentResponse {
+  /** Whether the invitation was recorded. */
+  ok: boolean;
+  /** The task the agent was invited to. */
+  task_id: string;
+  /** The agent that was invited. */
+  agent_id: string;
+  /** Status message. */
+  message: string;
 }

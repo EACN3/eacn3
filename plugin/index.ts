@@ -1,11 +1,11 @@
 /**
  * EACN3 — Native OpenClaw plugin entry point.
  *
- * Registers the same 34 tools as server.ts but via api.registerTool().
+ * Registers the same 38 tools as server.ts but via api.registerTool().
  * All logic delegates to the same src/ modules.
  */
 
-import { type AgentCard, type PushEvent, EACN3_DEFAULT_NETWORK_ENDPOINT } from "./src/models.js";
+import { type AgentCard, type PushEvent, type AgentTier, type TaskLevel, EACN3_DEFAULT_NETWORK_ENDPOINT, isTierEligible } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
 import * as ws from "./src/ws-manager.js";
@@ -122,6 +122,12 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
 
   const overlap = taskDomains.some((d) => agent.domains.includes(d));
   if (!overlap) return;
+
+  // Tier/level compatibility check — skip tasks this agent tier cannot bid on
+  const taskLevel = (payload?.level as TaskLevel) ?? "general";
+  const agentTier = agent.tier ?? "general";
+  const isInvited = ((payload?.invited_agent_ids as string[]) ?? []).includes(agentId);
+  if (!isInvited && !isTierEligible(agentTier, taskLevel)) return;
 
   if (agent.capabilities?.max_concurrent_tasks) {
     const activeTasks = Object.values(state.getState().local_tasks).filter(
@@ -284,6 +290,7 @@ export default function (api: any) {
         skills: { type: "array", items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" }, description: { type: "string" }, tags: { type: "array", items: { type: "string" } }, parameters: { type: "object" } } }, description: "Agent skills" },
         capabilities: { type: "object", properties: { max_concurrent_tasks: { type: "number", description: "Max tasks simultaneously (0 = unlimited)" }, concurrent: { type: "boolean", description: "Whether Agent supports concurrent execution" } }, description: "Agent capacity limits" },
         agent_type: { type: "string", enum: ["executor", "planner"], description: "Defaults to executor" },
+        tier: { type: "string", enum: ["general", "expert", "expert_general", "tool"], description: "Capability tier: general > expert > expert_general > tool. Defaults to general." },
         agent_id: { type: "string", description: "Custom agent ID. Auto-generated if omitted." },
       },
       required: ["name", "description", "domains"],
@@ -296,6 +303,7 @@ export default function (api: any) {
       const agentId = params.agent_id ?? `agent-${Date.now().toString(36)}`;
       const card: AgentCard = {
         agent_id: agentId, name: params.name, agent_type: params.agent_type ?? "executor",
+        tier: params.tier ?? "general",
         domains: params.domains, skills: params.skills ?? [], capabilities: params.capabilities,
         url: `plugin://local/agents/${agentId}`, server_id: s.server_card.server_id,
         network_id: "", description: params.description,
@@ -473,6 +481,8 @@ export default function (api: any) {
           },
           description: "Human-in-the-loop contact settings",
         },
+        level: { type: "string", enum: ["general", "expert", "expert_general", "tool"], description: "Task complexity level. Determines which agent tiers can bid. Defaults to 'general'." },
+        invited_agent_ids: { type: "array", items: { type: "string" }, description: "Agent IDs to directly approve — bypass bid admission filtering." },
         initiator_id: { type: "string", description: "Agent ID of the task initiator (auto-injected if omitted)" },
       },
       required: ["description", "budget"],
@@ -490,6 +500,8 @@ export default function (api: any) {
         domains: params.domains, budget: params.budget, deadline: params.deadline,
         max_concurrent_bidders: params.max_concurrent_bidders, max_depth: params.max_depth,
         human_contact: params.human_contact,
+        level: params.level ?? "general",
+        invited_agent_ids: params.invited_agent_ids,
       });
       state.updateTask({ task_id: taskId, role: "initiator", status: task.status, domains: params.domains ?? [], description_summary: params.description.slice(0, 100), created_at: new Date().toISOString() });
       return ok({ task_id: taskId, status: task.status, budget: params.budget, local_matches: matchedLocal.map((a: AgentCard) => a.agent_id) });
@@ -544,6 +556,47 @@ export default function (api: any) {
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.confirmBudget(params.task_id, initiatorId, params.approved, params.new_budget)); },
   });
 
+  // #22b eacn3_invite_agent
+  api.registerTool({
+    name: "eacn3_invite_agent",
+    description: "Invite a specific agent to bid on your task, bypassing the normal bid admission filter (confidence×reputation threshold). The invited agent still needs to actively bid — this just guarantees their bid won't be rejected by the admission algorithm. Also sends a direct_message notification to the invited agent. Requires: you must be the task initiator.",
+    parameters: { type: "object", properties: { task_id: { type: "string" }, agent_id: { type: "string", description: "Agent ID to invite" }, message: { type: "string", description: "Optional message to send with the invitation" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "agent_id"] },
+    execute: withLogging("eacn3_invite_agent", async (_id: string, params: any) => {
+      const initiatorId = resolveAgentId(params.initiator_id);
+      const res = await net.inviteAgent(params.task_id, initiatorId, params.agent_id);
+
+      // Send notification to invited agent
+      const inviteContent = params.message
+        ? `[Task Invitation] You've been invited to bid on task ${params.task_id}. Your bid will bypass admission filtering. Message: ${params.message}`
+        : `[Task Invitation] You've been invited to bid on task ${params.task_id}. Your bid will bypass admission filtering.`;
+
+      state.addMessage(initiatorId, { from: initiatorId, to: params.agent_id, content: inviteContent, timestamp: Date.now(), direction: "out" });
+
+      // Try to notify the invited agent: A2A direct → relay fallback
+      try {
+        const agentCard = await net.getAgentInfo(params.agent_id);
+        if (agentCard.url && !agentCard.url.startsWith("plugin://")) {
+          // A2A direct POST
+          const eventsUrl = agentCard.url.replace(/\/$/, "") + "/events";
+          await fetch(eventsUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: "direct_message", from: initiatorId, content: inviteContent, task_id: params.task_id, invitation: true }),
+          }).catch(() => { /* fall through to relay */ });
+        } else {
+          // Network relay with proper routing info
+          await net.relayMessage({
+            to: { network_id: agentCard.network_id ?? "", server_id: agentCard.server_id, agent_id: params.agent_id },
+            from: { network_id: state.getState().server_card?.server_id ?? "", server_id: state.getServerId() ?? "", agent_id: initiatorId },
+            content: inviteContent,
+          });
+        }
+      } catch { /* non-critical — invitation still recorded server-side */ }
+
+      return ok(res);
+    }),
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Task Operations — Executor (5)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -551,16 +604,18 @@ export default function (api: any) {
   // #23 eacn3_submit_bid
   api.registerTool({
     name: "eacn3_submit_bid",
-    description: "Bid on an open task by specifying your confidence (0.0-1.0 honest ability estimate) and price in credits. Server evaluates: confidence * reputation must meet threshold or bid is rejected. Returns {status} which is one of: 'executing' (start work now), 'waiting_execution' (queued, slots full), 'rejected' (threshold not met), or 'pending_confirmation' (price > budget, awaiting initiator approval). Side effects: if accepted, tracks task locally as executor role. If price > budget, initiator gets a 'budget_confirmation' event.",
+    description: "Bid on an open task by specifying your confidence (0.0-1.0 honest ability estimate) and price in credits. Also checks tier/level compatibility: tool-tier agents can only bid on tool-level tasks. Invited agents bypass admission filtering. Returns {status}: 'executing', 'waiting_execution', 'rejected', or 'pending_confirmation'.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, confidence: { type: "number", description: "0.0-1.0 confidence in ability to complete" }, price: { type: "number", description: "Bid price" }, agent_id: { type: "string", description: "Bidder agent ID (auto-injected if omitted)" } }, required: ["task_id", "confidence", "price"] },
-    async execute(_id: string, params: any) {
+    execute: withLogging("eacn3_submit_bid", async (_id: string, params: any) => {
       const agentId = resolveAgentId(params.agent_id);
+
+      // Tier/level filtering and invite bypass are handled server-side in matcher.check_bid().
       const res = await net.submitBid(params.task_id, agentId, params.confidence, params.price);
       if (res.status && res.status !== "rejected") {
         state.updateTask({ task_id: params.task_id, role: "executor", status: "bidding", domains: [], description_summary: "", created_at: new Date().toISOString() });
       }
       return ok(res);
-    },
+    }),
   });
 
   // #24 eacn3_submit_result
@@ -599,13 +654,14 @@ export default function (api: any) {
         parent_task_id: { type: "string" }, description: { type: "string" },
         domains: { type: "array", items: { type: "string" } },
         budget: { type: "number" }, deadline: { type: "string" },
+        level: { type: "string", enum: ["general", "expert", "expert_general", "tool"], description: "Task level. If omitted, inherits from parent." },
         initiator_id: { type: "string", description: "Agent ID of the executor creating the subtask (auto-injected if omitted)" },
       },
       required: ["parent_task_id", "description", "domains", "budget"],
     },
     async execute(_id: string, params: any) {
       const initiatorId = resolveAgentId(params.initiator_id);
-      const task = await net.createSubtask(params.parent_task_id, initiatorId, { description: params.description }, params.domains, params.budget, params.deadline);
+      const task = await net.createSubtask(params.parent_task_id, initiatorId, { description: params.description }, params.domains, params.budget, params.deadline, params.level);
       return ok({ subtask_id: task.id, parent_task_id: params.parent_task_id, status: task.status, depth: task.depth });
     },
   });

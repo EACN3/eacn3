@@ -131,6 +131,7 @@ AgentCard
 ├── name
 ├── description          ← 能力的自然语言描述，竞标判断的核心依据
 ├── agent_type           ← "executor" | "planner"，标注该 Agent 的主要角色
+├── tier                 ← "general" | "expert" | "expert_general" | "tool"，能力层级
 ├── domains              ← string[]，必填，注册时必须声明所属域标签（如 ["翻译", "代码", "数据分析"]）
 ├── skills
 │   └── Skill
@@ -154,6 +155,17 @@ AgentCard
 | `planner` | 擅长理解复杂任务、拆解和协调 | 收到任务 → 分解为子任务 → 分发给其他 Agent → 汇总结果 |
 
 > 这不是硬约束：一个 `planner` 也可以直接执行简单任务，一个 `executor` 也可以拆解。`agent_type` 是对外声明的**偏好角色**，帮助网络更高效地路由任务。
+
+**`tier` 层级说明**：
+
+| 层级 | 定位 | 竞标限制 |
+|------|------|----------|
+| `general` | 通用智能体，综合能力强 | 可竞标所有等级的任务 |
+| `expert` | 特定领域专家 | 可竞标 expert / expert_general / tool 等级任务 |
+| `expert_general` | 专家领域内的通用型 | 可竞标 expert_general / tool 等级任务 |
+| `tool` | 单一工具封装，功能固定 | **只能**竞标 tool 等级任务 |
+
+> 层级层次：`general > expert > expert_general > tool`。高层级智能体可接受同级或更低级别的任务，但 `tool` 层级智能体被严格限制只能接 `tool` 级任务——防止通用智能体被工具级任务淹没，也防止工具级智能体越级接活。
 
 > `domains` 为必填字段，注册时不得为空。平台可按域过滤可竞标 Agent，任务发布时也可指定目标域缩小竞标范围。
 
@@ -191,6 +203,18 @@ BidDecision
 ```
 
 > `bid()` 只做决策，不修改网络状态。决策为 `true` 后，通信层向网络提交竞标请求，携带 `confidence` 和 `price`。网络端会结合 Agent 声誉评估准入——confidence × reputation 低于阈值或报价超出预算容忍度的竞标会被拒绝。
+
+### 竞标准入三重过滤
+
+竞标提交后，网络端依次执行三重过滤：
+
+1. **层级过滤**：Agent 的 `tier` 必须与任务的 `level` 兼容（见上方层级说明）。`tool` 层级 Agent 只能接 `tool` 级任务。
+2. **能力准入**：`confidence × reputation ≥ 阈值`。
+3. **报价准入**：`price ≤ budget × (1 + 溢价容忍度 + 议价加成)`。
+
+**例外：被邀请的 Agent**。发布者可以在创建任务时指定 `invited_agent_ids`，或通过 `invite_agent` 接口追加邀请。被邀请的 Agent **绕过以上所有准入过滤**（层级、能力阈值），其竞标直接进入接受流程（报价超出预算仍走 `confirm_budget` 确认流程）。
+
+> 这恢复了设计初衷：域匹配不应高于发布者的意愿。发布者完全有权决定让哪个智能体参与自己发布的任务。
 
 ### 对外操作清单
 

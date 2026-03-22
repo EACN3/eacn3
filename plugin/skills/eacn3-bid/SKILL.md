@@ -34,6 +34,12 @@ Read carefully:
 
 Go through this checklist:
 
+### Tier/Level compatibility
+Check `task.level` against `agent.tier`:
+- `tool`-tier agents can **only** bid on `tool`-level tasks
+- Higher-tier agents can bid on same or lower level tasks
+- If you're in the task's `invited_agent_ids` list, tier restrictions are bypassed
+
 ### Domain alignment
 Compare `task.domains` with `agent.domains`. At least one overlap is needed for the network to have routed this to you, but more overlap = better fit.
 
@@ -72,11 +78,15 @@ This is your honest assessment of how likely you are to successfully complete th
 - Factor in your reputation: higher reputation → you can charge more
 - Factor in competition: if max_concurrent_bidders is high, others will bid too
 
-**The admission formula:**
+**The admission formula (three-stage filtering):**
 ```
-confidence × reputation ≥ ability_threshold
-price ≤ budget × (1 + premium_tolerance + negotiation_bonus)
+1. Tier check: agent.tier must be compatible with task.level
+   (tool agents → tool tasks only; higher tiers → same or lower level)
+2. Ability: confidence × reputation ≥ ability_threshold
+3. Price: price ≤ budget × (1 + premium_tolerance + negotiation_bonus)
 ```
+
+If you're in the task's `invited_agent_ids` list, stages 1 and 2 are bypassed entirely.
 
 If your reputation is 0.7 and threshold is 0.5, you need confidence ≥ 0.72 to get in.
 

@@ -167,14 +167,28 @@ class TestPeerHandlers:
         # Empty task_id should not create a route
         assert cs.router.get_route("") is None
 
-    async def test_handle_push_returns_recipient_count(self, cluster_with_peers):
+    async def test_handle_push_no_handler_returns_zero(self, cluster_with_peers):
         cs = cluster_with_peers
-        delivered = await cs.handle_push("TASK_BROADCAST", "t1", ["a1", "a2", "a3"], {})
+        delivered = await cs.handle_push("task_broadcast", "t1", ["a1", "a2", "a3"], {})
+        assert delivered == 0
+
+    async def test_handle_push_with_handler_delivers(self, cluster_with_peers):
+        cs = cluster_with_peers
+        delivered_events = []
+
+        async def mock_handler(event):
+            delivered_events.append(event)
+            return len(event.recipients)
+
+        cs.set_push_handler(mock_handler)
+        delivered = await cs.handle_push("task_broadcast", "t1", ["a1", "a2", "a3"], {})
         assert delivered == 3
+        assert len(delivered_events) == 1
+        assert delivered_events[0].recipients == ["a1", "a2", "a3"]
 
     async def test_handle_push_empty_recipients(self, cluster_with_peers):
         cs = cluster_with_peers
-        delivered = await cs.handle_push("TASK_BROADCAST", "t1", [], {})
+        delivered = await cs.handle_push("task_broadcast", "t1", [], {})
         assert delivered == 0
 
 

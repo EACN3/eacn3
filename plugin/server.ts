@@ -1,5 +1,5 @@
 /**
- * EACN3 MCP Server — exposes 34 tools via stdio transport.
+ * EACN3 MCP Server — exposes 38 tools via stdio transport.
  *
  * All intelligence lives in Skills (host LLM). This server is just
  * state management + network API wrapper. No adapter, no registry —
@@ -10,10 +10,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { type EacnState, type AgentCard, type PushEvent, createDefaultState, EACN3_DEFAULT_NETWORK_ENDPOINT } from "./src/models.js";
+import { type EacnState, type AgentCard, type PushEvent, type AgentTier, type TaskLevel, createDefaultState, EACN3_DEFAULT_NETWORK_ENDPOINT, isTierEligible, AGENT_TIER_HIERARCHY } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
 import * as ws from "./src/ws-manager.js";
+import * as a2a from "./src/a2a-server.js";
 
 // ---------------------------------------------------------------------------
 // Helper: MCP text result
@@ -258,7 +259,10 @@ server.tool(
       concurrent: z.boolean().describe("Whether this Agent supports concurrent execution"),
     }).optional().describe("Agent capacity limits"),
     agent_type: z.enum(["executor", "planner"]).optional().describe("Defaults to executor"),
+    tier: z.enum(["general", "expert", "expert_general", "tool"]).optional().describe("Capability tier: general (can bid on anything) > expert > expert_general > tool (only tool-level tasks). Defaults to general."),
     agent_id: z.string().optional().describe("Custom agent ID. Auto-generated if omitted."),
+    a2a_port: z.number().optional().describe("Port for A2A HTTP server. Enables direct agent-to-agent messaging. Omit to use Network relay only."),
+    a2a_url: z.string().optional().describe("Full public URL for A2A callbacks (e.g. 'http://my-server.com:3001'). Auto-generated from a2a_port if omitted."),
   },
   async (params) => {
     const s = state.getState();
@@ -271,15 +275,28 @@ server.tool(
     const agentId = params.agent_id ?? `agent-${Date.now().toString(36)}`;
     const sid = s.server_card.server_id;
 
+    // Determine agent URL: real A2A endpoint or local placeholder
+    let agentUrl = `plugin://local/agents/${agentId}`;
+    if (params.a2a_port || params.a2a_url) {
+      const port = params.a2a_port ?? 0;
+      const actualPort = await a2a.startServer(port);
+      if (params.a2a_url) {
+        agentUrl = `${params.a2a_url.replace(/\/$/, "")}/agents/${agentId}`;
+      } else {
+        agentUrl = `http://localhost:${actualPort}/agents/${agentId}`;
+      }
+    }
+
     // Assemble AgentCard (what adapter used to do)
     const card: AgentCard = {
       agent_id: agentId,
       name: params.name,
       agent_type: params.agent_type ?? "executor",
+      tier: (params.tier as AgentTier) ?? "general",
       domains: params.domains,
       skills: params.skills ?? [],
       capabilities: params.capabilities,
-      url: `plugin://local/agents/${agentId}`,
+      url: agentUrl,
       server_id: sid,
       network_id: "",
       description: params.description,
@@ -299,6 +316,8 @@ server.tool(
       agent_id: agentId,
       seeds: res.seeds,
       domains: params.domains,
+      url: agentUrl,
+      a2a_server: a2a.isRunning() ? { port: a2a.getServerPort() } : null,
     });
   },
 );
@@ -367,6 +386,12 @@ server.tool(
     const res = await net.unregisterAgent(params.agent_id);
     ws.disconnect(params.agent_id);
     state.removeAgent(params.agent_id);
+
+    // Stop A2A server if no agents remain
+    if (state.listAgents().length === 0 && a2a.isRunning()) {
+      await a2a.stopServer();
+    }
+
     return ok({ unregistered: true, agent_id: params.agent_id, ...res });
   },
 );
@@ -509,6 +534,8 @@ server.tool(
       contact_id: z.string().optional().describe("Human contact identifier"),
       timeout_s: z.number().optional().describe("Seconds to wait for human response before auto-reject"),
     }).optional().describe("Human-in-the-loop contact settings"),
+    level: z.enum(["general", "expert", "expert_general", "tool"]).optional().describe("Task complexity level. Determines which agent tiers can bid. 'tool' = only tool-level tasks for simple tool wrappers. Defaults to 'general' (open to all)."),
+    invited_agent_ids: z.array(z.string()).optional().describe("Agent IDs to directly approve — these agents bypass bid admission filtering (confidence×reputation threshold). Use to pre-select specific agents you trust."),
     initiator_id: z.string().optional().describe("Agent ID of the task initiator (auto-injected if omitted)"),
   },
   async (params) => {
@@ -537,6 +564,8 @@ server.tool(
       max_concurrent_bidders: params.max_concurrent_bidders,
       max_depth: params.max_depth,
       human_contact: params.human_contact,
+      level: (params.level as TaskLevel) ?? "general",
+      invited_agent_ids: params.invited_agent_ids,
     });
 
     // Track locally
@@ -655,6 +684,74 @@ server.tool(
   },
 );
 
+// #22b eacn3_invite_agent
+server.tool(
+  "eacn3_invite_agent",
+  "Invite a specific agent to bid on your task, bypassing the normal bid admission filter (confidence×reputation threshold). The invited agent still needs to actively bid — this just guarantees their bid won't be rejected by the admission algorithm. Use when you know a specific agent is right for the job but they might not pass the automated filter (e.g. new agent with low reputation). Also sends a direct_message notification to the invited agent. Requires: you must be the task initiator.",
+  {
+    task_id: z.string(),
+    agent_id: z.string().describe("Agent ID to invite"),
+    message: z.string().optional().describe("Optional message to send with the invitation"),
+    initiator_id: z.string().optional().describe("Initiator agent ID (auto-injected if omitted)"),
+  },
+  async (params) => {
+    const initiatorId = resolveAgentId(params.initiator_id);
+    const res = await net.inviteAgent(params.task_id, initiatorId, params.agent_id);
+
+    // Send a direct_message notification to the invited agent
+    const inviteContent = params.message
+      ? `[Task Invitation] You've been invited to bid on task ${params.task_id}. Your bid will bypass admission filtering. Message from initiator: ${params.message}`
+      : `[Task Invitation] You've been invited to bid on task ${params.task_id}. Your bid will bypass admission filtering.`;
+
+    // Record outgoing message in session
+    state.addMessage(initiatorId, {
+      from: initiatorId,
+      to: params.agent_id,
+      content: inviteContent,
+      timestamp: Date.now(),
+      direction: "out",
+    });
+
+    // Try to notify the invited agent
+    try {
+      const agentCard = await net.getAgentInfo(params.agent_id);
+      if (agentCard.url && !agentCard.url.startsWith("plugin://")) {
+        const eventsUrl = agentCard.url.replace(/\/$/, "") + "/events";
+        await fetch(eventsUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "direct_message",
+            from: initiatorId,
+            content: inviteContent,
+            task_id: params.task_id,
+            invitation: true,
+          }),
+        }).catch(() => { /* non-critical */ });
+      } else {
+        // Relay via network
+        await net.relayMessage({
+          to: {
+            network_id: agentCard.network_id ?? "",
+            server_id: agentCard.server_id,
+            agent_id: params.agent_id,
+          },
+          from: {
+            network_id: state.getState().server_card?.server_id ?? "",
+            server_id: state.getServerId() ?? "",
+            agent_id: initiatorId,
+          },
+          content: inviteContent,
+        }).catch(() => { /* non-critical */ });
+      }
+    } catch {
+      // Agent lookup failed — invitation still recorded server-side
+    }
+
+    return ok(res);
+  },
+);
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Task Operations — Executor (5)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -662,7 +759,7 @@ server.tool(
 // #23 eacn3_submit_bid
 server.tool(
   "eacn3_submit_bid",
-  "Bid on an open task by specifying your confidence (0.0-1.0 honest ability estimate) and price in credits. Server evaluates: confidence * reputation must meet threshold or bid is rejected. Returns {status} which is one of: 'executing' (start work now), 'waiting_execution' (queued, slots full), 'rejected' (threshold not met), or 'pending_confirmation' (price > budget, awaiting initiator approval). Side effects: if accepted, tracks task locally as executor role. If price > budget, initiator gets a 'budget_confirmation' event.",
+  "Bid on an open task by specifying your confidence (0.0-1.0 honest ability estimate) and price in credits. Server evaluates: confidence * reputation must meet threshold or bid is rejected (unless you are in the task's invited_agent_ids list — invited agents bypass admission). Also checks tier/level compatibility: tool-tier agents can only bid on tool-level tasks. Returns {status} which is one of: 'executing' (start work now), 'waiting_execution' (queued, slots full), 'rejected' (threshold not met or tier mismatch), or 'pending_confirmation' (price > budget, awaiting initiator approval). Side effects: if accepted, tracks task locally as executor role.",
   {
     task_id: z.string(),
     confidence: z.number().min(0).max(1).describe("0.0-1.0 confidence in ability to complete"),
@@ -671,6 +768,9 @@ server.tool(
   },
   async (params) => {
     const agentId = resolveAgentId(params.agent_id);
+
+    // Tier/level filtering and invite bypass are handled server-side in matcher.check_bid().
+    // No client-side pre-flight — the network returns "rejected" with reason for tier mismatches.
     const res = await net.submitBid(params.task_id, agentId, params.confidence, params.price);
 
     // Track locally if not rejected (status could be "executing", "waiting_execution", etc.)
@@ -745,6 +845,7 @@ server.tool(
     domains: z.array(z.string()),
     budget: z.number(),
     deadline: z.string().optional(),
+    level: z.enum(["general", "expert", "expert_general", "tool"]).optional().describe("Task level for the subtask. If omitted, inherits from parent task."),
     initiator_id: z.string().optional().describe("Agent ID of the executor creating the subtask (auto-injected if omitted)"),
   },
   async (params) => {
@@ -756,6 +857,7 @@ server.tool(
       params.domains,
       params.budget,
       params.deadline,
+      params.level,
     );
 
     return ok({
@@ -768,10 +870,10 @@ server.tool(
 );
 
 // #27 eacn3_send_message
-// A2A direct — agent.md:358-362: peer-to-peer, bypasses Network
+// A2A direct + Network relay fallback — agent.md:358-362
 server.tool(
   "eacn3_send_message",
-  "Send a direct agent-to-agent message bypassing the task system. Local agents receive it instantly in their event buffer; remote agents receive it via HTTP POST to their /events endpoint. Returns {sent, to, from, local}. The recipient sees a 'direct_message' event with payload.from and payload.content. Will fail if the remote agent has no reachable URL or is offline.",
+  "Send a direct agent-to-agent message. Delivery order: (1) local agent → instant push, (2) remote agent with reachable URL → A2A direct POST, (3) fallback → Network relay via WebSocket. Returns {sent, to, from, method} where method is 'local', 'a2a_direct', or 'relay'. All sent messages are stored in your session history. The recipient sees a 'direct_message' event. Use /eacn3-message to handle received messages.",
   {
     agent_id: z.string().describe("Target agent ID"),
     content: z.string(),
@@ -781,21 +883,28 @@ server.tool(
     const senderId = params.sender_id ?? resolveAgentId();
     const targetId = params.agent_id;
 
-    const message: PushEvent = {
-      type: "direct_message",
-      task_id: "",
-      payload: { from: senderId, content: params.content },
-      received_at: Date.now(),
-    };
+    // Record outgoing message in session
+    state.addMessage(senderId, {
+      from: senderId,
+      to: targetId,
+      content: params.content,
+      timestamp: Date.now(),
+      direction: "out",
+    });
 
-    // Local agent — direct push to event buffer
+    // 1. Local agent — direct push to event buffer
     const localAgent = state.getAgent(targetId);
     if (localAgent) {
-      state.pushEvents([message]);
-      return ok({ sent: true, to: targetId, from: senderId, local: true });
+      state.pushEvents([{
+        type: "direct_message",
+        task_id: "",
+        payload: { from: senderId, content: params.content },
+        received_at: Date.now(),
+      }]);
+      return ok({ sent: true, to: targetId, from: senderId, method: "local" });
     }
 
-    // Remote agent — POST to their URL callback (A2A direct, agent.md:160-168)
+    // 2. Remote agent — look up AgentCard
     let agentCard;
     try {
       agentCard = await net.getAgentInfo(targetId);
@@ -803,28 +912,46 @@ server.tool(
       return err(`Agent ${targetId} not found`);
     }
 
-    if (!agentCard.url || agentCard.url.startsWith("plugin://")) {
-      return err(`Agent ${targetId} has no reachable URL: ${agentCard.url}`);
+    // 3. Try A2A direct if agent has a real HTTP URL
+    if (agentCard.url && !agentCard.url.startsWith("plugin://")) {
+      const eventsUrl = agentCard.url.replace(/\/$/, "") + "/events";
+      try {
+        const res = await fetch(eventsUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "direct_message",
+            from: senderId,
+            content: params.content,
+          }),
+        });
+        if (res.ok) {
+          return ok({ sent: true, to: targetId, from: senderId, method: "a2a_direct" });
+        }
+        // Direct failed — fall through to relay
+      } catch {
+        // Direct failed — fall through to relay
+      }
     }
 
-    // POST /events on agent's URL (agent.md:164)
-    const eventsUrl = agentCard.url.replace(/\/$/, "") + "/events";
+    // 4. Network relay fallback — route via Network node using three-layer addressing
     try {
-      const res = await fetch(eventsUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "direct_message",
-          from: senderId,
-          content: params.content,
-        }),
+      await net.relayMessage({
+        to: {
+          network_id: agentCard.network_id ?? "",
+          server_id: agentCard.server_id,
+          agent_id: targetId,
+        },
+        from: {
+          network_id: state.getState().server_card?.server_id ?? "",
+          server_id: state.getServerId() ?? "",
+          agent_id: senderId,
+        },
+        content: params.content,
       });
-      if (!res.ok) {
-        return err(`POST ${eventsUrl} failed: ${res.status}`);
-      }
-      return ok({ sent: true, to: targetId, from: senderId, local: false });
+      return ok({ sent: true, to: targetId, from: senderId, method: "relay" });
     } catch (e) {
-      return err(`Failed to reach agent at ${eventsUrl}: ${(e as Error).message}`);
+      return err(`All delivery methods failed for ${targetId}: ${(e as Error).message}`);
     }
   },
 );
@@ -896,8 +1023,41 @@ server.tool(
 // ═══════════════════════════════════════════════════════════════════════════
 // Events (1)
 // ═══════════════════════════════════════════════════════════════════════════
+// Messaging (2)
+// ═══════════════════════════════════════════════════════════════════════════
 
-// #32 eacn3_get_events
+// #32 eacn3_get_messages
+server.tool(
+  "eacn3_get_messages",
+  "Get the message history between your agent and another agent. Returns {count, messages[]} with each message containing {from, to, content, timestamp, direction}. direction is 'in' (received) or 'out' (sent). Messages are stored per-session, capped at 100 per peer. Use to review conversation context before replying via eacn3_send_message.",
+  {
+    agent_id: z.string().optional().describe("Your agent ID (auto-injected if only one registered)"),
+    peer_agent_id: z.string().describe("The other agent's ID"),
+  },
+  async (params) => {
+    const agentId = params.agent_id ?? resolveAgentId();
+    const messages = state.getMessages(agentId, params.peer_agent_id);
+    return ok({ count: messages.length, messages });
+  },
+);
+
+// #33 eacn3_list_sessions
+server.tool(
+  "eacn3_list_sessions",
+  "List all agents you have active message sessions with. Returns {count, peers[]} where each peer is an agent_id. Use to discover ongoing conversations. Check individual sessions with eacn3_get_messages.",
+  {
+    agent_id: z.string().optional().describe("Your agent ID (auto-injected if only one registered)"),
+  },
+  async (params) => {
+    const agentId = params.agent_id ?? resolveAgentId();
+    const peers = state.listSessions(agentId);
+    return ok({ count: peers.length, peers });
+  },
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+
+// #34 eacn3_get_events
 server.tool(
   "eacn3_get_events",
   "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[]} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. Call periodically in your main loop. Events arrive via WebSocket and accumulate until drained — missing events means missed tasks and messages.",
@@ -963,6 +1123,23 @@ function registerEventCallbacks(): void {
         // New task available — auto-evaluate bid if agent has matching domains
         autoBidEvaluate(agentId, event).catch(() => { /* non-critical */ });
         break;
+
+      case "direct_message": {
+        // Another agent sent a direct message — store in session
+        const payload = event.payload as Record<string, unknown>;
+        const from = payload?.from as string | undefined;
+        const content = payload?.content;
+        if (from && content !== undefined) {
+          state.addMessage(agentId, {
+            from,
+            to: agentId,
+            content: typeof content === "string" ? content : JSON.stringify(content),
+            timestamp: Date.now(),
+            direction: "in",
+          });
+        }
+        break;
+      }
     }
   });
 }

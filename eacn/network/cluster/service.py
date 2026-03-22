@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, TYPE_CHECKING
+from typing import Any, Callable, Awaitable, TYPE_CHECKING
 
 import httpx
 
@@ -21,7 +21,12 @@ from eacn.network.cluster.router import ClusterRouter
 from eacn.network.config import ClusterConfig
 
 if TYPE_CHECKING:
+    from eacn.core.models import PushEvent
     from eacn.network.db.database import Database
+
+# Callback that delivers a PushEvent to locally connected agents.
+# Returns the number of recipients successfully delivered.
+LocalPushHandler = Callable[["PushEvent"], Awaitable[int]]
 
 _log = logging.getLogger(__name__)
 
@@ -49,6 +54,8 @@ class ClusterService:
         self.discovery = ClusterDiscovery(node_id, self.gossip, self.dht, self.bootstrap)
         self.router = ClusterRouter(db, node_id)
 
+        self._push_handler: LocalPushHandler | None = None
+        self._agent_counts: dict[str, int] = {}  # node_id → connected agent count
         self._standalone = not bool(self.config.seed_nodes)
 
     @property
@@ -95,6 +102,25 @@ class ClusterService:
         if domain in self.local_node.domains:
             self.local_node.domains.remove(domain)
         await self.dht.revoke(domain, self.node_id)
+
+    # ── Node health ────────────────────────────────────────────────
+
+    def mark_node_suspect(self, node_id: str) -> None:
+        """Mark a node as suspect (missed heartbeats). Agents on it may be unreachable."""
+        self.members.update_status(node_id, "suspect")
+        agent_count = self._agent_counts.get(node_id, 0)
+        _log.warning("Node %s marked suspect (%d agents may be unreachable)",
+                      node_id, agent_count)
+
+    def mark_node_offline(self, node_id: str) -> None:
+        """Mark a node as offline. Its agents are unreachable."""
+        self.members.update_status(node_id, "offline")
+        agent_count = self._agent_counts.pop(node_id, 0)
+        _log.warning("Node %s marked offline (%d agents lost)", node_id, agent_count)
+
+    def get_agent_counts(self) -> dict[str, int]:
+        """Return connected agent counts per node (from last heartbeat)."""
+        return dict(self._agent_counts)
 
     # ── Task broadcasting ────────────────────────────────────────────
 
@@ -143,6 +169,12 @@ class ClusterService:
             if node_id != self.node_id:
                 await self.gossip.exchange(self.node_id, node_id)
 
+    # ── Push handler ────────────────────────────────────────────────
+
+    def set_push_handler(self, handler: LocalPushHandler) -> None:
+        """Register a callback for delivering push events to local agents."""
+        self._push_handler = handler
+
     # ── Peer request handlers (called by peer_routes) ────────────────
 
     def handle_join(self, card: NodeCard) -> list[NodeCard]:
@@ -153,8 +185,18 @@ class ClusterService:
     def handle_leave(self, node_id: str) -> None:
         self.bootstrap.handle_leave(node_id)
 
-    def handle_heartbeat(self, node_id: str, domains: list[str], timestamp: str) -> None:
+    def handle_heartbeat(self, node_id: str, domains: list[str], timestamp: str,
+                         connected_agents: int = 0) -> None:
+        old_status = None
+        node = self.members.get(node_id)
+        if node:
+            old_status = node.status
         self.bootstrap.handle_heartbeat(node_id, domains, timestamp)
+        # Track agent count for observability
+        self._agent_counts[node_id] = connected_agents
+        # Log if node came back online
+        if old_status and old_status != "online":
+            _log.info("Node %s back online with %d agents", node_id, connected_agents)
 
     def handle_broadcast(self, task_summary: dict[str, Any]) -> None:
         task_id = task_summary.get("task_id", "")
@@ -165,8 +207,52 @@ class ClusterService:
     async def handle_status_notification(
         self, task_id: str, status: str, payload: dict[str, Any],
     ) -> None:
-        pass  # Local push delivery handled by caller
+        """Deliver a status change notification to local agents.
+
+        The payload should include 'recipients' (agent IDs to notify).
+        Falls back to a no-op if no push handler or no recipients.
+        """
+        recipients = payload.get("recipients", [])
+        if not self._push_handler or not recipients:
+            return
+        from eacn.core.models import PushEvent, PushEventType
+        # Map status to an appropriate event type when possible
+        _status_event_map = {
+            "awaiting_retrieval": PushEventType.TASK_COLLECTED,
+            "timeout": PushEventType.TASK_TIMEOUT,
+        }
+        event_type = _status_event_map.get(status)
+        if not event_type:
+            # No matching push event type for this status — skip
+            _log.debug("No push event type for status %s, skipping", status)
+            return
+        try:
+            event = PushEvent(
+                type=event_type,
+                task_id=task_id,
+                recipients=recipients,
+                payload=payload,
+            )
+            await self._push_handler(event)
+        except Exception:
+            _log.warning("Failed to deliver status notification %s for task %s",
+                         status, task_id, exc_info=True)
 
     async def handle_push(self, event_type: str, task_id: str,
                           recipients: list[str], payload: dict[str, Any]) -> int:
-        return len(recipients)
+        """Deliver a forwarded push event to locally connected agents."""
+        if not self._push_handler or not recipients:
+            return 0
+        from eacn.core.models import PushEvent, PushEventType
+        try:
+            event = PushEvent(
+                type=PushEventType(event_type),
+                task_id=task_id,
+                recipients=recipients,
+                payload=payload,
+            )
+            return await self._push_handler(event)
+        except Exception:
+            _log.warning("Failed to deliver forwarded push event %s", event_type,
+                         exc_info=True)
+            return 0

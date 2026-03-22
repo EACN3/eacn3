@@ -70,7 +70,7 @@ class TestPushEventTypes:
         expected = {
             "task_broadcast", "bid_request_confirmation", "bid_result",
             "discussion_update", "subtask_completed", "task_collected",
-            "task_timeout", "adjudication_task",
+            "task_timeout", "adjudication_task", "direct_message",
         }
         actual = {e.value for e in PushEventType}
         assert expected == actual

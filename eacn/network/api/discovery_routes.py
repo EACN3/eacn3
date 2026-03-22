@@ -124,6 +124,7 @@ async def register_agent(req: RegisterAgentRequest):
         "url": req.url,
         "server_id": req.server_id,
         "description": req.description,
+        "tier": req.tier,
     }
     seeds = await _net().discovery.register_agent(card)
 
@@ -163,6 +164,8 @@ async def update_agent(agent_id: str, req: UpdateAgentRequest):
         card["url"] = req.url
     if req.description is not None:
         card["description"] = req.description
+    if req.tier is not None:
+        card["tier"] = req.tier
 
     # Persist updated card
     await _net().discovery.bootstrap._db.save_agent_card(card)

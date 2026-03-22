@@ -16,6 +16,8 @@ from eacn.network.api.schemas import (
     UpdateDiscussionsRequest, UpdateDeadlineRequest,
     ReputationEventRequest, ReputationResponse,
     BalanceResponse, DepositRequest, DepositResponse,
+    RelayMessageRequest,
+    InviteAgentRequest, InviteAgentResponse,
     OkResponse,
 )
 
@@ -57,6 +59,8 @@ async def create_task(req: CreateTaskRequest):
             max_concurrent_bidders=req.max_concurrent_bidders,
             max_depth=req.max_depth,
             human_contact=human_contact,
+            level=req.level,
+            invited_agent_ids=req.invited_agent_ids,
         )
         return _task_to_response(task)
     except BudgetError as e:
@@ -166,6 +170,24 @@ async def submit_bid(task_id: str, req: SubmitBidRequest):
         )
         return BidResponse(
             status=bid_status.value, task_id=task_id, agent_id=req.agent_id,
+        )
+    except TaskError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/tasks/{task_id}/invite", response_model=InviteAgentResponse)
+async def invite_agent(task_id: str, req: InviteAgentRequest):
+    """Invite an agent to bid on a task (skips ability check)."""
+    try:
+        await _net().invite_agent(
+            task_id=task_id,
+            initiator_id=req.initiator_id,
+            agent_id=req.agent_id,
+        )
+        return InviteAgentResponse(
+            task_id=task_id,
+            agent_id=req.agent_id,
+            message="Agent invited",
         )
     except TaskError as e:
         raise HTTPException(400, str(e))
@@ -346,6 +368,7 @@ async def create_subtask(task_id: str, req: CreateSubtaskRequest):
             domains=req.domains,
             budget=req.budget,
             deadline=req.deadline,
+            level=req.level,
         )
         return _task_to_response(sub)
     except (TaskError, BudgetError) as e:
@@ -398,6 +421,57 @@ async def deposit(req: DepositRequest):
     )
 
 
+# ── Messaging (1 endpoint) ───────────────────────────────────────────
+
+@router.post("/messages")
+async def relay_message(req: RelayMessageRequest):
+    """Relay a direct message to a target agent via three-layer addressing.
+
+    Routes by to.agent_id: if the agent is connected locally via WebSocket,
+    deliver immediately. Otherwise forward to peer nodes via /peer/message.
+    """
+    from eacn.core.models import PushEvent, PushEventType
+    from eacn.network.api.websocket import manager
+
+    net = _net()
+    target_agent_id = req.to.agent_id
+    sender_agent_id = req.from_.agent_id
+
+    # Build push event
+    event = PushEvent(
+        type=PushEventType.DIRECT_MESSAGE,
+        task_id="",
+        recipients=[target_agent_id],
+        payload={
+            "from": sender_agent_id,
+            "content": req.content,
+            "to": req.to.model_dump(),
+        },
+    )
+
+    # Try local delivery first
+    if manager.is_connected(target_agent_id):
+        delivered = await manager.broadcast_event(event)
+        return {"ok": True, "delivered": delivered, "method": "local"}
+
+    # Forward to all peer nodes — they'll try local delivery
+    if not net.cluster.standalone:
+        members = net.cluster.members.all_online(exclude=net.cluster.node_id)
+        if members:
+            target_nodes = {m.node_id for m in members}
+            await net.cluster.router.forward_push(
+                event.type.value,
+                event.task_id,
+                event.recipients,
+                event.payload,
+                target_nodes,
+            )
+            return {"ok": True, "delivered": 0, "method": "forwarded"}
+
+    return {"ok": False, "delivered": 0, "method": "undeliverable",
+            "error": f"Agent {target_agent_id} not connected to any node"}
+
+
 @router.get("/cluster/status")
 async def cluster_status():
     """View cluster status: local node info, all known members, cluster mode."""
@@ -405,6 +479,7 @@ async def cluster_status():
     cluster = net.cluster
     local = cluster.local_node
     members = cluster.members.all_nodes()
+    agent_counts = cluster.get_agent_counts()
     return {
         "mode": "standalone" if cluster.standalone else "cluster",
         "local": {
@@ -422,6 +497,7 @@ async def cluster_status():
                 "domains": n.domains,
                 "status": n.status,
                 "last_seen": n.last_seen,
+                "connected_agents": agent_counts.get(n.node_id, 0),
             }
             for n in members
         ],
