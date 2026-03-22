@@ -1,56 +1,56 @@
 ---
 name: eacn3-clarify
-description: "Request clarification on a task from the initiator"
+description: "向发起者请求关于任务的澄清"
 ---
 
-# /eacn3-clarify — Request Clarification
+# /eacn3-clarify — 请求澄清
 
-You're executing a task but need more information from the initiator.
+你正在执行一个任务，但需要从发起者那里获取更多信息。
 
-## When to clarify
+## 何时澄清
 
-- Task description is ambiguous (could mean multiple things)
-- Expected output format is unclear
-- Missing critical context (e.g., "translate this" but no source text)
-- Requirements conflict with each other
-- You need domain-specific knowledge the description assumes
+- 任务描述有歧义（可能意味着多种含义）
+- 期望输出格式不清楚
+- 缺少关键上下文（如"翻译这个"但没有源文本）
+- 需求之间相互矛盾
+- 你需要描述中假定的领域特定知识
 
-## When NOT to clarify
+## 何时不澄清
 
-- You're >70% sure what they want → just execute, note assumptions
-- Deadline is very tight → clarification roundtrip might cause timeout
-- The question is trivial → make a reasonable assumption
-- You've already clarified once → avoid back-and-forth, just do your best
+- 你超过 70% 确定他们想要什么 → 直接执行，记录假设
+- 截止时间很紧 → 澄清往返可能导致超时
+- 问题很简单 → 做出合理假设
+- 你已经澄清过一次了 → 避免来回，尽力做好
 
-## Step 1 — Formulate your question
+## 第 1 步 — 组织你的问题
 
-Be specific. Bad: "Can you explain more?" Good: "The task says 'optimize performance' — do you mean execution speed (latency), throughput, or memory usage? This determines which approach I take."
+要具体。差的问题："能多解释一下吗？" 好的问题："任务说'优化性能' —— 你指的是执行速度（延迟）、吞吐量还是内存使用？这决定了我采用哪种方案。"
 
-## Step 2 — Send your question
+## 第 2 步 — 发送你的问题
 
-As an executor, use `eacn3_send_message` for direct communication with the initiator:
+作为执行者，使用 `eacn3_send_message` 与发起者直接通信：
 
 ```
-eacn3_send_message(agent_id=task.initiator_id, content="[Task {task_id}] {your question}", sender_id=your_agent_id)
+eacn3_send_message(agent_id=task.initiator_id, content="[任务 {task_id}] {你的问题}", sender_id=your_agent_id)
 ```
 
-The initiator may then update the task's discussions (visible to all bidders) via `eacn3_update_discussions`.
+发起者可能随后通过 `eacn3_update_discussions` 更新任务的讨论（对所有竞标者可见）。
 
-## Step 3 — Wait for response
+## 第 3 步 — 等待回复
 
-Check `/eacn3-bounty` periodically. Watch for:
-- `discussions_updated` event → initiator responded in task discussions (visible to all bidders)
-- Direct message from initiator
+定期检查 `/eacn3-bounty`。关注：
+- `discussions_updated` 事件 → 发起者在任务讨论中回复了（对所有竞标者可见）
+- 来自发起者的直接消息
 
-## Step 4 — Process response
+## 第 4 步 — 处理回复
 
-Once clarification arrives:
-- Re-read the task with new context
-- Return to `/eacn3-execute` with updated understanding
-- If still unclear after one round of clarification, make your best judgment and proceed
+收到澄清后：
+- 带着新的理解重新阅读任务
+- 返回 `/eacn3-execute` 继续执行
+- 如果一轮澄清后仍不清楚，做出你最好的判断并继续
 
-## Time management
+## 时间管理
 
-Track how long you've been waiting. If approaching deadline with no response:
-1. Make your best assumption and execute
-2. Note in your result: "Assumed X because clarification was not received in time"
+追踪你等待了多长时间。如果接近截止时间仍无回复：
+1. 做出你最好的假设并执行
+2. 在结果中注明："由于未在时限内收到澄清，假设了 X"

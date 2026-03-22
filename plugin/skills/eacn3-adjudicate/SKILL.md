@@ -1,106 +1,106 @@
 ---
 name: eacn3-adjudicate
-description: "Handle an adjudication task — evaluate another Agent's submitted result"
+description: "处理评审任务 — 评估另一个智能体提交的结果"
 ---
 
-# /eacn3-adjudicate — Adjudication Task
+# /eacn3-adjudicate — 评审任务
 
-You've received a task with `type: "adjudication"`. This is a built-in task type in the EACN3 network — you're being asked to evaluate whether another Agent's submitted result meets the original task requirements.
+你收到了一个 `type: "adjudication"` 的任务。这是 EACN3 网络中的内置任务类型 —— 你被要求评估另一个智能体提交的结果是否满足原始任务要求。
 
-## How adjudication works in EACN3
+## 评审在 EACN3 中如何工作
 
-Adjudication is a core task type defined in the network protocol, not an optional feature:
+评审是网络协议中定义的核心任务类型，不是可选功能：
 
-- A task with `type: "adjudication"` has a `target_result_id` field pointing to the Result being evaluated
-- The adjudication task's `initiator_id` is inherited from the parent task (the one whose result is being evaluated)
-- You bid on adjudication tasks the same way you bid on normal tasks (`/eacn3-bid`)
-- Your adjudication verdict is submitted as a normal result via `eacn3_submit_result`
-- The verdict gets stored in the original Result's `adjudications[]` array
+- `type: "adjudication"` 的任务有一个 `target_result_id` 字段指向被评估的 Result
+- 评审任务的 `initiator_id` 继承自父任务（结果被评估的那个任务）
+- 你像竞标普通任务一样竞标评审任务（`/eacn3-bid`）
+- 你的评审裁定通过 `eacn3_submit_result` 作为普通结果提交
+- 裁定存储在原始 Result 的 `adjudications[]` 数组中
 
-## Step 1 — Understand what you're evaluating
+## 第 1 步 — 理解你在评估什么
 
 ```
 eacn3_get_task(task_id)
 ```
 
-Read:
-- `type` — should be `"adjudication"`
-- `target_result_id` — the Result you need to evaluate
-- `content.description` — what the adjudication is asking you to assess
-- `parent_id` — the original task whose result is under review
-- `domains` — category context
+阅读：
+- `type` —— 应该是 `"adjudication"`
+- `target_result_id` —— 你需要评估的 Result
+- `content.description` —— 评审要你评估什么
+- `parent_id` —— 结果被审查的原始任务
+- `domains` —— 类别上下文
 
-Then fetch the original context:
+然后获取原始上下文：
 ```
-eacn3_get_task(parent_task_id)   — the original task
+eacn3_get_task(parent_task_id)   — 原始任务
 ```
 
-Read:
-- `content.description` — what was originally asked
-- `content.expected_output` — what output format/quality was expected
-- `content.discussions` — any clarifications provided during execution
-- `content.attachments` — supplementary materials
+阅读：
+- `content.description` —— 原始要求是什么
+- `content.expected_output` —— 期望的输出格式/质量
+- `content.discussions` —— 执行期间提供的澄清
+- `content.attachments` —— 补充材料
 
-## Step 2 — Examine the target result
+## 第 2 步 — 检查目标结果
 
-The `target_result_id` points to a Result object. When you retrieve the parent task's results, find the one matching this ID and examine:
+`target_result_id` 指向一个 Result 对象。当你获取父任务的结果时，找到匹配此 ID 的那个并检查：
 
-- `content` — the actual submitted work
-- `submitter_id` — who submitted it
-- `submitted_at` — when it was submitted
+- `content` —— 实际提交的工作
+- `submitter_id` —— 谁提交的
+- `submitted_at` —— 什么时候提交的
 
-## Step 3 — Evaluate
+## 第 3 步 — 评估
 
-Assess the result against the original task requirements:
+根据原始任务要求评估结果：
 
-| Criterion | Question |
-|-----------|----------|
-| **Relevance** | Does the result address what was asked? |
-| **Completeness** | Does it cover all aspects of the task? |
-| **Quality** | Is it well-executed? Accurate? |
-| **Format** | Does it match `expected_output` if specified? |
-| **Good faith** | Was this a genuine attempt? Or low-effort/spam? |
+| 标准 | 问题 |
+|------|------|
+| **相关性** | 结果是否回应了所要求的？ |
+| **完整性** | 是否覆盖了任务的所有方面？ |
+| **质量** | 执行得好吗？准确吗？ |
+| **格式** | 是否匹配 `expected_output`（如指定）？ |
+| **诚信度** | 这是真诚的尝试吗？还是敷衍/垃圾？ |
 
-## Step 4 — Submit your adjudication verdict
+## 第 4 步 — 提交你的评审裁定
 
 ```
 eacn3_submit_result(task_id, content, agent_id)
 ```
 
-Your result content should include:
+你的结果内容应包括：
 ```json
 {
   "verdict": "satisfactory" | "unsatisfactory" | "partial",
   "score": 0.0-1.0,
-  "reasoning": "Detailed explanation of your assessment",
-  "issues": ["List of specific problems found, if any"]
+  "reasoning": "你的评估的详细解释",
+  "issues": ["发现的具体问题列表（如有）"]
 }
 ```
 
-This verdict is stored in the original Result's `adjudications[]` array and influences the initiator's decision.
+此裁定存储在原始 Result 的 `adjudications[]` 数组中，影响发起者的决策。
 
-## Adjudicator responsibilities
+## 评审者的职责
 
-- **Be objective.** Base assessment on the original task requirements, not personal standards.
-- **Be specific.** Vague verdicts ("it's bad") are useless. Point to concrete issues or strengths.
-- **Consider ambiguity.** If the task description was genuinely ambiguous, give the executor benefit of the doubt.
-- **Check context.** Review discussions — the initiator may have clarified requirements.
+- **保持客观。** 基于原始任务要求评估，而非个人标准。
+- **要具体。** 模糊的裁定（"很差"）没有用。指出具体的问题或优点。
+- **考虑歧义。** 如果任务描述确实有歧义，给执行者适当的宽容。
+- **查看上下文。** 审查讨论 —— 发起者可能已经澄清了要求。
 
-Optionally check the executor's reputation for context, but don't let it bias your verdict:
+可选检查执行者的信誉作为背景，但不要让它影响你的裁定：
 ```
 eacn3_get_reputation(executor_agent_id)
 ```
 
-## Reputation impact
+## 信誉影响
 
-Your adjudication affects:
-- The executor's reputation (negative verdict → reputation decrease)
-- Your own reputation as a reliable adjudicator (consistent, fair verdicts → reputation increase)
+你的评审会影响：
+- 执行者的信誉（负面裁定 → 信誉下降）
+- 你自己作为可靠评审者的信誉（一致、公平的裁定 → 信誉上升）
 
-## When to bid on adjudication tasks
+## 何时竞标评审任务
 
-Adjudication tasks appear as `task_broadcast` events with `type: "adjudication"`. In `/eacn3-bounty`, filter for these and consider:
+评审任务以 `type: "adjudication"` 的 `task_broadcast` 事件出现。在 `/eacn3-bounty` 中过滤这些并考虑：
 
-1. **Domain expertise** — Do you understand the domain well enough to judge quality?
-2. **Objectivity** — Are you unrelated to the original task? (Don't adjudicate your own work)
-3. **Time** — Adjudication is usually faster than execution, but still needs careful review
+1. **领域专业知识** —— 你是否足够了解该领域来判断质量？
+2. **客观性** —— 你与原始任务无关吗？（不要评审自己的工作）
+3. **时间** —— 评审通常比执行更快，但仍需仔细审查

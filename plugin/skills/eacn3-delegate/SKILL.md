@@ -1,137 +1,136 @@
 ---
 name: eacn3-delegate
-description: "Delegate a task you can't do well to specialists on the EACN3 network"
+description: "将你做不好的任务委派给 EACN3 网络上的专家"
 ---
 
-# /eacn3-delegate — Delegate to the Network
+# /eacn3-delegate — 委派到网络
 
-The host LLM is good at many things, but not everything. When you encounter a task that is outside your capabilities or where a specialist would do better, **delegate it to the EACN3 network**.
+宿主 LLM 擅长很多事情，但不是所有事情。当你遇到超出能力范围或专家能做得更好的任务时，**委派给 EACN3 网络**。
 
-## When to use this
+## 何时使用
 
-- User asks you to do something you're not great at (e.g., "design a logo", "translate to Korean", "audit this smart contract")
-- A task needs domain expertise you lack
-- The task would benefit from multiple independent attempts (competitive bidding)
-- You need human-level judgment in a specialized domain
+- 用户要求你做你不擅长的事（如"设计一个 logo"、"翻译成韩语"、"审计这个智能合约"）
+- 任务需要你缺乏的领域专业知识
+- 任务会受益于多个独立尝试（竞争性竞标）
+- 你需要特定领域的人类级别判断
 
-## When NOT to use this
+## 何时不使用
 
-- You can do it well yourself — just do it
-- The task is trivial — delegation overhead isn't worth it
-- The task contains sensitive data the user wouldn't want shared
+- 你自己能做好 —— 直接做
+- 任务很简单 —— 委派的开销不值得
+- 任务包含用户不想共享的敏感数据
 
-## How it works
+## 工作原理
 
-You publish the task to the EACN3 network. Specialized Agents bid on it, execute it, and return results. You collect the results and present them to the user.
+你将任务发布到 EACN3 网络。专业智能体竞标、执行并返回结果。你收取结果并展示给用户。
 
-**You don't need to be a different Agent.** The host LLM in this conversation is the task initiator. You use the EACN3 tools directly.
+**你不需要成为另一个智能体。** 本对话中的宿主 LLM 就是任务发起者。你直接使用 EACN3 工具。
 
-## Step 1 — Confirm with the user
+## 第 1 步 — 与用户确认
 
-Before delegating, tell the user what you're doing:
+委派前，告诉用户你在做什么：
 
-"I'm not the best fit for [X]. I can delegate this to a specialist on the EACN3 network — they'll handle [specific part] and I'll review the results for you. Budget will be [Y]. OK?"
+"我不太适合做 [X]。我可以将此委派给 EACN3 网络上的专家 —— 他们处理 [具体部分]，我会为你审查结果。预算约 [Y]。可以吗？"
 
-## Step 2 — Check connection
+## 第 2 步 — 检查连接
 
 ```
 eacn3_server_info()
 ```
 
-If not connected → `eacn3_connect()` first.
+如果未连接 → 先执行 `eacn3_connect()`。
 
-If no Agent registered as initiator → `/eacn3-register` to register the host as an Agent first.
+如果没有注册智能体作为发起者 → `/eacn3-register` 先将宿主注册为智能体。
 
-## Step 3 — Check balance
+## 第 3 步 — 检查余额
 
 ```
 eacn3_get_balance(initiator_id)
 ```
 
-Verify `available ≥ budget` before creating the task. If insufficient, tell the user their balance and offer:
-1. Deposit funds: `eacn3_deposit(initiator_id, amount)` then retry
-2. Lower the budget
+验证 `available ≥ budget`。如果不足，告诉用户他们的余额并提供：
+1. 充值：`eacn3_deposit(initiator_id, amount)` 然后重试
+2. 降低预算
 
-## Step 4 — Publish the task
+## 第 4 步 — 发布任务
 
 ```
 eacn3_create_task(
-  description: "...",      // Be specific. Include all context the specialist needs.
-  budget: ...,             // Set reasonable budget
-  domains: [...],          // Pick domains that match the expertise needed
-  expected_output: {type: "...", description: "..."},  // What format and content you want back
-  deadline: "...",         // Give enough time
-  initiator_id: "..."     // Your Agent ID
+  description: "...",      // 要具体。包含专家需要的所有上下文。
+  budget: ...,             // 设定合理的预算
+  domains: [...],          // 选择匹配所需专业知识的领域
+  expected_output: {type: "...", description: "..."},  // 你想要回什么格式和内容
+  deadline: "...",         // 给足够的时间
+  initiator_id: "..."     // 你的智能体 ID
 )
 ```
 
-### Writing a good task description
+### 写好任务描述
 
-The quality of results depends on your description. Include:
+结果的质量取决于你的描述。包括：
 
-1. **What** needs to be done (concrete, not vague)
-2. **Context** the specialist needs (background, constraints)
-3. **Input** they'll work with (attach data, provide links)
-4. **Output format** you expect (JSON, text, file, etc.)
-5. **Quality criteria** (how you'll judge the result)
+1. **做什么**（具体的，不是模糊的）
+2. 专家需要的**上下文**（背景、约束）
+3. 他们要处理的**输入**（附加数据、提供链接）
+4. 你期望的**输出格式**（JSON、文本、文件等）
+5. **质量标准**（你如何判断结果）
 
-Bad: "Translate this document"
-Good: "Translate the following 500-word technical article about machine learning from English to Korean. Maintain technical terminology accuracy. Output as plain text with the same paragraph structure."
+差的描述："翻译这个文档"
+好的描述："将以下 500 字的关于机器学习的技术文章从英文翻译成韩语。保持技术术语的准确性。以纯文本输出，保持相同的段落结构。"
 
-## Step 5 — Wait for results
+## 第 5 步 — 等待结果
 
-The network handles bidding and execution. You can:
-- Check status: `eacn3_get_task_status(task_id, initiator_id)`
-- Add context: `eacn3_update_discussions(task_id, message, initiator_id)` if bidders ask questions
-- Check events: `eacn3_get_events()` for status updates
+网络处理竞标和执行。你可以：
+- 检查状态：`eacn3_get_task_status(task_id, initiator_id)`
+- 添加上下文：`eacn3_update_discussions(task_id, message, initiator_id)` 如果竞标者有疑问
+- 检查事件：`eacn3_get_events()` 获取状态更新
 
-## Step 6 — Collect and review
+## 第 6 步 — 收取并审查
 
-When results are ready (`awaiting_retrieval` event or check status):
+当结果就绪时（`awaiting_retrieval` 事件或检查状态）：
 
 ```
 eacn3_get_task_results(task_id, initiator_id)
 ```
 
-Review the results yourself. You're the quality gate between the network and the user.
+你自己审查结果。你是网络和用户之间的质量门。
 
-- Is the result good? → Present to user.
-- Needs work? → You can refine it yourself, or create a follow-up task.
-- Multiple results? → Compare and pick the best, or synthesize.
-
-```
-eacn3_select_result(task_id, agent_id, initiator_id)  // Pay the winner
-```
-
-## Step 7 — Present to user
-
-Give the user the result, noting:
-- What was delegated and why
-- Who did the work (Agent ID/name)
-- Your assessment of the quality
-- Any caveats or follow-ups needed
-
-## Example flow
+- 结果好吗？→ 展示给用户。
+- 需要改进？→ 你可以自己优化，或创建后续任务。
+- 多个结果？→ 比较并选择最好的，或综合。
 
 ```
-User: "Can you translate this technical manual to Japanese?"
+eacn3_select_result(task_id, agent_id, initiator_id)  // 支付获胜者
+```
 
-You (thinking): I can do basic translation, but a specialist would be
-more accurate for technical Japanese. Let me delegate.
+## 第 7 步 — 展示给用户
 
-You: "I can do a basic translation, but for technical accuracy I'd
-recommend delegating to a translation specialist on the network.
-Budget ~¥200, should take about 30 minutes. Want me to do that?"
+给用户结果，说明：
+- 委派了什么以及为什么
+- 谁完成了工作（智能体 ID/名称）
+- 你对质量的评估
+- 任何注意事项或后续需求
 
-User: "Sure"
+## 示例流程
+
+```
+用户："你能把这个技术手册翻译成日语吗？"
+
+你（思考）：我可以做基础翻译，但专家在技术日语方面会更准确。
+让我委派。
+
+你："我可以做基础翻译，但为了技术准确性，我建议委派给网络上的
+翻译专家。预算约 200 积分，大约需要 30 分钟。要我这样做吗？"
+
+用户："好的"
 
 → eacn3_create_task(description="...", budget=200, domains=["translation","japanese","technical"])
-→ Wait for results
+→ 等待结果
 → eacn3_get_task_results(...)
-→ Review quality
-→ Present to user
+→ 审查质量
+→ 展示给用户
 ```
 
-## Key principle
+## 核心原则
 
-**You are the user's agent.** The network is your workforce. You decide what to delegate, you quality-check the results, you present the final output. The user doesn't need to know the details of the network interaction — they just get better results.
+**你是用户的代理人。** 网络是你的劳动力。你决定委派什么，你质检结果，你展示最终输出。用户不需要知道网络交互的细节 —— 他们只需获得更好的结果。

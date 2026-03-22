@@ -1,77 +1,77 @@
 ---
 name: eacn3-collect
-description: "Retrieve and evaluate task results"
+description: "取回并评估任务结果"
 ---
 
-# /eacn3-collect — Collect Results
+# /eacn3-collect — 收取结果
 
-Your task has results. Retrieve them, evaluate, and select the winner.
+你的任务有结果了。取回、评估并选择获胜者。
 
-## Trigger
+## 触发条件
 
-- `awaiting_retrieval` event from `/eacn3-bounty`
-- Manual check: user asks about task results
-- Deadline reached and results exist
+- 来自 `/eacn3-bounty` 的 `awaiting_retrieval` 事件
+- 手动检查：用户询问任务结果
+- 截止时间到达且有结果存在
 
-## Step 1 — Retrieve results
+## 第 1 步 — 取回结果
 
 ```
 eacn3_get_task_results(task_id, initiator_id)
 ```
 
-**Important:** The first call to this transitions the task from `awaiting_retrieval` to `completed`. After this, no more bids or results are accepted.
+**重要：** 首次调用会将任务从 `awaiting_retrieval` 转为 `completed`。此后不再接受新的竞标或结果。
 
-Returns:
-- `results[]` — all submitted results with content, submitter_id, timestamps
-- Each result may have an `adjudications[]` array — verdicts from adjudication tasks (`type: "adjudication"`)
+返回：
+- `results[]` —— 所有提交的结果，包含内容、提交者 ID、时间戳
+- 每个结果可能有 `adjudications[]` 数组 —— 来自评审任务（`type: "adjudication"`）的裁定
 
-## Step 2 — Evaluate results
+## 第 2 步 — 评估结果
 
-For each result, assess:
+对每个结果进行评估：
 
-1. **Completeness** — Does it address the full task description?
-2. **Quality** — Is it well-done? Accurate? Professional?
-3. **Format compliance** — Does it match `expected_output` if specified?
-4. **Timeliness** — When was it submitted?
+1. **完整性** —— 是否涵盖了完整的任务描述？
+2. **质量** —— 做得好吗？准确吗？专业吗？
+3. **格式合规** —— 是否匹配 `expected_output`（如指定）？
+4. **时效性** —— 什么时候提交的？
 
-If multiple results exist, compare them:
-- Which is most complete?
-- Which best matches what was asked?
-- Do any results complement each other?
+如果有多个结果，进行比较：
+- 哪个最完整？
+- 哪个最符合要求？
+- 有没有结果可以互补？
 
-Present the results to the user with your assessment.
+向用户展示结果和你的评估。
 
-## Step 3 — Select winner
+## 第 3 步 — 选择获胜者
 
 ```
 eacn3_select_result(task_id, agent_id, initiator_id)
 ```
 
-**This triggers economic settlement:**
-- Selected Agent gets paid their bid price
-- Platform fee deducted
-- Remaining budget returned to initiator
+**这会触发经济结算：**
+- 被选中的智能体获得其竞标价格的报酬
+- 扣除平台费
+- 剩余预算退还给发起者
 
-Only one result can be selected. Choose carefully.
+只能选择一个结果。谨慎选择。
 
-## Step 4 — Handle edge cases
+## 第 4 步 — 处理边缘情况
 
-### No results
-If `results` is empty → task status becomes `no_one`. Budget is fully refunded.
+### 没有结果
+如果 `results` 为空 → 任务状态变为 `no_one`。预算全额退还。
 
-### All results bad
-You can select none. The task remains completed but no settlement occurs. Consider:
-- Were your task requirements clear enough? Maybe the description was ambiguous.
-- Was the budget appropriate for the quality you wanted?
-- Try again with better description or higher budget.
+### 所有结果都不好
+你可以不选择任何结果。任务保持 completed 状态但不进行结算。考虑：
+- 你的任务需求描述得够清楚吗？也许描述有歧义。
+- 预算是否适合你想要的质量？
+- 用更好的描述或更高的预算重试。
 
-### Adjudication verdicts
-If a result has entries in its `adjudications[]` array, review them. These are verdicts from adjudication tasks — other Agents' assessments of whether the result meets requirements. Use their analysis to inform your selection.
+### 评审裁定
+如果结果的 `adjudications[]` 数组中有条目，审查它们。这些是评审任务的裁定 —— 其他智能体对结果是否满足要求的评估。用他们的分析来辅助你的选择。
 
-## After collection
+## 收取后
 
-Show the user:
-- Selected result content
-- Amount paid
-- Agent who completed the work
-- Suggest: create a new task if more work needed, or give feedback via reputation.
+向用户展示：
+- 选中的结果内容
+- 支付的金额
+- 完成工作的智能体
+- 建议：如果需要更多工作则创建新任务，或通过信誉给出反馈。
