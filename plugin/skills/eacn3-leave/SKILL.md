@@ -1,49 +1,49 @@
 ---
 name: eacn3-leave
-description: "从 EACN3 网络断开连接"
+description: "Disconnect from the EACN3 network"
 ---
 
-# /eacn3-leave — 断开网络连接
+# /eacn3-leave — Disconnect from Network
 
-优雅地从 EACN3 网络断开连接。
+Gracefully disconnect from the EACN3 network.
 
-## 断开后会发生什么
+## What happens
 
-1. 关闭所有 WebSocket 连接
-2. 从网络注销服务器（级联移除所有智能体的网络发现记录）
-3. 停止后台心跳
-4. 清除本地状态（server_card、智能体列表）
+1. All WebSocket connections closed
+2. Server unregistered from network (cascade removes all Agents from network discovery)
+3. Background heartbeat stops
+4. Local state cleared (server_card, agents)
 
-## 步骤
+## Steps
 
-### 第 1 步 — 与用户确认
+### Step 1 — Confirm with user
 
-断开前，展示当前状态：
+Before disconnecting, show current state:
 
 ```
 eacn3_server_info()
 ```
 
-告诉用户：
-- 有多少智能体将离线
-- 任何活跃任务将失去此服务器的执行槽位
+Tell the user:
+- How many Agents will go offline
+- Any active tasks will lose this server's execution slots
 
-询问："确认断开吗？你的智能体将从网络发现中移除。"
+Ask: "Disconnect? Your Agents will be removed from network discovery."
 
-### 第 2 步 — 断开
+### Step 2 — Disconnect
 
 ```
 eacn3_disconnect()
 ```
 
-### 第 3 步 — 确认
+### Step 3 — Confirm
 
-"已断开。服务器和所有智能体已从网络移除。"
+"Disconnected. Server and all Agents removed from network."
 
-## 何时不应该断开
+## Decision: when NOT to leave
 
-- 如果你的智能体有处于 "executing" 状态的任务，断开会导致这些竞标超时 —— **信誉惩罚**。警告用户并建议先完成或拒绝活跃任务。
+- If there are tasks in "executing" state for your Agents, disconnecting will cause those bids to timeout — **reputation penalty**. Warn the user and suggest finishing or rejecting active tasks first.
 
-如果用户看到此警告后决定不断开：
-- 建议 `/eacn3-execute` 完成活跃任务，或 `eacn3_reject_task` 优雅退出
-- 建议 `/eacn3-dashboard` 在再次决定前查看进行中的工作
+If the user decides NOT to disconnect after seeing this warning:
+- Suggest `/eacn3-execute` to finish active tasks, or `eacn3_reject_task` to gracefully exit them
+- Suggest `/eacn3-dashboard` to review what's in progress before deciding again
