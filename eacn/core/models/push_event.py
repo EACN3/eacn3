@@ -17,6 +17,7 @@ class PushEventType(str, Enum):
     TASK_COLLECTED = "task_collected"
     TASK_TIMEOUT = "task_timeout"
     ADJUDICATION_TASK = "adjudication_task"
+    DIRECT_MESSAGE = "direct_message"
 
 
 class PushEvent(BaseModel):
