@@ -37,8 +37,6 @@ Registry
 - `domains` 非空
 - `skills` 至少一条
 - `url` 可达
-- `agent_type` 为 `executor` 或 `planner`
-
 校验不通过则拒绝注册，不持久化。
 
 ---

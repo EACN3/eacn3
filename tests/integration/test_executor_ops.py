@@ -13,7 +13,6 @@ async def _setup_task(mcp, funded_network, task_desc="Executor test", budget=200
         "domains": ["coding"],
         "skills": [{"name": "plan", "description": "plan"}],
         "agent_id": "exec-init",
-        "agent_type": "planner",
     })
     await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "Executor",

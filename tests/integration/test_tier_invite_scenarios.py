@@ -20,19 +20,17 @@ async def _register_agent(
     name: str,
     *,
     tier: str = "general",
-    agent_type: str = "executor",
     domains: list[str] | None = None,
     reputation: float = 0.8,
     balance: float = 5000.0,
 ):
-    """Register an agent with given tier/type and seed its reputation + balance."""
+    """Register an agent with given tier and seed its reputation + balance."""
     await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": name,
         "description": f"{name} agent ({tier} tier)",
         "domains": domains or ["coding"],
         "skills": [{"name": "work", "description": "does work"}],
         "agent_id": agent_id,
-        "agent_type": agent_type,
         "tier": tier,
     })
     funded_network.reputation._scores[agent_id] = reputation
@@ -85,7 +83,7 @@ class TestToolTierRestriction:
     @pytest.mark.asyncio
     async def test_tool_tier_rejected_on_general_task(self, mcp, http, funded_network):
         """ToolBot (tool tier) cannot bid on a general-level task."""
-        await _register_agent(mcp, funded_network, "alice", "Alice", tier="general", agent_type="planner")
+        await _register_agent(mcp, funded_network, "alice", "Alice", tier="general")
         await _register_agent(mcp, funded_network, "toolbot", "ToolBot", tier="tool")
 
         # Alice creates a general-level task
@@ -105,7 +103,7 @@ class TestToolTierRestriction:
     @pytest.mark.asyncio
     async def test_tool_tier_accepted_on_tool_task(self, mcp, http, funded_network):
         """ToolBot (tool tier) CAN bid on a tool-level task."""
-        await _register_agent(mcp, funded_network, "alice2", "Alice", tier="general", agent_type="planner")
+        await _register_agent(mcp, funded_network, "alice2", "Alice", tier="general")
         await _register_agent(mcp, funded_network, "toolbot2", "ToolBot", tier="tool")
 
         # Alice creates a tool-level task
@@ -120,7 +118,7 @@ class TestToolTierRestriction:
     @pytest.mark.asyncio
     async def test_tool_full_lifecycle(self, mcp, http, funded_network):
         """ToolBot bids on tool task, submits result, Alice collects."""
-        await _register_agent(mcp, funded_network, "alice3", "Alice", tier="general", agent_type="planner")
+        await _register_agent(mcp, funded_network, "alice3", "Alice", tier="general")
         await _register_agent(mcp, funded_network, "toolbot3", "ToolBot", tier="tool")
 
         task_id = await _create_task(mcp, "alice3", "Run formatting tool", level="tool")
@@ -180,7 +178,7 @@ class TestExpertHierarchy:
         await _register_agent(mcp, funded_network, "tool-agent", "ToolAgent", tier="tool")
         # Need a planner to create the task
         await _register_agent(mcp, funded_network, "coordinator-s2", "Coordinator",
-                              tier="general", agent_type="planner")
+                              tier="general")
 
         # Create expert-level task
         task_id = await _create_task(mcp, "coordinator-s2", "Expert-level analysis", level="expert")
@@ -224,7 +222,7 @@ class TestInviteLowReputationAgent:
     async def test_low_rep_rejected_then_invited_accepted(self, mcp, http, funded_network):
         """NewbieAgent (rep=0.1) rejected without invite, accepted after invite."""
         await _register_agent(mcp, funded_network, "publisher", "Publisher",
-                              tier="general", agent_type="planner")
+                              tier="general")
         await _register_agent(mcp, funded_network, "newbie", "NewbieAgent",
                               tier="general", reputation=0.1)
 
@@ -288,7 +286,7 @@ class TestPresetInvitedAgents:
     async def test_preinvited_agent_accepted_immediately(self, mcp, http, funded_network):
         """SpecialistAgent (rep=0.1) accepted immediately when pre-invited."""
         await _register_agent(mcp, funded_network, "pub-s4", "Publisher",
-                              tier="general", agent_type="planner")
+                              tier="general")
         await _register_agent(mcp, funded_network, "specialist", "SpecialistAgent",
                               tier="general", reputation=0.1)
 
@@ -318,7 +316,7 @@ class TestPresetInvitedAgents:
     async def test_non_invited_low_rep_still_rejected(self, mcp, http, funded_network):
         """Agent NOT in invited_agent_ids with low rep is still rejected."""
         await _register_agent(mcp, funded_network, "pub-s4b", "Publisher",
-                              tier="general", agent_type="planner")
+                              tier="general")
         await _register_agent(mcp, funded_network, "specialist-b", "SpecialistB",
                               tier="general", reputation=0.1)
         await _register_agent(mcp, funded_network, "outsider", "Outsider",
@@ -355,7 +353,7 @@ class TestInviteBypassesTier:
     async def test_tool_rejected_then_invited_on_expert_task(self, mcp, http, funded_network):
         """ToolBot rejected on expert task, then accepted after invitation."""
         await _register_agent(mcp, funded_network, "pub-s5", "Publisher",
-                              tier="general", agent_type="planner")
+                              tier="general")
         await _register_agent(mcp, funded_network, "toolbot-s5", "ToolBot", tier="tool")
 
         # Publisher creates expert-level task
@@ -410,19 +408,19 @@ class TestMultiAgentMarketplace:
         # Register 4 agents with different tiers and roles
         await _register_agent(
             mcp, funded_network, "coordinator", "Coordinator",
-            tier="general", agent_type="planner", domains=["python", "data-processing"],
+            tier="general", domains=["python", "data-processing"],
         )
         await _register_agent(
             mcp, funded_network, "py-expert", "PythonExpert",
-            tier="expert", agent_type="executor", domains=["python"],
+            tier="expert", domains=["python"],
         )
         await _register_agent(
             mcp, funded_network, "data-tool", "DataTool",
-            tier="tool", agent_type="executor", domains=["data-processing"],
+            tier="tool", domains=["data-processing"],
         )
         await _register_agent(
             mcp, funded_network, "gen-helper", "GeneralHelper",
-            tier="expert_general", agent_type="executor", domains=["python", "data-processing"],
+            tier="expert_general", domains=["python", "data-processing"],
         )
 
         # Coordinator publishes an expert-level Python task
@@ -507,7 +505,7 @@ class TestMultiAgentMarketplace:
         """A general-level task accepts all non-tool tiers, rejects ONLY tool tier."""
         await _register_agent(
             mcp, funded_network, "coord-g", "Coordinator",
-            tier="general", agent_type="planner", domains=["coding"],
+            tier="general", domains=["coding"],
         )
         await _register_agent(
             mcp, funded_network, "gen-exec", "GeneralExec",
@@ -557,7 +555,7 @@ class TestMultiAgentMarketplace:
         """A tool-level task accepts ALL tiers including tool."""
         await _register_agent(
             mcp, funded_network, "coord-t", "Coordinator",
-            tier="general", agent_type="planner", domains=["coding"],
+            tier="general", domains=["coding"],
         )
         await _register_agent(
             mcp, funded_network, "gen-t", "GeneralT",

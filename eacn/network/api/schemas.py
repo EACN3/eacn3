@@ -186,7 +186,6 @@ class AgentCapabilitiesSchema(BaseModel):
 class RegisterAgentRequest(BaseModel):
     agent_id: str
     name: str
-    agent_type: str  # "executor" | "planner"
     domains: list[str] = Field(min_length=1)
     skills: list[SkillSchema] = Field(min_length=1)
     capabilities: AgentCapabilitiesSchema | None = None
@@ -204,7 +203,6 @@ class RegisterAgentResponse(BaseModel):
 class AgentCardResponse(BaseModel):
     agent_id: str
     name: str
-    agent_type: str
     domains: list[str]
     skills: list[dict[str, Any]] = Field(default_factory=list)
     url: str

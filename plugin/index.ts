@@ -263,7 +263,7 @@ export default function (api: any) {
       }
 
       const restoredAgents = Object.values(s.agents).map((a: any) => ({
-        agent_id: a.agent_id, name: a.name, domains: a.domains, agent_type: a.agent_type, tier: a.tier,
+        agent_id: a.agent_id, name: a.name, domains: a.domains, tier: a.tier,
       }));
       return ok({
         connected: true, server_id: sid, network_endpoint: endpoint, fallback,
@@ -328,7 +328,6 @@ export default function (api: any) {
         domains: { type: "array", items: { type: "string" }, description: "Capability domains" },
         skills: { type: "array", items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" }, description: { type: "string" }, tags: { type: "array", items: { type: "string" } }, parameters: { type: "object" } } }, description: "Agent skills" },
         capabilities: { type: "object", properties: { max_concurrent_tasks: { type: "number", description: "Max tasks simultaneously (0 = unlimited)" }, concurrent: { type: "boolean", description: "Whether Agent supports concurrent execution" } }, description: "Agent capacity limits" },
-        agent_type: { type: "string", enum: ["executor", "planner"], description: "Defaults to executor" },
         tier: { type: "string", enum: ["general", "expert", "expert_general", "tool"], description: "Capability tier: general > expert > expert_general > tool. Defaults to general." },
         agent_id: { type: "string", description: "Custom agent ID. Auto-generated if omitted." },
       },
@@ -341,7 +340,7 @@ export default function (api: any) {
       if (!params.domains?.length) return err("domains cannot be empty");
       const agentId = params.agent_id ?? `agent-${Date.now().toString(36)}`;
       const card: AgentCard = {
-        agent_id: agentId, name: params.name, agent_type: params.agent_type ?? "executor",
+        agent_id: agentId, name: params.name,
         tier: params.tier ?? "general",
         domains: params.domains, skills: params.skills ?? [], capabilities: params.capabilities,
         url: `plugin://local/agents/${agentId}`, server_id: s.server_card.server_id,
@@ -356,7 +355,7 @@ export default function (api: any) {
   // #6 eacn3_get_agent
   api.registerTool({
     name: "eacn3_get_agent",
-    description: "Fetch the full AgentCard for any agent by ID — checks local state first, then queries the network. Returns {agent_id, name, agent_type, domains, skills, capabilities, url, server_id, description}. No side effects. Use to inspect an agent before sending messages or evaluating bids.",
+    description: "Fetch the full AgentCard for any agent by ID — checks local state first, then queries the network. Returns {agent_id, name, domains, skills, capabilities, url, server_id, description}. No side effects. Use to inspect an agent before sending messages or evaluating bids.",
     parameters: { type: "object", properties: { agent_id: { type: "string" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
       const local = state.getAgent(params.agent_id);
@@ -409,11 +408,11 @@ export default function (api: any) {
   // #9 eacn3_list_my_agents
   api.registerTool({
     name: "eacn3_list_my_agents",
-    description: "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, agent_type, domains, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
+    description: "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
     parameters: { type: "object", properties: {} },
     async execute() {
       const agents = state.listAgents();
-      return ok({ count: agents.length, agents: agents.map((a) => ({ agent_id: a.agent_id, name: a.name, agent_type: a.agent_type, domains: a.domains, ws_connected: ws.isConnected(a.agent_id) })) });
+      return ok({ count: agents.length, agents: agents.map((a) => ({ agent_id: a.agent_id, name: a.name, domains: a.domains, tier: a.tier, ws_connected: ws.isConnected(a.agent_id) })) });
     },
   });
 

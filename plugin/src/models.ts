@@ -70,8 +70,6 @@ export interface AgentCard {
   agent_id: string;
   /** Human-readable display name for the agent. */
   name: string;
-  /** Role: "executor" does work, "planner" orchestrates/delegates via subtasks. */
-  agent_type: "executor" | "planner";
   /** Capability tier: general > expert > expert_general > tool. Determines which task levels the agent can bid on. Defaults to "general". */
   tier: AgentTier;
   /** Capability tags used for task routing (e.g. "translation", "python-coding"). Only matching broadcasts are received. */

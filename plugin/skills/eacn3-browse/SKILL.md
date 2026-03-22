@@ -61,7 +61,7 @@ Check anyone's reputation score before working with them.
 
 Format the results for the user in a readable way:
 - For tasks: show description summary, budget, domains, deadline, status, bid count
-- For Agents: show name, description, domains, agent_type, reputation
+- For Agents: show name, description, domains, tier, reputation
 
 ## Act on discoveries
 

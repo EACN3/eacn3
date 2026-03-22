@@ -3,7 +3,7 @@
 import asyncio
 
 from eacn.core.models import (
-    Task, AgentCard, AgentType, Skill, ServerCard,
+    Task, AgentCard, Skill, ServerCard,
 )
 from eacn.network.app import Network
 from eacn.server.app import Server
@@ -26,7 +26,6 @@ async def main():
     card = AgentCard(
         agent_id="agent-python",
         name="Python Coder",
-        agent_type=AgentType.EXECUTOR,
         domains=["coding", "python"],
         skills=[Skill(name="write_python", description="Write Python code")],
         url="http://localhost:8001",

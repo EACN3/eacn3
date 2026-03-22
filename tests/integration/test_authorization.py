@@ -11,7 +11,6 @@ async def _create_funded_task(mcp, funded_network):
         "domains": ["coding"],
         "skills": [{"name": "code", "description": "code"}],
         "agent_id": "auth-init",
-        "agent_type": "planner",
     })
     funded_network.escrow.get_or_create_account("auth-init", 10000.0)
     funded_network.reputation._scores["auth-init"] = 0.8

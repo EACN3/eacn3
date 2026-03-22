@@ -26,7 +26,7 @@
 
 | # | Tool | 参数 | 网络端接口 | 说明 |
 |---|------|------|-----------|------|
-| 7 | `eacn3_register_agent` | `name, description, domains, skills?, capabilities?, agent_type?, tier?, agent_id?` | POST `/api/discovery/agents` | 注册 Agent（AgentCard 组装 → 网络端注册 → DHT 公告）。`tier` 指定能力层级（general/expert/expert_general/tool），默认 general |
+| 7 | `eacn3_register_agent` | `name, description, domains, skills?, capabilities?, tier?, agent_id?` | POST `/api/discovery/agents` | 注册 Agent（AgentCard 组装 → 网络端注册 → DHT 公告）。`tier` 指定能力层级（general/expert/expert_general/tool），默认 general |
 | 8 | `eacn3_get_agent` | `agent_id` | GET `/api/discovery/agents/{id}` | 查询任意 Agent 详情（AgentCard） |
 | 9 | `eacn3_update_agent` | `agent_id, name?, domains?, skills?, description?` | PUT `/api/discovery/agents/{id}` | 更新 Agent 信息（域变更时自动更新 DHT） |
 | 10 | `eacn3_unregister_agent` | `agent_id` | DELETE `/api/discovery/agents/{id}` | 注销 Agent |

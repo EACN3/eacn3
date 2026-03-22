@@ -38,14 +38,12 @@ class GlobalMatcher:
         task: Task,
         agents: list[AgentCard],
         scores: dict[str, float],
-        prefer_type: str | None = None,
     ) -> list[AgentCard]:
         """Stage 1: Static label + keyword matching.
 
-        1. Filter by agent_type (if prefer_type specified)
-        2. Domain tag intersection
-        3. Description keyword matching (task.content.description ↔ agent.description)
-        4. Sort by reputation score
+        1. Domain tag intersection
+        2. Description keyword matching (task.content.description ↔ agent.description)
+        3. Sort by reputation score
         """
         task_domains = set(task.domains)
         task_desc = (task.content.get("description") or "").lower()
@@ -54,9 +52,6 @@ class GlobalMatcher:
         candidates: list[tuple[float, AgentCard]] = []
 
         for agent in agents:
-            if prefer_type and agent.agent_type != prefer_type:
-                continue
-
             # Domain intersection score
             domain_overlap = len(set(agent.domains) & task_domains)
             if domain_overlap == 0:

@@ -54,8 +54,6 @@ Agent
 注册时开发者提供：
 - **能力描述**：name、description、domains、skills — 用于生成 Agent Card
 - **回调地址**：url — 服务端通过此地址向你推送已分配的任务
-- **agent_type**：`executor` 或 `planner` — 标注主要角色
-
 注册时平台自动填入（开发者不需要关心）：
 - **server_id**：由服务端在注册时自动填入，标识该 Agent 属于哪个服务端
 - **network_id**：由网络端在 Agent Card 公告到 DHT 时自动填入，标识该 Agent 属于哪个网络端
@@ -130,7 +128,6 @@ AgentCard
 ├── id
 ├── name
 ├── description          ← 能力的自然语言描述，竞标判断的核心依据
-├── agent_type           ← "executor" | "planner"，标注该 Agent 的主要角色
 ├── tier                 ← "general" | "expert" | "expert_general" | "tool"，能力层级
 ├── domains              ← string[]，必填，注册时必须声明所属域标签（如 ["翻译", "代码", "数据分析"]）
 ├── skills
@@ -146,15 +143,6 @@ AgentCard
 ├── server_id            ← 所属服务端（注册时由服务端自动填入）
 └── network_id           ← 所属网络端（注册时由网络端自动填入）
 ```
-
-**`agent_type` 说明**：
-
-| 类型 | 特征 | 典型行为 |
-|------|------|----------|
-| `executor` | 拥有具体的工具和内建技能，直接产出结果 | 收到任务 → 调用 MCP 工具 / 执行内建 skill → 返回结果 |
-| `planner` | 擅长理解复杂任务、拆解和协调 | 收到任务 → 分解为子任务 → 分发给其他 Agent → 汇总结果 |
-
-> 这不是硬约束：一个 `planner` 也可以直接执行简单任务，一个 `executor` 也可以拆解。`agent_type` 是对外声明的**偏好角色**，帮助网络更高效地路由任务。
 
 **`tier` 层级说明**：
 

@@ -203,7 +203,6 @@ server.tool(
       agent_id: a.agent_id,
       name: a.name,
       domains: a.domains,
-      agent_type: a.agent_type,
       tier: a.tier,
     }));
 
@@ -304,7 +303,6 @@ server.tool(
       max_concurrent_tasks: z.number().describe("Max tasks this Agent can handle simultaneously (0 = unlimited)"),
       concurrent: z.boolean().describe("Whether this Agent supports concurrent execution"),
     }).optional().describe("Agent capacity limits"),
-    agent_type: z.enum(["executor", "planner"]).optional().describe("Defaults to executor"),
     tier: z.enum(["general", "expert", "expert_general", "tool"]).optional().describe("Capability tier: general (can bid on anything) > expert > expert_general > tool (only tool-level tasks). Defaults to general."),
     agent_id: z.string().optional().describe("Custom agent ID. Auto-generated if omitted."),
     a2a_port: z.number().optional().describe("Port for A2A HTTP server. Enables direct agent-to-agent messaging. Omit to use Network relay only."),
@@ -337,7 +335,6 @@ server.tool(
     const card: AgentCard = {
       agent_id: agentId,
       name: params.name,
-      agent_type: params.agent_type ?? "executor",
       tier: (params.tier as AgentTier) ?? "general",
       domains: params.domains,
       skills: params.skills ?? [],
@@ -371,7 +368,7 @@ server.tool(
 // #6 eacn3_get_agent
 server.tool(
   "eacn3_get_agent",
-  "Fetch the full AgentCard for any agent by ID — checks local state first, then queries the network. Returns {agent_id, name, agent_type, domains, skills, capabilities, url, server_id, description}. No side effects. Use to inspect an agent before sending messages or evaluating bids.",
+  "Fetch the full AgentCard for any agent by ID — checks local state first, then queries the network. Returns {agent_id, name, domains, skills, capabilities, url, server_id, description}. No side effects. Use to inspect an agent before sending messages or evaluating bids.",
   {
     agent_id: z.string(),
   },
@@ -445,7 +442,7 @@ server.tool(
 // #9 eacn3_list_my_agents
 server.tool(
   "eacn3_list_my_agents",
-  "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, agent_type, domains, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
+  "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
   {},
   async () => {
     const agents = state.listAgents();
@@ -454,7 +451,6 @@ server.tool(
       agents: agents.map((a) => ({
         agent_id: a.agent_id,
         name: a.name,
-        agent_type: a.agent_type,
         domains: a.domains,
         ws_connected: ws.isConnected(a.agent_id),
       })),

@@ -74,7 +74,7 @@ Step 2: 断开
 ```
 Step 1: 收集信息
   - 有 source（MCP 工具 / Agent 配置）→ Adapter 自动提取能力
-  - 无 source → 交互式收集：name、description、domains、skills、agent_type
+  - 无 source → 交互式收集：name、description、domains、skills
 
 Step 2: 注册
   调用 eacn3_register_agent(...)

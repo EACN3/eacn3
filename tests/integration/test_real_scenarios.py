@@ -14,15 +14,15 @@ from tests.integration.conftest import is_error
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-async def _reg(mcp, net, aid, name, *, tier="general", atype="executor",
+async def _reg(mcp, net, aid, name, *, tier="general",
                domains=None, rep=0.8, balance=5000.0, skills=None):
     """Shorthand: register + fund + seed reputation."""
     await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": name,
-        "description": f"{name} — {tier} tier {atype}",
+        "description": f"{name} — {tier} tier",
         "domains": domains or ["coding"],
         "skills": skills or [{"name": "work", "description": "does work"}],
-        "agent_id": aid, "agent_type": atype, "tier": tier,
+        "agent_id": aid, "tier": tier,
     })
     net.reputation._scores[aid] = rep
     net.escrow.get_or_create_account(aid, balance)
@@ -89,8 +89,8 @@ class TestPlannerDecomposesAcrossTiers:
         fn = funded_network
 
         # Cast of characters
-        await _reg(mcp, fn, "lab", "Research Lab", atype="planner", balance=10000)
-        await _reg(mcp, fn, "planner", "Orchestrator", tier="general", atype="planner")
+        await _reg(mcp, fn, "lab", "Research Lab", balance=10000)
+        await _reg(mcp, fn, "planner", "Orchestrator", tier="general")
         await _reg(mcp, fn, "ml-expert", "ML Specialist", tier="expert",
                    domains=["ml", "python"])
         await _reg(mcp, fn, "formatter", "CSV Formatter", tier="tool",
@@ -196,7 +196,7 @@ class TestNewcomerReputationJourney:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "publisher-j", "Publisher", atype="planner", balance=10000)
+        await _reg(mcp, fn, "publisher-j", "Publisher", balance=10000)
         await _reg(mcp, fn, "newbie-j", "Newbie", tier="general", rep=0.1)
 
         # Phase 1: Newbie tries a general task → rejected (0.9 × 0.1 = 0.09 < 0.2)
@@ -267,7 +267,7 @@ class TestCompetitiveBidding:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "client-t", "Translation Client", atype="planner",
+        await _reg(mcp, fn, "client-t", "Translation Client",
                    domains=["translation"], balance=10000)
         await _reg(mcp, fn, "trans-a", "Translator A", tier="expert",
                    domains=["translation"], rep=0.9)
@@ -344,7 +344,7 @@ class TestSlotContentionWithInvite:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "pub-slot", "Publisher", atype="planner", balance=10000)
+        await _reg(mcp, fn, "pub-slot", "Publisher", balance=10000)
         await _reg(mcp, fn, "agent-a", "Agent A", rep=0.9)
         await _reg(mcp, fn, "agent-b", "Agent B", rep=0.15)  # very low rep
 
@@ -402,7 +402,7 @@ class TestClarificationAndDeadlineFlow:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "vague-pub", "Vague Publisher", atype="planner", balance=10000)
+        await _reg(mcp, fn, "vague-pub", "Vague Publisher", balance=10000)
         await _reg(mcp, fn, "careful-expert", "Careful Expert", tier="expert",
                    domains=["analysis"])
 
@@ -474,7 +474,7 @@ class TestBudgetNegotiationWithTier:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "budget-pub", "Budget Publisher", atype="planner", balance=10000)
+        await _reg(mcp, fn, "budget-pub", "Budget Publisher", balance=10000)
         await _reg(mcp, fn, "expensive-expert", "Premium Expert", tier="expert",
                    domains=["coding"], rep=0.9)
 
@@ -520,7 +520,7 @@ class TestMultiDomainRouting:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "sec-pub", "Security Publisher", atype="planner",
+        await _reg(mcp, fn, "sec-pub", "Security Publisher",
                    domains=["python", "security"], balance=10000)
         await _reg(mcp, fn, "py-only", "Python Only", tier="expert",
                    domains=["python"])
@@ -586,7 +586,7 @@ class TestDirectMessageDuringTask:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "msg-pub", "Messaging Publisher", atype="planner", balance=10000)
+        await _reg(mcp, fn, "msg-pub", "Messaging Publisher", balance=10000)
         await _reg(mcp, fn, "msg-worker", "Messaging Worker", tier="expert",
                    domains=["coding"])
 
@@ -653,8 +653,8 @@ class TestSubtaskLevelInheritance:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "boss-9", "Boss", atype="planner", balance=10000)
-        await _reg(mcp, fn, "planner-9", "Planner", atype="planner")
+        await _reg(mcp, fn, "boss-9", "Boss", balance=10000)
+        await _reg(mcp, fn, "planner-9", "Planner")
         await _reg(mcp, fn, "tool-9", "ToolWorker", tier="tool", domains=["formatting"])
 
         root = await _task(mcp, "boss-9", "Big project", budget=2000,
@@ -718,7 +718,7 @@ class TestAgentCapacityLimit:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "pub-cap", "Publisher", atype="planner", balance=20000)
+        await _reg(mcp, fn, "pub-cap", "Publisher", balance=20000)
         await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "BusyWorker",
             "description": "Limited capacity worker",
@@ -766,7 +766,7 @@ class TestTaskExpiresNoBidders:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "lonely-pub", "Lonely Publisher", atype="planner", balance=1000)
+        await _reg(mcp, fn, "lonely-pub", "Lonely Publisher", balance=1000)
 
         # Check initial balance
         bal_before = await mcp.call_tool_parsed("eacn3_get_balance", {"agent_id": "lonely-pub"})
@@ -811,7 +811,7 @@ class TestAgentUpdatesDomains:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "pub-upd", "Publisher", atype="planner", balance=10000,
+        await _reg(mcp, fn, "pub-upd", "Publisher", balance=10000,
                    domains=["python", "rust"])
         await _reg(mcp, fn, "learner", "Learning Agent", tier="expert",
                    domains=["python"])
@@ -881,9 +881,9 @@ class TestThreeLevelDecomposition:
         fn = funded_network
 
         # Register all participants
-        await _reg(mcp, fn, "client-13", "Business Client", atype="planner",
+        await _reg(mcp, fn, "client-13", "Business Client",
                    balance=20000, domains=["analytics"])
-        await _reg(mcp, fn, "planner-13", "Project Planner", atype="planner",
+        await _reg(mcp, fn, "planner-13", "Project Planner",
                    domains=["analytics", "backend", "frontend"])
         await _reg(mcp, fn, "backend-13", "Backend Expert", tier="expert",
                    domains=["backend", "sql"])
@@ -1020,9 +1020,9 @@ class TestDelegateUnfamiliarDomain:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "biz-14", "Business Owner", atype="planner",
+        await _reg(mcp, fn, "biz-14", "Business Owner",
                    balance=15000, domains=["payments"])
-        await _reg(mcp, fn, "coder-14", "Coding Planner", atype="planner",
+        await _reg(mcp, fn, "coder-14", "Coding Planner",
                    domains=["coding", "payments"])
         await _reg(mcp, fn, "sec-14", "Security Auditor", tier="expert",
                    domains=["security", "pci"], rep=0.95)
@@ -1111,7 +1111,7 @@ class TestAdjudicationFlow:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "pub-15", "Publisher", atype="planner",
+        await _reg(mcp, fn, "pub-15", "Publisher",
                    balance=10000, domains=["coding"])
         await _reg(mcp, fn, "worker-15", "Worker", tier="expert",
                    domains=["coding"])
@@ -1208,13 +1208,13 @@ class TestGeneralistVsSpecialistDelegation:
         fn = funded_network
 
         # Participants
-        await _reg(mcp, fn, "biz-16a", "Business A", atype="planner",
+        await _reg(mcp, fn, "biz-16a", "Business A",
                    balance=10000, domains=["ecommerce"])
-        await _reg(mcp, fn, "biz-16b", "Business B", atype="planner",
+        await _reg(mcp, fn, "biz-16b", "Business B",
                    balance=10000, domains=["ecommerce"])
         await _reg(mcp, fn, "generalist", "Jack of All Trades",
                    domains=["ecommerce", "design", "backend"])
-        await _reg(mcp, fn, "planner-16", "Project Manager", atype="planner",
+        await _reg(mcp, fn, "planner-16", "Project Manager",
                    domains=["ecommerce", "design", "backend"])
         await _reg(mcp, fn, "designer", "UI Specialist", tier="expert",
                    domains=["design"], rep=0.95)
@@ -1352,9 +1352,9 @@ class TestMaxDepthGuard:
         """
         fn = funded_network
 
-        await _reg(mcp, fn, "root-17", "Root", atype="planner", balance=50000)
+        await _reg(mcp, fn, "root-17", "Root", balance=50000)
         for i in range(5):
-            await _reg(mcp, fn, f"chain-{i}", f"Chain Agent {i}", atype="planner",
+            await _reg(mcp, fn, f"chain-{i}", f"Chain Agent {i}",
                        domains=["chain"])
 
         # Create root with max_depth=3
@@ -1445,12 +1445,12 @@ class TestFiftyLevelDeepChain:
         N = self.DEPTH
 
         # Publisher with massive budget
-        await _reg(mcp, fn, "pub-50", "Deep Publisher", atype="planner",
+        await _reg(mcp, fn, "pub-50", "Deep Publisher",
                    balance=1_000_000, domains=["deep"])
 
         # 50 chain agents
         for i in range(N):
-            await _reg(mcp, fn, f"d{i}", f"Depth-{i} Agent", atype="planner",
+            await _reg(mcp, fn, f"d{i}", f"Depth-{i} Agent",
                        domains=["deep"])
 
         # Root task with budget 100_000, max_depth=60 (room for 50)

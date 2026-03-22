@@ -1,4 +1,4 @@
-"""AgentCard, AgentType, and Skill data models."""
+"""AgentCard and Skill data models."""
 
 from __future__ import annotations
 
@@ -12,11 +12,6 @@ class AgentTier(str, Enum):
     EXPERT = "expert"
     EXPERT_GENERAL = "expert_general"
     TOOL = "tool"
-
-
-class AgentType(str, Enum):
-    EXECUTOR = "executor"
-    PLANNER = "planner"
 
 
 class Skill(BaseModel):
@@ -33,7 +28,6 @@ class AgentCapabilities(BaseModel):
 class AgentCard(BaseModel):
     agent_id: str
     name: str
-    agent_type: AgentType
     domains: list[str] = Field(min_length=1)
     skills: list[Skill] = Field(min_length=1)
     capabilities: AgentCapabilities | None = None
