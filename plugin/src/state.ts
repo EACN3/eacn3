@@ -129,6 +129,7 @@ export function drainEvents(): PushEvent[] {
   const s = getState();
   const events = s.pending_events;
   s.pending_events = [];
+  save();
   return events;
 }
 
