@@ -835,3 +835,578 @@ class TestAgentUpdatesDomains:
         rust_task = await _task(mcp, "pub-upd", "Rust CLI tool", domains=["rust"], budget=150)
         rust_bid = await _bid(mcp, rust_task, "learner", conf=0.8, price=120)
         assert rust_bid["status"] in ("accepted", "executing")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# ▓▓▓  ROUND 4 — Multi-level decomposition & delegation behavior  ▓▓▓
+# ═════════════════════════════════════════════════════════════════════
+#
+# Core question: Does the system support and incentivize
+# "give specialist work to specialists"?
+#
+# - Story 13: 3-level deep decomposition with budget cascade
+# - Story 14: Planner correctly delegates unfamiliar domain
+# - Story 15: Adjudication — third party evaluates result quality
+# - Story 16: Compare: generalist-does-all vs specialist-delegation
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Story 13: 3-level decomposition — Client → Planner → Specialist → Tool
+#
+# "Build a data analytics dashboard" decomposes across three tiers.
+# Budget flows down level by level, results bubble up.
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestThreeLevelDecomposition:
+    @pytest.mark.asyncio
+    async def test_full_3_level_budget_and_result_cascade(self, mcp, http, funded_network):
+        """
+        Story:
+        Client (business user) → publishes "analytics dashboard" with 2000 budget
+        Planner A → bids, decomposes into:
+          - Subtask: "Backend data API" (expert, budget=600)
+            Backend Expert → bids, further decomposes:
+              - Sub-subtask: "Generate SQL queries" (tool, budget=200)
+                SQL Tool → bids, executes, submits result
+            Backend Expert collects SQL result, incorporates, submits
+          Planner collects backend result, submits final to Client
+
+        This tests:
+        - 3 levels of depth (root → subtask → sub-subtask)
+        - Budget cascading: 2000 → 600 → 200 (remaining tracked at each level)
+        - Results bubbling up through the chain
+        - Tool-tier agent participates via level="tool" subtask
+        """
+        fn = funded_network
+
+        # Register all participants
+        await _reg(mcp, fn, "client-13", "Business Client", atype="planner",
+                   balance=20000, domains=["analytics"])
+        await _reg(mcp, fn, "planner-13", "Project Planner", atype="planner",
+                   domains=["analytics", "backend", "frontend"])
+        await _reg(mcp, fn, "backend-13", "Backend Expert", tier="expert",
+                   domains=["backend", "sql"])
+        await _reg(mcp, fn, "sql-tool-13", "SQL Generator", tier="tool",
+                   domains=["sql"])
+
+        # Level 0: Client publishes root task
+        root_id = await _task(mcp, "client-13", "Build analytics dashboard",
+                              budget=2000, domains=["analytics"])
+
+        # Planner bids on root
+        bid0 = await _bid(mcp, root_id, "planner-13", conf=0.95, price=1800)
+        assert bid0["status"] in ("accepted", "executing")
+
+        # Verify root remaining budget = 2000
+        root_resp = await http.get(f"/api/tasks/{root_id}")
+        assert root_resp.json()["remaining_budget"] == 2000
+
+        # Level 1: Planner creates "Backend data API" subtask
+        sub1 = await mcp.call_tool_parsed("eacn3_create_subtask", {
+            "parent_task_id": root_id,
+            "description": "Build backend data API with caching",
+            "domains": ["backend", "sql"],
+            "budget": 600,
+            "initiator_id": "planner-13",
+            "level": "expert",
+        })
+        sub1_id = sub1.get("subtask_id") or sub1.get("id")
+        assert sub1_id is not None
+
+        # Verify root remaining dropped
+        root_resp2 = await http.get(f"/api/tasks/{root_id}")
+        assert root_resp2.json()["remaining_budget"] == 1400  # 2000 - 600
+
+        # Backend expert bids on level-1 subtask
+        bid1 = await _bid(mcp, sub1_id, "backend-13", conf=0.9, price=500)
+        assert bid1["status"] in ("accepted", "executing")
+
+        # Level 2: Backend expert further decomposes to tool subtask
+        sub2 = await mcp.call_tool_parsed("eacn3_create_subtask", {
+            "parent_task_id": sub1_id,
+            "description": "Generate optimized SQL queries for dashboard metrics",
+            "domains": ["sql"],
+            "budget": 200,
+            "initiator_id": "backend-13",
+            "level": "tool",
+        })
+        sub2_id = sub2.get("subtask_id") or sub2.get("id")
+        assert sub2_id is not None
+
+        # Verify level-1 remaining dropped
+        sub1_resp = await http.get(f"/api/tasks/{sub1_id}")
+        assert sub1_resp.json()["remaining_budget"] == 400  # 600 - 200
+
+        # Verify depth
+        sub2_resp = await http.get(f"/api/tasks/{sub2_id}")
+        assert sub2_resp.json()["depth"] == 2  # root=0, sub1=1, sub2=2
+        assert sub2_resp.json()["level"] == "tool"
+
+        # SQL tool bids on level-2 tool subtask
+        bid2 = await _bid(mcp, sub2_id, "sql-tool-13", conf=0.99, price=150)
+        assert bid2["status"] in ("accepted", "executing")
+
+        # === Results bubble up ===
+
+        # Level 2: SQL tool submits
+        await _submit(mcp, sub2_id, "sql-tool-13", {
+            "queries": [
+                "SELECT date, SUM(revenue) FROM sales GROUP BY date",
+                "SELECT product, COUNT(*) FROM orders GROUP BY product",
+            ],
+            "optimization_notes": "Added indexes on date and product columns",
+        })
+
+        # Backend expert collects SQL result
+        sub2_results = await _collect(mcp, sub2_id, "backend-13")
+        assert len(sub2_results) >= 1
+        assert "queries" in sub2_results[0]["content"]
+        await _select(mcp, sub2_id, "backend-13", "sql-tool-13")
+
+        # Level 1: Backend expert submits using SQL tool's work
+        await _submit(mcp, sub1_id, "backend-13", {
+            "api_endpoints": ["/api/revenue", "/api/products"],
+            "sql_queries": sub2_results[0]["content"]["queries"],
+            "caching_strategy": "Redis TTL 5min",
+        })
+
+        # Planner collects backend result
+        sub1_results = await _collect(mcp, sub1_id, "planner-13")
+        assert len(sub1_results) >= 1
+        assert "api_endpoints" in sub1_results[0]["content"]
+        await _select(mcp, sub1_id, "planner-13", "backend-13")
+
+        # Level 0: Planner submits final composed result to client
+        await _submit(mcp, root_id, "planner-13", {
+            "dashboard_url": "https://dashboard.example.com",
+            "backend_api": sub1_results[0]["content"]["api_endpoints"],
+            "features": ["revenue chart", "product breakdown", "date filter"],
+            "architecture": "React frontend + FastAPI backend + Redis cache",
+        })
+
+        root_results = await _collect(mcp, root_id, "client-13")
+        assert len(root_results) >= 1
+        final = root_results[0]["content"]
+        assert "backend_api" in final
+        assert len(final["backend_api"]) == 2
+        await _select(mcp, root_id, "client-13", "planner-13")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Story 14: Planner delegates what they don't know
+#
+# A coding planner gets a task that requires coding + security audit.
+# Instead of pretending they know security, they delegate the security
+# part to a specialist. This is the CORRECT behavior.
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestDelegateUnfamiliarDomain:
+    @pytest.mark.asyncio
+    async def test_planner_delegates_security_to_specialist(self, mcp, http, funded_network):
+        """
+        Story:
+        Task: "Build payment API with PCI compliance audit"
+        Planner knows coding but NOT security.
+        Planner does the coding part themselves, then creates a subtask
+        for the security audit. Security expert handles the audit.
+        Planner composes both into final result.
+
+        Key insight: The system ENABLES this pattern through:
+        1. Subtask creation with specific domains
+        2. Domain-based broadcast reaches the right specialists
+        3. Budget carving lets planner allocate appropriate budget
+        """
+        fn = funded_network
+
+        await _reg(mcp, fn, "biz-14", "Business Owner", atype="planner",
+                   balance=15000, domains=["payments"])
+        await _reg(mcp, fn, "coder-14", "Coding Planner", atype="planner",
+                   domains=["coding", "payments"])
+        await _reg(mcp, fn, "sec-14", "Security Auditor", tier="expert",
+                   domains=["security", "pci"], rep=0.95)
+
+        # Business publishes task with two domain requirements
+        task_id = await _task(mcp, "biz-14",
+                              "Build payment API with PCI compliance audit",
+                              budget=3000, domains=["coding", "security"])
+
+        # Coding planner bids — they know coding but not security
+        bid = await _bid(mcp, task_id, "coder-14", conf=0.7, price=2500)
+        assert bid["status"] in ("accepted", "executing")
+
+        # Planner creates security subtask — DELEGATING what they don't know
+        sec_sub = await mcp.call_tool_parsed("eacn3_create_subtask", {
+            "parent_task_id": task_id,
+            "description": "PCI DSS compliance audit for payment API",
+            "domains": ["security", "pci"],
+            "budget": 1000,
+            "initiator_id": "coder-14",
+            "level": "expert",  # Security needs expert level
+        })
+        sec_sub_id = sec_sub.get("subtask_id") or sec_sub.get("id")
+
+        # Security expert bids on what they're good at
+        sec_bid = await _bid(mcp, sec_sub_id, "sec-14", conf=0.98, price=800)
+        assert sec_bid["status"] in ("accepted", "executing")
+
+        # Security expert delivers their specialized work
+        await _submit(mcp, sec_sub_id, "sec-14", {
+            "pci_level": "Level 1",
+            "findings": [
+                {"severity": "critical", "issue": "Card data stored unencrypted",
+                 "fix": "Use AES-256 encryption at rest"},
+                {"severity": "high", "issue": "No rate limiting on auth endpoint",
+                 "fix": "Add 10 req/min rate limit"},
+            ],
+            "compliant": False,
+            "remediation_steps": 5,
+        })
+
+        # Planner collects security audit
+        sec_results = await _collect(mcp, sec_sub_id, "coder-14")
+        assert sec_results[0]["content"]["pci_level"] == "Level 1"
+        assert len(sec_results[0]["content"]["findings"]) == 2
+        await _select(mcp, sec_sub_id, "coder-14", "sec-14")
+
+        # Planner combines their coding work + security audit into final result
+        await _submit(mcp, task_id, "coder-14", {
+            "api_implementation": {
+                "endpoints": ["/pay", "/refund", "/status"],
+                "framework": "FastAPI",
+                "encryption": "AES-256",  # Applied security recommendation
+            },
+            "security_audit": sec_results[0]["content"],
+            "pci_compliant_after_fixes": True,
+        })
+
+        # Business owner gets a complete result
+        results = await _collect(mcp, task_id, "biz-14")
+        final = results[0]["content"]
+        assert "api_implementation" in final
+        assert "security_audit" in final
+        assert final["security_audit"]["pci_level"] == "Level 1"
+        await _select(mcp, task_id, "biz-14", "coder-14")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Story 15: Adjudication — third party evaluates result quality
+#
+# When an agent submits a result, the system auto-creates an
+# adjudication task. Another agent evaluates the result and scores it.
+# This is how the network ensures quality.
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestAdjudicationFlow:
+    @pytest.mark.asyncio
+    async def test_result_triggers_adjudication_and_score_collected(self, mcp, http, funded_network):
+        """
+        Story:
+        Publisher posts task. Worker submits result.
+        System auto-creates adjudication task.
+        Reviewer bids on adjudication, evaluates, submits verdict.
+        Publisher can see adjudication scores alongside results.
+        """
+        fn = funded_network
+
+        await _reg(mcp, fn, "pub-15", "Publisher", atype="planner",
+                   balance=10000, domains=["coding"])
+        await _reg(mcp, fn, "worker-15", "Worker", tier="expert",
+                   domains=["coding"])
+        await _reg(mcp, fn, "reviewer-15", "Code Reviewer", tier="expert",
+                   domains=["coding"], rep=0.95)
+
+        task_id = await _task(mcp, "pub-15", "Implement sorting algorithm",
+                              budget=500, domains=["coding"])
+
+        bid = await _bid(mcp, task_id, "worker-15", conf=0.9, price=400)
+        assert bid["status"] in ("accepted", "executing")
+
+        # Worker submits result → this triggers adjudication task creation
+        await _submit(mcp, task_id, "worker-15", {
+            "algorithm": "quicksort",
+            "complexity": "O(n log n) average",
+            "code": "def quicksort(arr): ...",
+        })
+
+        # Find the auto-created adjudication task
+        # Adjudication tasks have IDs like "adj-{task_id}-{agent_id}-..."
+        adj_tasks = []
+        for tid, task in fn.task_manager._tasks.items():
+            if tid.startswith("adj-") and task.parent_id == task_id:
+                adj_tasks.append(task)
+
+        assert len(adj_tasks) >= 1, "Adjudication task should be auto-created"
+        adj_task = adj_tasks[0]
+        adj_id = adj_task.id
+
+        # Verify adjudication task properties
+        assert adj_task.type.value == "adjudication"
+        assert adj_task.budget == 0.0  # No monetary compensation
+        assert adj_task.initiator_id == "system"
+
+        # Reviewer bids on adjudication task
+        adj_bid = await _bid(mcp, adj_id, "reviewer-15", conf=0.99, price=0)
+        assert adj_bid["status"] in ("accepted", "executing")
+
+        # Reviewer evaluates and submits verdict
+        await _submit(mcp, adj_id, "reviewer-15", {
+            "verdict": "Good implementation with correct complexity analysis",
+            "score": 0.85,
+            "feedback": "Consider adding in-place variant for memory efficiency",
+        })
+
+        # Verify adjudication score was collected on the original result
+        orig_task = fn.task_manager.get(task_id)
+        worker_result = next(r for r in orig_task.results if r.agent_id == "worker-15")
+        assert len(worker_result.adjudications) >= 1
+        adj = worker_result.adjudications[0]
+        assert adj.adjudicator_id == "reviewer-15"
+        assert adj.score == 0.85
+
+        # Publisher sees results with adjudication data
+        results = await _collect(mcp, task_id, "pub-15")
+        assert len(results) >= 1
+        await _select(mcp, task_id, "pub-15", "worker-15")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Story 16: Generalist-does-all vs Specialist-delegation
+#
+# Same task, two approaches. The system supports both, but the
+# delegation approach produces structured, verifiable results.
+# The adjudication mechanism lets the network judge quality.
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestGeneralistVsSpecialistDelegation:
+    @pytest.mark.asyncio
+    async def test_delegation_produces_richer_results_than_solo(self, mcp, http, funded_network):
+        """
+        Story:
+        Two identical tasks: "Build e-commerce product page"
+
+        Path A (Generalist): One agent does everything.
+        Submits a flat result with no subtask decomposition.
+
+        Path B (Delegation): Planner decomposes into:
+        - UI design subtask → design specialist
+        - Product API subtask → backend specialist
+        Planner composes results into structured delivery.
+
+        Both complete successfully. But Path B:
+        - Has richer, more structured output
+        - Each subtask was done by a domain expert
+        - The parent has verifiable sub-results
+
+        This demonstrates the SYSTEM VALUE: it doesn't force delegation,
+        but it ENABLES it, and the delegation path produces better results
+        because specialists produce specialist-quality work.
+        """
+        fn = funded_network
+
+        # Participants
+        await _reg(mcp, fn, "biz-16a", "Business A", atype="planner",
+                   balance=10000, domains=["ecommerce"])
+        await _reg(mcp, fn, "biz-16b", "Business B", atype="planner",
+                   balance=10000, domains=["ecommerce"])
+        await _reg(mcp, fn, "generalist", "Jack of All Trades",
+                   domains=["ecommerce", "design", "backend"])
+        await _reg(mcp, fn, "planner-16", "Project Manager", atype="planner",
+                   domains=["ecommerce", "design", "backend"])
+        await _reg(mcp, fn, "designer", "UI Specialist", tier="expert",
+                   domains=["design"], rep=0.95)
+        await _reg(mcp, fn, "api-dev", "API Specialist", tier="expert",
+                   domains=["backend"], rep=0.95)
+
+        # ──── Path A: Generalist does everything ────
+
+        task_a = await _task(mcp, "biz-16a", "Build product page (generalist)",
+                             budget=1000, domains=["ecommerce"])
+
+        bid_a = await _bid(mcp, task_a, "generalist", conf=0.7, price=800)
+        assert bid_a["status"] in ("accepted", "executing")
+
+        # Generalist submits a flat, shallow result
+        await _submit(mcp, task_a, "generalist", {
+            "page_html": "<div class='product'>...</div>",
+            "api_endpoint": "/api/product/{id}",
+            "notes": "Basic implementation, could use more polish",
+        })
+
+        results_a = await _collect(mcp, task_a, "biz-16a")
+        await _select(mcp, task_a, "biz-16a", "generalist")
+
+        # ──── Path B: Planner delegates to specialists ────
+
+        task_b = await _task(mcp, "biz-16b", "Build product page (delegated)",
+                             budget=1000, domains=["ecommerce"])
+
+        bid_b = await _bid(mcp, task_b, "planner-16", conf=0.9, price=900)
+        assert bid_b["status"] in ("accepted", "executing")
+
+        # Planner creates design subtask
+        design_sub = await mcp.call_tool_parsed("eacn3_create_subtask", {
+            "parent_task_id": task_b,
+            "description": "Design product page UI with responsive layout",
+            "domains": ["design"],
+            "budget": 350,
+            "initiator_id": "planner-16",
+            "level": "expert",
+        })
+        design_id = design_sub.get("subtask_id") or design_sub.get("id")
+
+        # Planner creates API subtask
+        api_sub = await mcp.call_tool_parsed("eacn3_create_subtask", {
+            "parent_task_id": task_b,
+            "description": "Build product REST API with caching",
+            "domains": ["backend"],
+            "budget": 350,
+            "initiator_id": "planner-16",
+            "level": "expert",
+        })
+        api_id = api_sub.get("subtask_id") or api_sub.get("id")
+
+        # Verify budget split: 1000 - 350 - 350 = 300 remaining
+        task_b_resp = await http.get(f"/api/tasks/{task_b}")
+        assert task_b_resp.json()["remaining_budget"] == 300
+
+        # Design specialist does what they're best at
+        bid_design = await _bid(mcp, design_id, "designer", conf=0.98, price=300)
+        assert bid_design["status"] in ("accepted", "executing")
+
+        await _submit(mcp, design_id, "designer", {
+            "figma_url": "https://figma.com/design/xyz",
+            "components": ["ProductCard", "ImageGallery", "PriceDisplay", "ReviewStars"],
+            "responsive_breakpoints": ["mobile", "tablet", "desktop"],
+            "accessibility_score": "AA",
+            "html": "<section class='product-page' role='main'>...</section>",
+        })
+
+        design_results = await _collect(mcp, design_id, "planner-16")
+        await _select(mcp, design_id, "planner-16", "designer")
+
+        # API specialist does what they're best at
+        bid_api = await _bid(mcp, api_id, "api-dev", conf=0.97, price=300)
+        assert bid_api["status"] in ("accepted", "executing")
+
+        await _submit(mcp, api_id, "api-dev", {
+            "endpoints": {
+                "GET /api/products/{id}": {"response_time": "50ms", "cached": True},
+                "GET /api/products/{id}/reviews": {"paginated": True},
+                "POST /api/products/{id}/cart": {"auth_required": True},
+            },
+            "cache_strategy": "Redis with 5min TTL",
+            "rate_limit": "100 req/min per user",
+            "documentation": "OpenAPI 3.0 spec included",
+        })
+
+        api_results = await _collect(mcp, api_id, "planner-16")
+        await _select(mcp, api_id, "planner-16", "api-dev")
+
+        # Planner composes everything into structured final result
+        await _submit(mcp, task_b, "planner-16", {
+            "architecture": "Micro-frontend + REST API",
+            "ui_design": design_results[0]["content"],
+            "backend_api": api_results[0]["content"],
+            "integration_notes": "Components consume API via React hooks",
+            "specialists_involved": ["designer", "api-dev"],
+        })
+
+        results_b = await _collect(mcp, task_b, "biz-16b")
+        await _select(mcp, task_b, "biz-16b", "planner-16")
+
+        # ──── Compare ────
+
+        result_a = results_a[0]["content"]
+        result_b = results_b[0]["content"]
+
+        # Path A: flat, 3 keys
+        assert len(result_a) <= 4
+
+        # Path B: rich, nested, specialist-quality sub-results
+        assert "ui_design" in result_b
+        assert "backend_api" in result_b
+        assert len(result_b["ui_design"]["components"]) >= 4
+        assert len(result_b["backend_api"]["endpoints"]) >= 3
+        assert result_b["ui_design"]["accessibility_score"] == "AA"
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Story 17: Max depth guard — 4th level decomposition blocked
+#
+# The system allows deep chains but enforces max_depth to prevent
+# infinite recursion of delegation.
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestMaxDepthGuard:
+    @pytest.mark.asyncio
+    async def test_depth_guard_prevents_infinite_delegation(self, mcp, http, funded_network):
+        """
+        Story: Create chain up to max_depth=3.
+        Level 0 → Level 1 → Level 2 → Level 3 (OK)
+        Level 3 → Level 4 (BLOCKED by depth guard)
+        """
+        fn = funded_network
+
+        await _reg(mcp, fn, "root-17", "Root", atype="planner", balance=50000)
+        for i in range(5):
+            await _reg(mcp, fn, f"chain-{i}", f"Chain Agent {i}", atype="planner",
+                       domains=["chain"])
+
+        # Create root with max_depth=3
+        root_id = await _task(mcp, "root-17", "Deep chain task",
+                              budget=10000, domains=["chain"])
+
+        # Override max_depth to 3 for this test
+        root_task = fn.task_manager.get(root_id)
+        root_task.max_depth = 3
+
+        # Level 0 → bid
+        await _bid(mcp, root_id, "chain-0", conf=0.9, price=100)
+
+        # Level 1
+        sub1 = await mcp.call_tool_parsed("eacn3_create_subtask", {
+            "parent_task_id": root_id,
+            "description": "Level 1 work",
+            "domains": ["chain"], "budget": 3000,
+            "initiator_id": "chain-0",
+        })
+        sub1_id = sub1.get("subtask_id") or sub1.get("id")
+        await _bid(mcp, sub1_id, "chain-1", conf=0.9, price=100)
+
+        # Level 2
+        sub2 = await mcp.call_tool_parsed("eacn3_create_subtask", {
+            "parent_task_id": sub1_id,
+            "description": "Level 2 work",
+            "domains": ["chain"], "budget": 1000,
+            "initiator_id": "chain-1",
+        })
+        sub2_id = sub2.get("subtask_id") or sub2.get("id")
+        await _bid(mcp, sub2_id, "chain-2", conf=0.9, price=100)
+
+        # Level 3
+        sub3 = await mcp.call_tool_parsed("eacn3_create_subtask", {
+            "parent_task_id": sub2_id,
+            "description": "Level 3 work",
+            "domains": ["chain"], "budget": 300,
+            "initiator_id": "chain-2",
+        })
+        sub3_id = sub3.get("subtask_id") or sub3.get("id")
+        assert sub3_id is not None  # depth=3 OK
+
+        await _bid(mcp, sub3_id, "chain-3", conf=0.9, price=100)
+
+        # Level 4 → BLOCKED
+        sub4 = await mcp.call_tool_parsed("eacn3_create_subtask", {
+            "parent_task_id": sub3_id,
+            "description": "Level 4 work — should fail",
+            "domains": ["chain"], "budget": 100,
+            "initiator_id": "chain-3",
+        })
+        # Should be an error
+        assert is_error(sub4) or "error" in str(sub4).lower() or "exceeded" in str(sub4).lower(), \
+            f"Level 4 should be blocked by max_depth=3, got: {sub4}"
