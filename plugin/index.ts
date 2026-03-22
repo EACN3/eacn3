@@ -609,20 +609,7 @@ export default function (api: any) {
     execute: withLogging("eacn3_submit_bid", async (_id: string, params: any) => {
       const agentId = resolveAgentId(params.agent_id);
 
-      // Pre-flight: tier/level compatibility check
-      const agent = state.getAgent(agentId);
-      if (agent) {
-        try {
-          const taskInfo = await net.getTask(params.task_id);
-          const taskLevel = taskInfo.level ?? "general";
-          const agentTier = agent.tier ?? "general";
-          const isInvited = taskInfo.invited_agent_ids?.includes(agentId) ?? false;
-          if (!isInvited && !isTierEligible(agentTier, taskLevel)) {
-            return err(`Tier mismatch: agent tier "${agentTier}" cannot bid on task level "${taskLevel}".`);
-          }
-        } catch { /* let network handle it */ }
-      }
-
+      // Tier/level filtering and invite bypass are handled server-side in matcher.check_bid().
       const res = await net.submitBid(params.task_id, agentId, params.confidence, params.price);
       if (res.status && res.status !== "rejected") {
         state.updateTask({ task_id: params.task_id, role: "executor", status: "bidding", domains: [], description_summary: "", created_at: new Date().toISOString() });

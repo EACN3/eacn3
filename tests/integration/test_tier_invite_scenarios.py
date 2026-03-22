@@ -147,7 +147,7 @@ class TestToolTierRestriction:
             "initiator_id": "alice3",
         })
         assert len(results["results"]) >= 1
-        assert results["results"][0]["submitter_id"] == "toolbot3"
+        assert results["results"][0]["agent_id"] == "toolbot3"
 
         # Alice selects the result
         await mcp.call_tool_parsed("eacn3_select_result", {
@@ -161,7 +161,7 @@ class TestToolTierRestriction:
         final = resp.json()
         selected = [r for r in final["results"] if r.get("selected")]
         assert len(selected) == 1
-        assert selected[0]["submitter_id"] == "toolbot3"
+        assert selected[0]["agent_id"] == "toolbot3"
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -485,7 +485,7 @@ class TestMultiAgentMarketplace:
             "initiator_id": "coordinator",
         })
         assert len(results["results"]) >= 1
-        result_agents = [r["submitter_id"] for r in results["results"]]
+        result_agents = [r["agent_id"] for r in results["results"]]
         assert "py-expert" in result_agents
 
         # Coordinator selects PythonExpert's result
@@ -500,7 +500,7 @@ class TestMultiAgentMarketplace:
         final = resp.json()
         selected = [r for r in final["results"] if r.get("selected")]
         assert len(selected) == 1
-        assert selected[0]["submitter_id"] == "py-expert"
+        assert selected[0]["agent_id"] == "py-expert"
 
     @pytest.mark.asyncio
     async def test_marketplace_general_task_open_to_all_except_tool(self, mcp, http, funded_network):

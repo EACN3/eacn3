@@ -769,28 +769,8 @@ server.tool(
   async (params) => {
     const agentId = resolveAgentId(params.agent_id);
 
-    // Pre-flight: tier/level compatibility check (client-side, before hitting network)
-    const agent = state.getAgent(agentId);
-    if (agent) {
-      try {
-        const taskInfo = await net.getTask(params.task_id);
-        const taskLevel = taskInfo.level ?? "general";
-        const agentTier = agent.tier ?? "general";
-        const isInvited = taskInfo.invited_agent_ids?.includes(agentId) ?? false;
-
-        if (!isInvited && !isTierEligible(agentTier, taskLevel)) {
-          return err(
-            `Tier mismatch: your agent tier "${agentTier}" cannot bid on task level "${taskLevel}". ` +
-            (agentTier === "tool"
-              ? "Tool-tier agents can only bid on tool-level tasks."
-              : `Your tier requires tasks at level "${agentTier}" or lower.`),
-          );
-        }
-      } catch {
-        // Task fetch failed — let the network-side validation handle it
-      }
-    }
-
+    // Tier/level filtering and invite bypass are handled server-side in matcher.check_bid().
+    // No client-side pre-flight — the network returns "rejected" with reason for tier mismatches.
     const res = await net.submitBid(params.task_id, agentId, params.confidence, params.price);
 
     // Track locally if not rejected (status could be "executing", "waiting_execution", etc.)
