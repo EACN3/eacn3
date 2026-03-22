@@ -191,7 +191,7 @@ server.tool(
 // #2 eacn3_disconnect
 server.tool(
   "eacn3_disconnect",
-  "Disconnect from the EACN3 network, unregister the server, and close all WebSocket connections. Requires: eacn3_connect first. Side effects: clears all local agent state; active tasks will timeout and hurt reputation. Returns {disconnected: true}. Only call at end of session.",
+  "Disconnect from the EACN3 network, unregister the server, and close all WebSocket connections. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
   {},
   async () => {
     stopHeartbeat();
@@ -201,7 +201,8 @@ server.tool(
 
     const s = state.getState();
     s.server_card = null;
-    s.agents = {};
+    // Keep agents — they are persistent identities, not ephemeral sessions.
+    // On next eacn3_connect, they will be automatically reconnected.
     state.save();
 
     return ok({ disconnected: true });
