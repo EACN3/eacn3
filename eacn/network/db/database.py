@@ -263,6 +263,16 @@ class Database:
         await self.db.commit()
 
 
+    async def list_all_accounts(self) -> list[dict[str, Any]]:
+        async with self.db.execute(
+            "SELECT agent_id, available, frozen FROM accounts"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {"agent_id": r[0], "available": r[1], "frozen": r[2]}
+                for r in rows
+            ]
+
     async def get_account(self, agent_id: str) -> dict[str, float] | None:
         async with self.db.execute(
             "SELECT available, frozen FROM accounts WHERE agent_id = ?",
@@ -283,6 +293,13 @@ class Database:
         )
         await self.db.commit()
 
+
+    async def list_all_escrows(self) -> list[tuple[str, str, float]]:
+        async with self.db.execute(
+            "SELECT task_id, initiator_id, amount FROM escrow"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [(r[0], r[1], r[2]) for r in rows]
 
     async def save_escrow(
         self, task_id: str, initiator_id: str, amount: float
@@ -308,6 +325,20 @@ class Database:
         await self.db.execute("DELETE FROM escrow WHERE task_id = ?", (task_id,))
         await self.db.commit()
 
+
+    async def list_all_reputations(self) -> list[tuple[str, float, dict]]:
+        async with self.db.execute(
+            "SELECT agent_id, score, cap_counts FROM reputation"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [(r[0], r[1], json.loads(r[2])) for r in rows]
+
+    async def list_all_server_reputations(self) -> list[tuple[str, float, int]]:
+        async with self.db.execute(
+            "SELECT server_id, score, event_count FROM server_reputation"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [(r[0], r[1], r[2]) for r in rows]
 
     async def get_reputation(self, agent_id: str) -> tuple[float, dict] | None:
         async with self.db.execute(

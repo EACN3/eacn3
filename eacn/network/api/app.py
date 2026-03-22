@@ -70,6 +70,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────────
+    await network.cluster.stop()
     await db.close()
 
 

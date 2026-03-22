@@ -378,7 +378,7 @@ async def create_subtask(task_id: str, req: CreateSubtaskRequest):
 
 @router.post("/reputation/events", response_model=ReputationResponse)
 async def receive_reputation_event(req: ReputationEventRequest):
-    score = _net().receive_reputation_event(
+    score = await _net().receive_reputation_event(
         req.agent_id, req.event_type, req.server_id,
     )
     return ReputationResponse(agent_id=req.agent_id, score=score)

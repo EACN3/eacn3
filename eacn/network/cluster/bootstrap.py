@@ -31,6 +31,11 @@ class ClusterBootstrap:
         self._members = members
         self._seed_endpoints: list[str] = list(config.seed_nodes)
         self._is_seed = local_node.endpoint in self._seed_endpoints
+        self._http: httpx.AsyncClient | None = None
+
+    def set_http_client(self, client: httpx.AsyncClient) -> None:
+        """Inject the shared HTTP client for connection reuse."""
+        self._http = client
 
     @property
     def is_seed(self) -> bool:
@@ -59,15 +64,22 @@ class ClusterBootstrap:
 
     async def _contact_seed(self, endpoint: str) -> list[NodeCard]:
         """POST /peer/join to a seed node."""
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
+        if self._http:
+            resp = await self._http.post(
                 f"{endpoint}/peer/join",
                 json={"node_card": self._local.to_dict()},
+                timeout=10.0,
             )
-            resp.raise_for_status()
-            data = resp.json()
-            nodes = [NodeCard.from_dict(n) for n in data.get("nodes", [])]
-            return nodes
+        else:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    f"{endpoint}/peer/join",
+                    json={"node_card": self._local.to_dict()},
+                )
+        resp.raise_for_status()
+        data = resp.json()
+        nodes = [NodeCard.from_dict(n) for n in data.get("nodes", [])]
+        return nodes
 
     async def leave_network(self, peers: list[NodeCard]) -> None:
         """Notify all known peers that this node is leaving."""
@@ -75,11 +87,18 @@ class ClusterBootstrap:
             if peer.node_id == self._local.node_id:
                 continue
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    await client.post(
+                if self._http:
+                    await self._http.post(
                         f"{peer.endpoint}/peer/leave",
                         json={"node_id": self._local.node_id},
+                        timeout=5.0,
                     )
+                else:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        await client.post(
+                            f"{peer.endpoint}/peer/leave",
+                            json={"node_id": self._local.node_id},
+                        )
             except Exception:
                 _log.debug("Failed to notify %s of leave", peer.node_id)
 
