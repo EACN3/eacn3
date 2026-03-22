@@ -449,10 +449,10 @@ class TestMultiAgentMarketplace:
             f"Tool tier should be rejected on expert task: {bid_data}"
         )
 
-        # GeneralHelper bids -> REJECTED (expert_general < expert in hierarchy)
+        # GeneralHelper bids -> ACCEPTED (non-tool tiers can bid on any level)
         bid_gen = await _bid(mcp, task_id, "gen-helper", confidence=0.85, price=350.0)
-        assert bid_gen["status"] == "rejected", (
-            f"expert_general tier should be rejected on expert task: {bid_gen}"
+        assert bid_gen["status"] in ("accepted", "executing", "waiting"), (
+            f"expert_general tier should be accepted on expert task (only tool is restricted): {bid_gen}"
         )
 
         # Verify all bids and their statuses via HTTP
@@ -461,7 +461,7 @@ class TestMultiAgentMarketplace:
         bids_by_agent = {b["agent_id"]: b["status"] for b in task_data["bids"]}
         assert bids_by_agent["py-expert"] in ("waiting_execution", "executing")
         assert bids_by_agent["data-tool"] == "rejected"
-        assert bids_by_agent["gen-helper"] == "rejected"
+        assert bids_by_agent["gen-helper"] in ("waiting_execution", "executing")
 
         # PythonExpert submits result
         await mcp.call_tool_parsed("eacn3_submit_result", {
@@ -504,7 +504,7 @@ class TestMultiAgentMarketplace:
 
     @pytest.mark.asyncio
     async def test_marketplace_general_task_open_to_all_except_tool(self, mcp, http, funded_network):
-        """A general-level task accepts all non-tool tiers, rejects tool tier."""
+        """A general-level task accepts all non-tool tiers, rejects ONLY tool tier."""
         await _register_agent(
             mcp, funded_network, "coord-g", "Coordinator",
             tier="general", agent_type="planner", domains=["coding"],
@@ -534,16 +534,16 @@ class TestMultiAgentMarketplace:
         bid1 = await _bid(mcp, task_id, "gen-exec")
         assert bid1["status"] in ("accepted", "executing", "waiting")
 
-        # Expert -> rejected (expert index=1 > general index=0, so NOT eligible)
+        # Expert -> accepted (non-tool tiers can bid on any level)
         bid2 = await _bid(mcp, task_id, "exp-exec")
-        assert bid2["status"] == "rejected", (
-            f"Expert tier should be rejected on general task (tier index 1 > level index 0): {bid2}"
+        assert bid2["status"] in ("accepted", "executing", "waiting"), (
+            f"Expert tier should be accepted on general task: {bid2}"
         )
 
-        # expert_general -> rejected (index 2 > 0)
+        # expert_general -> accepted (non-tool tiers can bid on any level)
         bid3 = await _bid(mcp, task_id, "expg-exec")
-        assert bid3["status"] == "rejected", (
-            f"expert_general tier should be rejected on general task: {bid3}"
+        assert bid3["status"] in ("accepted", "executing", "waiting"), (
+            f"expert_general tier should be accepted on general task: {bid3}"
         )
 
         # Tool -> rejected (tool only bids on tool)

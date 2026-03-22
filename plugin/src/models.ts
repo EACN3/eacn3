@@ -555,20 +555,14 @@ export function createDefaultState(networkEndpoint?: string): EacnState {
 /**
  * Check whether an agent tier is eligible to bid on a task level.
  *
- * Rules:
- * 1. Tool-tier agents can ONLY bid on tool-level tasks.
- * 2. For all other tiers: agent can bid if its hierarchy index <= task level index.
- *    (general=0 can bid on anything; expert=1 can bid on expert/expert_general/tool; etc.)
+ * Rule: tool-tier agents can ONLY bid on tool-level tasks.
+ * All other tiers (general, expert, expert_general) can bid on ANY task level.
+ * The tier is a self-declaration of specialization breadth, not a hard gate —
+ * an expert should still be able to take general tasks.
  */
 export function isTierEligible(agentTier: AgentTier, taskLevel: TaskLevel): boolean {
-  const tierIdx = AGENT_TIER_HIERARCHY.indexOf(agentTier);
-  const levelIdx = AGENT_TIER_HIERARCHY.indexOf(taskLevel);
-
-  // Tool-tier agents: restricted to tool-level tasks only
   if (agentTier === "tool") return taskLevel === "tool";
-
-  // Higher-tier agents can bid on same or lower level tasks
-  return tierIdx <= levelIdx;
+  return true;
 }
 
 /** Response from eacn3_invite_agent. Confirms the agent was added to the invite list. */

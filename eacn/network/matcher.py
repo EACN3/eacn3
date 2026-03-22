@@ -85,12 +85,16 @@ class GlobalMatcher:
     TIER_HIERARCHY = ["general", "expert", "expert_general", "tool"]
 
     def is_tier_eligible(self, agent_tier: str, task_level: str) -> bool:
-        """Check whether an agent tier is eligible to bid on a task level."""
+        """Check whether an agent tier is eligible to bid on a task level.
+
+        Rule: tool-tier agents can ONLY bid on tool-level tasks.
+        All other tiers (general, expert, expert_general) can bid on ANY task level.
+        The tier is a self-declaration of specialization breadth, not a hard gate —
+        an expert should still be able to take general tasks.
+        """
         if agent_tier == "tool":
             return task_level == "tool"
-        tier_idx = self.TIER_HIERARCHY.index(agent_tier) if agent_tier in self.TIER_HIERARCHY else 0
-        level_idx = self.TIER_HIERARCHY.index(task_level) if task_level in self.TIER_HIERARCHY else 0
-        return tier_idx <= level_idx
+        return True
 
     # ── Bid validation ───────────────────────────────────────────────
 
