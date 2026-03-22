@@ -166,9 +166,10 @@ server.tool(
           owner: "plugin-user",
           status: "online",
         };
-        // Update server_id on all persisted agents so they stay consistent
+        // Update server_id on all persisted agents and re-register them with the network
         for (const agent of Object.values(s.agents)) {
           agent.server_id = sid;
+          try { await net.registerAgent(agent); } catch { /* best-effort */ }
         }
       }
     } else {
@@ -187,9 +188,15 @@ server.tool(
     // Start background heartbeat
     startHeartbeat();
 
-    // Reconnect WS for all existing agents
-    for (const agentId of Object.keys(s.agents)) {
-      ws.connect(agentId);
+    // Reconnect WS for all existing agents; re-register if network lost them
+    for (const agent of Object.values(s.agents)) {
+      try {
+        await net.getAgentInfo(agent.agent_id);
+      } catch {
+        // Agent not found on network (e.g. server restarted with in-memory DB)
+        try { await net.registerAgent(agent); } catch { /* best-effort */ }
+      }
+      ws.connect(agent.agent_id);
     }
 
     const restoredAgents = Object.values(s.agents).map((a) => ({
