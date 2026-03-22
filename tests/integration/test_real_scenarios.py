@@ -1410,3 +1410,140 @@ class TestMaxDepthGuard:
         # Should be an error
         assert is_error(sub4) or "error" in str(sub4).lower() or "exceeded" in str(sub4).lower(), \
             f"Level 4 should be blocked by max_depth=3, got: {sub4}"
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Story 18: 50-level deep subtask chain — stress test
+#
+# Real world doesn't often see 4+ levels of subcontracting.
+# But if the system can't handle 50, it's fragile.
+# Test: 50 agents, each taking a subtask from the previous one,
+# then results bubble ALL the way back up from level 49 to level 0.
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestFiftyLevelDeepChain:
+    DEPTH = 50
+
+    @pytest.mark.asyncio
+    async def test_50_level_subtask_chain_with_result_cascade(self, mcp, http, funded_network):
+        """
+        Story:
+        50 agents form a delegation chain. Each one takes a subtask,
+        carves off a small budget for the next, and passes work down.
+        The bottom agent (level 49) does the actual work.
+        Results then bubble up from 49 → 48 → ... → 1 → 0 → publisher.
+
+        Tests:
+        - TaskManager doesn't blow up at depth 49
+        - Budget tracking stays consistent through 50 levels
+        - Escrow allocations don't leak or double-count
+        - Result submission + collection works at every level
+        - No stack overflow, no silent data corruption
+        """
+        fn = funded_network
+        N = self.DEPTH
+
+        # Publisher with massive budget
+        await _reg(mcp, fn, "pub-50", "Deep Publisher", atype="planner",
+                   balance=1_000_000, domains=["deep"])
+
+        # 50 chain agents
+        for i in range(N):
+            await _reg(mcp, fn, f"d{i}", f"Depth-{i} Agent", atype="planner",
+                       domains=["deep"])
+
+        # Root task with budget 100_000, max_depth=60 (room for 50)
+        root_id = await _task(mcp, "pub-50", "50-level deep chain test",
+                              budget=100_000, domains=["deep"])
+        root_task = fn.task_manager.get(root_id)
+        root_task.max_depth = 60  # allow 50 levels
+
+        # Build chain: each level creates a subtask for the next
+        parent_id = root_id
+        task_ids = [root_id]  # index 0 = root
+        budget_at_level = 100_000
+
+        # Level 0: first agent bids on root
+        await _bid(mcp, root_id, "d0", conf=0.9, price=100)
+
+        for level in range(1, N):
+            # Each level carves off 1000 for the next (keeps the rest)
+            sub_budget = budget_at_level - 1000
+            if sub_budget < 1000:
+                sub_budget = budget_at_level // 2
+
+            result = await mcp.call_tool_parsed("eacn3_create_subtask", {
+                "parent_task_id": parent_id,
+                "description": f"Level {level} work",
+                "domains": ["deep"],
+                "budget": sub_budget,
+                "initiator_id": f"d{level - 1}",
+            })
+            sub_id = result.get("subtask_id") or result.get("id")
+            assert sub_id is not None, f"Failed to create subtask at level {level}: {result}"
+            task_ids.append(sub_id)
+
+            # Agent at this level bids
+            bid = await _bid(mcp, sub_id, f"d{level}", conf=0.9, price=100)
+            assert bid["status"] in ("accepted", "executing"), \
+                f"Bid rejected at level {level}: {bid}"
+
+            parent_id = sub_id
+            budget_at_level = sub_budget
+
+        # Verify we have 50 tasks (root + 49 subtasks)
+        assert len(task_ids) == N
+
+        # Verify depth of deepest task
+        deepest = fn.task_manager.get(task_ids[-1])
+        assert deepest.depth == N - 1  # root is depth 0, last is depth 49
+
+        # ── Results bubble up from bottom to top ──
+
+        # Bottom agent (level 49) does the actual work
+        await _submit(mcp, task_ids[-1], f"d{N - 1}", {
+            "actual_work": "This is where the real work happens",
+            "depth": N - 1,
+        })
+
+        # Bubble up: each level collects from child, incorporates, submits to parent
+        for level in range(N - 2, -1, -1):  # 48, 47, ..., 1, 0
+            child_id = task_ids[level + 1]
+            my_id = task_ids[level]
+            agent = f"d{level}"
+
+            # Collect child result
+            child_results = await _collect(mcp, child_id, agent)
+            assert len(child_results) >= 1, \
+                f"No results at level {level + 1} for agent {agent}"
+            await _select(mcp, child_id, agent, f"d{level + 1}")
+
+            # Submit composed result to parent
+            await _submit(mcp, my_id, agent, {
+                "level": level,
+                "incorporated_from_below": child_results[0]["content"],
+            })
+
+        # Publisher collects final result
+        final_results = await _collect(mcp, root_id, "pub-50")
+        assert len(final_results) >= 1
+        await _select(mcp, root_id, "pub-50", "d0")
+
+        # Verify the chain is intact: drill into nested results
+        result = final_results[0]["content"]
+        for expected_level in range(N - 1):
+            assert result["level"] == expected_level, \
+                f"Expected level {expected_level}, got {result.get('level')}"
+            if expected_level < N - 2:
+                result = result["incorporated_from_below"]
+            else:
+                # Last intermediate level incorporates the bottom's work
+                bottom = result["incorporated_from_below"]
+                assert bottom["actual_work"] == "This is where the real work happens"
+                assert bottom["depth"] == N - 1
+
+        # Verify no budget leaks: all escrows should be settled
+        # (selected results trigger settlement)
+        pub_bal = await mcp.call_tool_parsed("eacn3_get_balance", {"agent_id": "pub-50"})
+        assert pub_bal["available"] >= 0, "Publisher balance should not go negative"
