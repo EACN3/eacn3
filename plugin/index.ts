@@ -10,6 +10,7 @@ import { type AgentCard, type PushEvent, type AgentTier, type TaskLevel, EACN3_D
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
 import * as ws from "./src/ws-manager.js";
+import * as a2a from "./src/a2a-server.js";
 
 // ---------------------------------------------------------------------------
 // Heartbeat
@@ -317,6 +318,40 @@ export default definePluginEntry({
     },
   });
 
+  // #4b eacn3_a2a_server
+  api.registerTool({
+    name: "eacn3_a2a_server",
+    description: "Start or stop the A2A (Agent-to-Agent) HTTP server for direct messaging. When started, other agents can POST messages directly to this server instead of relaying through the network. Returns {running, port, url}. Pass action='stop' to shut it down. After starting, re-register agents or call eacn3_update_agent to advertise the real URL.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["start", "stop", "status"], description: "Action to perform. Defaults to 'start'." },
+        port: { type: "number", description: "Port to listen on. 0 = OS auto-assign. Defaults to 0." },
+        url: { type: "string", description: "Public URL for this server (e.g. 'http://my-host:3001'). Auto-generated from port if omitted." },
+      },
+    },
+    async execute(_id: string, params: any) {
+      const action = params.action ?? "start";
+
+      if (action === "status") {
+        return ok({ running: a2a.isRunning(), port: a2a.getServerPort() });
+      }
+
+      if (action === "stop") {
+        await a2a.stopServer();
+        return ok({ running: false, port: 0 });
+      }
+
+      // start
+      const port = params.port ?? 0;
+      const actualPort = await a2a.startServer(port);
+      const baseUrl = params.url
+        ? params.url.replace(/\/$/, "")
+        : `http://localhost:${actualPort}`;
+      return ok({ running: true, port: actualPort, url: baseUrl });
+    },
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Agent Management (7)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -335,6 +370,8 @@ export default definePluginEntry({
         capabilities: { type: "object", properties: { max_concurrent_tasks: { type: "number", description: "Max tasks simultaneously (0 = unlimited)" }, concurrent: { type: "boolean", description: "Whether Agent supports concurrent execution" } }, description: "Agent capacity limits" },
         tier: { type: "string", enum: ["general", "expert", "expert_general", "tool"], description: "Capability tier: general > expert > expert_general > tool. Defaults to general." },
         agent_id: { type: "string", description: "Custom agent ID. Auto-generated if omitted." },
+        a2a_port: { type: "number", description: "Port for A2A HTTP server. Enables direct agent-to-agent messaging. Omit to use Network relay only." },
+        a2a_url: { type: "string", description: "Full public URL for A2A callbacks (e.g. 'http://my-server.com:3001'). Auto-generated from a2a_port if omitted." },
       },
       required: ["name", "description", "domains"],
     },
@@ -344,16 +381,33 @@ export default definePluginEntry({
       if (!params.name?.trim()) return err("name cannot be empty");
       if (!params.domains?.length) return err("domains cannot be empty");
       const agentId = params.agent_id ?? `agent-${Date.now().toString(36)}`;
+
+      // Determine agent URL: real A2A endpoint or local placeholder
+      let agentUrl = `plugin://local/agents/${agentId}`;
+      if (params.a2a_port || params.a2a_url) {
+        const port = params.a2a_port ?? 0;
+        const actualPort = await a2a.startServer(port);
+        if (params.a2a_url) {
+          agentUrl = `${params.a2a_url.replace(/\/$/, "")}/agents/${agentId}`;
+        } else {
+          agentUrl = `http://localhost:${actualPort}/agents/${agentId}`;
+        }
+      }
+
       const card: AgentCard = {
         agent_id: agentId, name: params.name,
         tier: params.tier ?? "general",
         domains: params.domains, skills: params.skills ?? [], capabilities: params.capabilities,
-        url: `plugin://local/agents/${agentId}`, server_id: s.server_card.server_id,
+        url: agentUrl, server_id: s.server_card.server_id,
         network_id: "", description: params.description,
       };
       const res = await net.registerAgent(card);
       state.addAgent(card); ws.connect(agentId);
-      return ok({ registered: true, agent_id: agentId, seeds: res.seeds, domains: params.domains });
+      return ok({
+        registered: true, agent_id: agentId, seeds: res.seeds, domains: params.domains,
+        url: agentUrl,
+        a2a_server: a2a.isRunning() ? { port: a2a.getServerPort() } : null,
+      });
     },
   });
 
@@ -406,6 +460,10 @@ export default definePluginEntry({
     async execute(_id: string, params: any) {
       const res = await net.unregisterAgent(params.agent_id);
       ws.disconnect(params.agent_id); state.removeAgent(params.agent_id);
+      // Stop A2A server if no agents remain
+      if (state.listAgents().length === 0 && a2a.isRunning()) {
+        await a2a.stopServer();
+      }
       return ok({ unregistered: true, agent_id: params.agent_id, ...res });
     },
   });
