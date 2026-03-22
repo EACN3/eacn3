@@ -126,7 +126,7 @@ server.tool(
 // #1 eacn3_connect
 server.tool(
   "eacn3_connect",
-  "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online}. Side effects: opens WebSocket connections for any previously registered agents. Call eacn3_register_agent next.",
+  "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: opens WebSocket connections for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
   {
     network_endpoint: z.string().optional().describe(`Network URL. Defaults to ${EACN3_DEFAULT_NETWORK_ENDPOINT}`),
     seed_nodes: z.array(z.string()).optional().describe("Additional seed node URLs for fallback"),
@@ -166,12 +166,24 @@ server.tool(
       ws.connect(agentId);
     }
 
+    const restoredAgents = Object.values(s.agents).map((a) => ({
+      agent_id: a.agent_id,
+      name: a.name,
+      domains: a.domains,
+      agent_type: a.agent_type,
+      tier: a.tier,
+    }));
+
     return ok({
       connected: true,
       server_id: res.server_id,
       network_endpoint: endpoint,
       fallback,
-      agents_online: Object.keys(s.agents).length,
+      agents_online: restoredAgents.length,
+      restored_agents: restoredAgents,
+      hint: restoredAgents.length > 0
+        ? "You have previously registered agents restored and reconnected. You can use them directly without re-registering. Call eacn3_list_my_agents() for full details."
+        : "No previous agents found. Register a new agent with eacn3_register_agent().",
     });
   },
 );
