@@ -16,6 +16,7 @@ from eacn.network.api.schemas import (
     UpdateDiscussionsRequest, UpdateDeadlineRequest,
     ReputationEventRequest, ReputationResponse,
     BalanceResponse, DepositRequest, DepositResponse,
+    RelayMessageRequest,
     OkResponse,
 )
 
@@ -396,6 +397,57 @@ async def deposit(req: DepositRequest):
         available=account.available,
         frozen=account.frozen,
     )
+
+
+# ── Messaging (1 endpoint) ───────────────────────────────────────────
+
+@router.post("/messages")
+async def relay_message(req: RelayMessageRequest):
+    """Relay a direct message to a target agent via three-layer addressing.
+
+    Routes by to.agent_id: if the agent is connected locally via WebSocket,
+    deliver immediately. Otherwise forward to peer nodes via /peer/message.
+    """
+    from eacn.core.models import PushEvent, PushEventType
+    from eacn.network.api.websocket import manager
+
+    net = _net()
+    target_agent_id = req.to.agent_id
+    sender_agent_id = req.from_.agent_id
+
+    # Build push event
+    event = PushEvent(
+        type=PushEventType.DIRECT_MESSAGE,
+        task_id="",
+        recipients=[target_agent_id],
+        payload={
+            "from": sender_agent_id,
+            "content": req.content,
+            "to": req.to.model_dump(),
+        },
+    )
+
+    # Try local delivery first
+    if manager.is_connected(target_agent_id):
+        delivered = await manager.broadcast_event(event)
+        return {"ok": True, "delivered": delivered, "method": "local"}
+
+    # Forward to all peer nodes — they'll try local delivery
+    if not net.cluster.standalone:
+        members = net.cluster.members.all_online(exclude=net.cluster.node_id)
+        if members:
+            target_nodes = {m.node_id for m in members}
+            await net.cluster.router.forward_push(
+                event.type.value,
+                event.task_id,
+                event.recipients,
+                event.payload,
+                target_nodes,
+            )
+            return {"ok": True, "delivered": 0, "method": "forwarded"}
+
+    return {"ok": False, "delivered": 0, "method": "undeliverable",
+            "error": f"Agent {target_agent_id} not connected to any node"}
 
 
 @router.get("/cluster/status")

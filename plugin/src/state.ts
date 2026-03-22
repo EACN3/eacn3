@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { type EacnState, type AgentCard, type LocalTaskInfo, type PushEvent, createDefaultState } from "./models.js";
+import { type EacnState, type AgentCard, type LocalTaskInfo, type PushEvent, type DirectMessage, type SessionKey, MAX_MESSAGES_PER_SESSION, createDefaultState } from "./models.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -128,4 +128,59 @@ export function isConnected(): boolean {
 
 export function getServerId(): string | null {
   return getState().server_card?.server_id ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Message sessions
+// ---------------------------------------------------------------------------
+
+function sessionKey(localAgentId: string, peerAgentId: string): SessionKey {
+  return `${localAgentId}:${peerAgentId}`;
+}
+
+/**
+ * Add a message to a session. Creates the session if it doesn't exist.
+ * Trims to MAX_MESSAGES_PER_SESSION, dropping oldest messages.
+ */
+export function addMessage(localAgentId: string, msg: DirectMessage): void {
+  const s = getState();
+  // Ensure active_sessions exists (backward compat with old state files)
+  if (!s.active_sessions) s.active_sessions = {};
+
+  const peerId = msg.direction === "in" ? msg.from : msg.to;
+  const key = sessionKey(localAgentId, peerId);
+
+  if (!s.active_sessions[key]) {
+    s.active_sessions[key] = [];
+  }
+  s.active_sessions[key].push(msg);
+
+  // Trim oldest if over limit
+  if (s.active_sessions[key].length > MAX_MESSAGES_PER_SESSION) {
+    s.active_sessions[key] = s.active_sessions[key].slice(-MAX_MESSAGES_PER_SESSION);
+  }
+
+  save();
+}
+
+/**
+ * Get all messages in a session between a local agent and a peer.
+ */
+export function getMessages(localAgentId: string, peerAgentId: string): DirectMessage[] {
+  const s = getState();
+  if (!s.active_sessions) return [];
+  return s.active_sessions[sessionKey(localAgentId, peerAgentId)] ?? [];
+}
+
+/**
+ * List all active session keys for a local agent.
+ * Returns peer agent IDs.
+ */
+export function listSessions(localAgentId: string): string[] {
+  const s = getState();
+  if (!s.active_sessions) return [];
+  const prefix = `${localAgentId}:`;
+  return Object.keys(s.active_sessions)
+    .filter((k) => k.startsWith(prefix))
+    .map((k) => k.slice(prefix.length));
 }

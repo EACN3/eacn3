@@ -240,3 +240,20 @@ class DepositResponse(BaseModel):
     deposited: float
     available: float
     frozen: float
+
+
+# ── Messaging ────────────────────────────────────────────────────────
+
+class MessageAddress(BaseModel):
+    """Three-layer address from AgentCard: network_id → server_id → agent_id."""
+    network_id: str = ""
+    server_id: str = ""
+    agent_id: str
+
+class RelayMessageRequest(BaseModel):
+    """Direct message relayed through the Network node."""
+    to: MessageAddress
+    from_: MessageAddress = Field(alias="from")
+    content: Any = None
+
+    model_config = {"populate_by_name": True}

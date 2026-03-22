@@ -466,3 +466,23 @@ export async function deposit(
     { agent_id: agentId, amount },
   );
 }
+
+// ---------------------------------------------------------------------------
+// Messaging (1)
+// ---------------------------------------------------------------------------
+
+export interface RelayMessagePayload {
+  to: { network_id: string; server_id: string; agent_id: string };
+  from: { network_id: string; server_id: string; agent_id: string };
+  content: unknown;
+}
+
+/**
+ * Send a direct message via Network relay.
+ * The Network node routes by three-layer addressing and delivers via WebSocket.
+ */
+export async function relayMessage(
+  msg: RelayMessagePayload,
+): Promise<{ ok: boolean; delivered: number }> {
+  return request("POST", "/api/messages", msg);
+}

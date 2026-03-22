@@ -445,6 +445,29 @@ export interface LocalTaskInfo {
   created_at: string;
 }
 
+/** A single direct message between two agents. */
+export interface DirectMessage {
+  /** Sender agent ID. */
+  from: string;
+  /** Receiver agent ID. */
+  to: string;
+  /** Message content (text). */
+  content: string;
+  /** Unix timestamp in milliseconds. */
+  timestamp: number;
+  /** Direction relative to the local agent: "in" = received, "out" = sent. */
+  direction: "in" | "out";
+}
+
+/**
+ * Session key: `${local_agent_id}:${peer_agent_id}`.
+ * Each session stores the conversation between a local agent and a remote peer.
+ */
+export type SessionKey = string;
+
+/** Maximum messages per session to prevent unbounded growth. */
+export const MAX_MESSAGES_PER_SESSION = 100;
+
 /** Plugin-local state. Holds all in-memory data for the current session; reset on disconnect. */
 export interface EacnState {
   /** Server identity; null before eacn3_connect is called. */
@@ -459,6 +482,8 @@ export interface EacnState {
   reputation_cache: Record<string, number>;
   /** Buffered WebSocket events not yet consumed. Drained by eacn3_get_events(). */
   pending_events: PushEvent[];
+  /** Active message sessions keyed by "local_agent_id:peer_agent_id". */
+  active_sessions: Record<SessionKey, DirectMessage[]>;
 }
 
 /**
@@ -475,5 +500,6 @@ export function createDefaultState(networkEndpoint?: string): EacnState {
     local_tasks: {},
     reputation_cache: {},
     pending_events: [],
+    active_sessions: {},
   };
 }

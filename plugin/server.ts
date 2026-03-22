@@ -14,6 +14,7 @@ import { type EacnState, type AgentCard, type PushEvent, createDefaultState, EAC
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
 import * as ws from "./src/ws-manager.js";
+import * as a2a from "./src/a2a-server.js";
 
 // ---------------------------------------------------------------------------
 // Helper: MCP text result
@@ -259,6 +260,8 @@ server.tool(
     }).optional().describe("Agent capacity limits"),
     agent_type: z.enum(["executor", "planner"]).optional().describe("Defaults to executor"),
     agent_id: z.string().optional().describe("Custom agent ID. Auto-generated if omitted."),
+    a2a_port: z.number().optional().describe("Port for A2A HTTP server. Enables direct agent-to-agent messaging. Omit to use Network relay only."),
+    a2a_url: z.string().optional().describe("Full public URL for A2A callbacks (e.g. 'http://my-server.com:3001'). Auto-generated from a2a_port if omitted."),
   },
   async (params) => {
     const s = state.getState();
@@ -271,6 +274,18 @@ server.tool(
     const agentId = params.agent_id ?? `agent-${Date.now().toString(36)}`;
     const sid = s.server_card.server_id;
 
+    // Determine agent URL: real A2A endpoint or local placeholder
+    let agentUrl = `plugin://local/agents/${agentId}`;
+    if (params.a2a_port || params.a2a_url) {
+      const port = params.a2a_port ?? 0;
+      const actualPort = await a2a.startServer(port);
+      if (params.a2a_url) {
+        agentUrl = `${params.a2a_url.replace(/\/$/, "")}/agents/${agentId}`;
+      } else {
+        agentUrl = `http://localhost:${actualPort}/agents/${agentId}`;
+      }
+    }
+
     // Assemble AgentCard (what adapter used to do)
     const card: AgentCard = {
       agent_id: agentId,
@@ -279,7 +294,7 @@ server.tool(
       domains: params.domains,
       skills: params.skills ?? [],
       capabilities: params.capabilities,
-      url: `plugin://local/agents/${agentId}`,
+      url: agentUrl,
       server_id: sid,
       network_id: "",
       description: params.description,
@@ -299,6 +314,8 @@ server.tool(
       agent_id: agentId,
       seeds: res.seeds,
       domains: params.domains,
+      url: agentUrl,
+      a2a_server: a2a.isRunning() ? { port: a2a.getServerPort() } : null,
     });
   },
 );
@@ -367,6 +384,12 @@ server.tool(
     const res = await net.unregisterAgent(params.agent_id);
     ws.disconnect(params.agent_id);
     state.removeAgent(params.agent_id);
+
+    // Stop A2A server if no agents remain
+    if (state.listAgents().length === 0 && a2a.isRunning()) {
+      await a2a.stopServer();
+    }
+
     return ok({ unregistered: true, agent_id: params.agent_id, ...res });
   },
 );
@@ -768,10 +791,10 @@ server.tool(
 );
 
 // #27 eacn3_send_message
-// A2A direct — agent.md:358-362: peer-to-peer, bypasses Network
+// A2A direct + Network relay fallback — agent.md:358-362
 server.tool(
   "eacn3_send_message",
-  "Send a direct agent-to-agent message bypassing the task system. Local agents receive it instantly in their event buffer; remote agents receive it via HTTP POST to their /events endpoint. Returns {sent, to, from, local}. The recipient sees a 'direct_message' event with payload.from and payload.content. Will fail if the remote agent has no reachable URL or is offline.",
+  "Send a direct agent-to-agent message. Delivery order: (1) local agent → instant push, (2) remote agent with reachable URL → A2A direct POST, (3) fallback → Network relay via WebSocket. Returns {sent, to, from, method} where method is 'local', 'a2a_direct', or 'relay'. All sent messages are stored in your session history. The recipient sees a 'direct_message' event. Use /eacn3-message to handle received messages.",
   {
     agent_id: z.string().describe("Target agent ID"),
     content: z.string(),
@@ -781,21 +804,28 @@ server.tool(
     const senderId = params.sender_id ?? resolveAgentId();
     const targetId = params.agent_id;
 
-    const message: PushEvent = {
-      type: "direct_message",
-      task_id: "",
-      payload: { from: senderId, content: params.content },
-      received_at: Date.now(),
-    };
+    // Record outgoing message in session
+    state.addMessage(senderId, {
+      from: senderId,
+      to: targetId,
+      content: params.content,
+      timestamp: Date.now(),
+      direction: "out",
+    });
 
-    // Local agent — direct push to event buffer
+    // 1. Local agent — direct push to event buffer
     const localAgent = state.getAgent(targetId);
     if (localAgent) {
-      state.pushEvents([message]);
-      return ok({ sent: true, to: targetId, from: senderId, local: true });
+      state.pushEvents([{
+        type: "direct_message",
+        task_id: "",
+        payload: { from: senderId, content: params.content },
+        received_at: Date.now(),
+      }]);
+      return ok({ sent: true, to: targetId, from: senderId, method: "local" });
     }
 
-    // Remote agent — POST to their URL callback (A2A direct, agent.md:160-168)
+    // 2. Remote agent — look up AgentCard
     let agentCard;
     try {
       agentCard = await net.getAgentInfo(targetId);
@@ -803,28 +833,46 @@ server.tool(
       return err(`Agent ${targetId} not found`);
     }
 
-    if (!agentCard.url || agentCard.url.startsWith("plugin://")) {
-      return err(`Agent ${targetId} has no reachable URL: ${agentCard.url}`);
+    // 3. Try A2A direct if agent has a real HTTP URL
+    if (agentCard.url && !agentCard.url.startsWith("plugin://")) {
+      const eventsUrl = agentCard.url.replace(/\/$/, "") + "/events";
+      try {
+        const res = await fetch(eventsUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "direct_message",
+            from: senderId,
+            content: params.content,
+          }),
+        });
+        if (res.ok) {
+          return ok({ sent: true, to: targetId, from: senderId, method: "a2a_direct" });
+        }
+        // Direct failed — fall through to relay
+      } catch {
+        // Direct failed — fall through to relay
+      }
     }
 
-    // POST /events on agent's URL (agent.md:164)
-    const eventsUrl = agentCard.url.replace(/\/$/, "") + "/events";
+    // 4. Network relay fallback — route via Network node using three-layer addressing
     try {
-      const res = await fetch(eventsUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "direct_message",
-          from: senderId,
-          content: params.content,
-        }),
+      await net.relayMessage({
+        to: {
+          network_id: agentCard.network_id ?? "",
+          server_id: agentCard.server_id,
+          agent_id: targetId,
+        },
+        from: {
+          network_id: state.getState().server_card?.server_id ?? "",
+          server_id: state.getServerId() ?? "",
+          agent_id: senderId,
+        },
+        content: params.content,
       });
-      if (!res.ok) {
-        return err(`POST ${eventsUrl} failed: ${res.status}`);
-      }
-      return ok({ sent: true, to: targetId, from: senderId, local: false });
+      return ok({ sent: true, to: targetId, from: senderId, method: "relay" });
     } catch (e) {
-      return err(`Failed to reach agent at ${eventsUrl}: ${(e as Error).message}`);
+      return err(`All delivery methods failed for ${targetId}: ${(e as Error).message}`);
     }
   },
 );
@@ -896,8 +944,41 @@ server.tool(
 // ═══════════════════════════════════════════════════════════════════════════
 // Events (1)
 // ═══════════════════════════════════════════════════════════════════════════
+// Messaging (2)
+// ═══════════════════════════════════════════════════════════════════════════
 
-// #32 eacn3_get_events
+// #32 eacn3_get_messages
+server.tool(
+  "eacn3_get_messages",
+  "Get the message history between your agent and another agent. Returns {count, messages[]} with each message containing {from, to, content, timestamp, direction}. direction is 'in' (received) or 'out' (sent). Messages are stored per-session, capped at 100 per peer. Use to review conversation context before replying via eacn3_send_message.",
+  {
+    agent_id: z.string().optional().describe("Your agent ID (auto-injected if only one registered)"),
+    peer_agent_id: z.string().describe("The other agent's ID"),
+  },
+  async (params) => {
+    const agentId = params.agent_id ?? resolveAgentId();
+    const messages = state.getMessages(agentId, params.peer_agent_id);
+    return ok({ count: messages.length, messages });
+  },
+);
+
+// #33 eacn3_list_sessions
+server.tool(
+  "eacn3_list_sessions",
+  "List all agents you have active message sessions with. Returns {count, peers[]} where each peer is an agent_id. Use to discover ongoing conversations. Check individual sessions with eacn3_get_messages.",
+  {
+    agent_id: z.string().optional().describe("Your agent ID (auto-injected if only one registered)"),
+  },
+  async (params) => {
+    const agentId = params.agent_id ?? resolveAgentId();
+    const peers = state.listSessions(agentId);
+    return ok({ count: peers.length, peers });
+  },
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+
+// #34 eacn3_get_events
 server.tool(
   "eacn3_get_events",
   "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[]} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. Call periodically in your main loop. Events arrive via WebSocket and accumulate until drained — missing events means missed tasks and messages.",
@@ -963,6 +1044,23 @@ function registerEventCallbacks(): void {
         // New task available — auto-evaluate bid if agent has matching domains
         autoBidEvaluate(agentId, event).catch(() => { /* non-critical */ });
         break;
+
+      case "direct_message": {
+        // Another agent sent a direct message — store in session
+        const payload = event.payload as Record<string, unknown>;
+        const from = payload?.from as string | undefined;
+        const content = payload?.content;
+        if (from && content !== undefined) {
+          state.addMessage(agentId, {
+            from,
+            to: agentId,
+            content: typeof content === "string" ? content : JSON.stringify(content),
+            timestamp: Date.now(),
+            direction: "in",
+          });
+        }
+        break;
+      }
     }
   });
 }
