@@ -2,7 +2,7 @@
  * Local state persistence — reads/writes ~/.eacn3/state.json.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { type EacnState, type AgentCard, type LocalTaskInfo, type PushEvent, type DirectMessage, type SessionKey, MAX_MESSAGES_PER_SESSION, createDefaultState } from "./models.js";
@@ -13,6 +13,7 @@ import { type EacnState, type AgentCard, type LocalTaskInfo, type PushEvent, typ
 
 const EACN3_DIR = process.env.EACN3_STATE_DIR ?? join(homedir(), ".eacn3");
 const STATE_FILE = join(EACN3_DIR, "state.json");
+const STATE_BACKUP = join(EACN3_DIR, "state.json.bak");
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -29,7 +30,17 @@ export function load(): EacnState {
       const raw = readFileSync(STATE_FILE, "utf-8");
       state = JSON.parse(raw) as EacnState;
     } catch {
-      state = createDefaultState();
+      // Primary corrupted — try backup
+      if (existsSync(STATE_BACKUP)) {
+        try {
+          const bak = readFileSync(STATE_BACKUP, "utf-8");
+          state = JSON.parse(bak) as EacnState;
+        } catch {
+          state = createDefaultState();
+        }
+      } else {
+        state = createDefaultState();
+      }
     }
   } else {
     state = createDefaultState();
@@ -43,6 +54,10 @@ export function load(): EacnState {
 export function save(): void {
   if (!state) return;
   mkdirSync(EACN3_DIR, { recursive: true });
+  // Backup current file before overwriting
+  if (existsSync(STATE_FILE)) {
+    try { copyFileSync(STATE_FILE, STATE_BACKUP); } catch { /* best-effort */ }
+  }
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
@@ -107,19 +122,20 @@ export function getTask(taskId: string): import("./models.js").LocalTaskInfo | u
 
 export function pushEvents(events: PushEvent[]): void {
   getState().pending_events.push(...events);
-  // No save — events are transient, only persist on explicit save
+  save();
 }
 
 export function drainEvents(): PushEvent[] {
   const s = getState();
   const events = s.pending_events;
   s.pending_events = [];
+  save();
   return events;
 }
 
 export function updateReputationCache(agentId: string, score: number): void {
   getState().reputation_cache[agentId] = score;
-  // Don't save on every cache update — caller decides
+  save();
 }
 
 export function isConnected(): boolean {

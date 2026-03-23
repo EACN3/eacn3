@@ -11,7 +11,6 @@ async def _setup(mcp, funded_network, max_concurrent=1):
         "domains": ["coding"],
         "skills": [{"name": "plan", "description": "plan"}],
         "agent_id": "slot-init",
-        "agent_type": "planner",
     })
     funded_network.escrow.get_or_create_account("slot-init", 10000.0)
     funded_network.reputation._scores["slot-init"] = 0.8

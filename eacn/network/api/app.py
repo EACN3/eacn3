@@ -6,6 +6,7 @@ Shutdown: close DB.
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -69,17 +70,20 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────────
+    await network.cluster.stop()
     await db.close()
 
 
-def create_app(db_path: str = ":memory:") -> FastAPI:
+def create_app(db_path: str | None = None) -> FastAPI:
     """Factory function for creating the Network API app."""
     app = FastAPI(
         title="EACN Network API",
         version="0.1.0",
         lifespan=lifespan,
     )
-    app.state.db_path = db_path
+    # Read from env var if not explicitly provided; fall back to file-based default
+    resolved_db_path = db_path or os.environ.get("EACN3_DB_PATH", "eacn3.db")
+    app.state.db_path = resolved_db_path
 
     @app.get("/health")
     async def health():

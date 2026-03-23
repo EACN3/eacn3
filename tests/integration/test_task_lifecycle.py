@@ -15,7 +15,6 @@ async def _register_two_agents(mcp, funded_network):
         "domains": ["coding"],
         "skills": [{"name": "plan", "description": "plan tasks"}],
         "agent_id": "initiator",
-        "agent_type": "planner",
     })
     # Executor
     await mcp.call_tool_parsed("eacn3_register_agent", {

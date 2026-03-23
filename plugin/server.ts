@@ -126,7 +126,7 @@ server.tool(
 // #1 eacn3_connect
 server.tool(
   "eacn3_connect",
-  "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online}. Side effects: opens WebSocket connections for any previously registered agents. Call eacn3_register_agent next.",
+  "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: opens WebSocket connections for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
   {
     network_endpoint: z.string().optional().describe(`Network URL. Defaults to ${EACN3_DEFAULT_NETWORK_ENDPOINT}`),
     seed_nodes: z.array(z.string()).optional().describe("Additional seed node URLs for fallback"),
@@ -147,31 +147,75 @@ server.tool(
 
     s.network_endpoint = endpoint;
 
-    // Register as server
-    const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
-    s.server_card = {
-      server_id: res.server_id,
-      version: "0.3.0",
-      endpoint: "plugin://local",
-      owner: "plugin-user",
-      status: "online",
-    };
+    // Reuse existing server identity if available; otherwise register new
+    let sid: string;
+    if (s.server_card) {
+      // Try to reconnect with existing server_id via heartbeat
+      try {
+        await net.heartbeat();
+        sid = s.server_card.server_id;
+        s.server_card.status = "online";
+      } catch {
+        // Server no longer known to network — re-register
+        const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
+        sid = res.server_id;
+        s.server_card = {
+          server_id: sid,
+          version: "0.3.0",
+          endpoint: "plugin://local",
+          owner: "plugin-user",
+          status: "online",
+        };
+        // Update server_id on all persisted agents and re-register them with the network
+        for (const agent of Object.values(s.agents)) {
+          agent.server_id = sid;
+          try { await net.registerAgent(agent); } catch { /* best-effort */ }
+        }
+      }
+    } else {
+      const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
+      sid = res.server_id;
+      s.server_card = {
+        server_id: sid,
+        version: "0.3.0",
+        endpoint: "plugin://local",
+        owner: "plugin-user",
+        status: "online",
+      };
+    }
     state.save();
 
     // Start background heartbeat
     startHeartbeat();
 
-    // Reconnect WS for all existing agents
-    for (const agentId of Object.keys(s.agents)) {
-      ws.connect(agentId);
+    // Reconnect WS for all existing agents; re-register if network lost them
+    for (const agent of Object.values(s.agents)) {
+      try {
+        await net.getAgentInfo(agent.agent_id);
+      } catch {
+        // Agent not found on network (e.g. server restarted with in-memory DB)
+        try { await net.registerAgent(agent); } catch { /* best-effort */ }
+      }
+      ws.connect(agent.agent_id);
     }
+
+    const restoredAgents = Object.values(s.agents).map((a) => ({
+      agent_id: a.agent_id,
+      name: a.name,
+      domains: a.domains,
+      tier: a.tier,
+    }));
 
     return ok({
       connected: true,
-      server_id: res.server_id,
+      server_id: sid,
       network_endpoint: endpoint,
       fallback,
-      agents_online: Object.keys(s.agents).length,
+      agents_online: restoredAgents.length,
+      restored_agents: restoredAgents,
+      hint: restoredAgents.length > 0
+        ? "You have previously registered agents restored and reconnected. You can use them directly without re-registering. Call eacn3_list_my_agents() for full details."
+        : "No previous agents found. Register a new agent with eacn3_register_agent().",
     });
   },
 );
@@ -179,17 +223,18 @@ server.tool(
 // #2 eacn3_disconnect
 server.tool(
   "eacn3_disconnect",
-  "Disconnect from the EACN3 network, unregister the server, and close all WebSocket connections. Requires: eacn3_connect first. Side effects: clears all local agent state; active tasks will timeout and hurt reputation. Returns {disconnected: true}. Only call at end of session.",
+  "Disconnect from the EACN3 network and close all WebSocket connections. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
   {},
   async () => {
     stopHeartbeat();
     ws.disconnectAll();
 
-    try { await net.unregisterServer(); } catch { /* may already be gone */ }
-
+    // Do NOT call unregisterServer — it cascade-deletes all agents on the network side.
+    // We only go offline; identity is preserved for reconnection.
     const s = state.getState();
-    s.server_card = null;
-    s.agents = {};
+    if (s.server_card) {
+      s.server_card.status = "offline";
+    }
     state.save();
 
     return ok({ disconnected: true });
@@ -258,7 +303,6 @@ server.tool(
       max_concurrent_tasks: z.number().describe("Max tasks this Agent can handle simultaneously (0 = unlimited)"),
       concurrent: z.boolean().describe("Whether this Agent supports concurrent execution"),
     }).optional().describe("Agent capacity limits"),
-    agent_type: z.enum(["executor", "planner"]).optional().describe("Defaults to executor"),
     tier: z.enum(["general", "expert", "expert_general", "tool"]).optional().describe("Capability tier: general (can bid on anything) > expert > expert_general > tool (only tool-level tasks). Defaults to general."),
     agent_id: z.string().optional().describe("Custom agent ID. Auto-generated if omitted."),
     a2a_port: z.number().optional().describe("Port for A2A HTTP server. Enables direct agent-to-agent messaging. Omit to use Network relay only."),
@@ -291,7 +335,6 @@ server.tool(
     const card: AgentCard = {
       agent_id: agentId,
       name: params.name,
-      agent_type: params.agent_type ?? "executor",
       tier: (params.tier as AgentTier) ?? "general",
       domains: params.domains,
       skills: params.skills ?? [],
@@ -325,7 +368,7 @@ server.tool(
 // #6 eacn3_get_agent
 server.tool(
   "eacn3_get_agent",
-  "Fetch the full AgentCard for any agent by ID — checks local state first, then queries the network. Returns {agent_id, name, agent_type, domains, skills, capabilities, url, server_id, description}. No side effects. Use to inspect an agent before sending messages or evaluating bids.",
+  "Fetch the full AgentCard for any agent by ID — checks local state first, then queries the network. Returns {agent_id, name, domains, skills, capabilities, url, server_id, description}. No side effects. Use to inspect an agent before sending messages or evaluating bids.",
   {
     agent_id: z.string(),
   },
@@ -399,7 +442,7 @@ server.tool(
 // #9 eacn3_list_my_agents
 server.tool(
   "eacn3_list_my_agents",
-  "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, agent_type, domains, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
+  "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
   {},
   async () => {
     const agents = state.listAgents();
@@ -408,7 +451,6 @@ server.tool(
       agents: agents.map((a) => ({
         agent_id: a.agent_id,
         name: a.name,
-        agent_type: a.agent_type,
         domains: a.domains,
         ws_connected: ws.isConnected(a.agent_id),
       })),

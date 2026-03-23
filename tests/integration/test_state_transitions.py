@@ -13,7 +13,6 @@ async def _setup(mcp, funded_network):
         "domains": ["coding"],
         "skills": [{"name": "plan", "description": "plan"}],
         "agent_id": "st-init",
-        "agent_type": "planner",
     })
     await mcp.call_tool_parsed("eacn3_register_agent", {
         "name": "State Worker",

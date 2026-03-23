@@ -118,7 +118,6 @@ class Database:
                 server_id      TEXT NOT NULL,
                 network_id     TEXT NOT NULL DEFAULT '',
                 name           TEXT NOT NULL,
-                agent_type     TEXT NOT NULL,
                 tier           TEXT NOT NULL DEFAULT 'general',
                 domains        TEXT NOT NULL,
                 skills         TEXT NOT NULL,
@@ -264,6 +263,16 @@ class Database:
         await self.db.commit()
 
 
+    async def list_all_accounts(self) -> list[dict[str, Any]]:
+        async with self.db.execute(
+            "SELECT agent_id, available, frozen FROM accounts"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {"agent_id": r[0], "available": r[1], "frozen": r[2]}
+                for r in rows
+            ]
+
     async def get_account(self, agent_id: str) -> dict[str, float] | None:
         async with self.db.execute(
             "SELECT available, frozen FROM accounts WHERE agent_id = ?",
@@ -284,6 +293,13 @@ class Database:
         )
         await self.db.commit()
 
+
+    async def list_all_escrows(self) -> list[tuple[str, str, float]]:
+        async with self.db.execute(
+            "SELECT task_id, initiator_id, amount FROM escrow"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [(r[0], r[1], r[2]) for r in rows]
 
     async def save_escrow(
         self, task_id: str, initiator_id: str, amount: float
@@ -309,6 +325,20 @@ class Database:
         await self.db.execute("DELETE FROM escrow WHERE task_id = ?", (task_id,))
         await self.db.commit()
 
+
+    async def list_all_reputations(self) -> list[tuple[str, float, dict]]:
+        async with self.db.execute(
+            "SELECT agent_id, score, cap_counts FROM reputation"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [(r[0], r[1], json.loads(r[2])) for r in rows]
+
+    async def list_all_server_reputations(self) -> list[tuple[str, float, int]]:
+        async with self.db.execute(
+            "SELECT server_id, score, event_count FROM server_reputation"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [(r[0], r[1], r[2]) for r in rows]
 
     async def get_reputation(self, agent_id: str) -> tuple[float, dict] | None:
         async with self.db.execute(
@@ -487,11 +517,11 @@ class Database:
     async def save_agent_card(self, card: dict[str, Any]) -> None:
         await self.db.execute(
             """INSERT INTO agent_cards
-               (agent_id, server_id, network_id, name, agent_type, tier, domains, skills, url, description)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               (agent_id, server_id, network_id, name, tier, domains, skills, url, description)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(agent_id) DO UPDATE SET
                  server_id=excluded.server_id, network_id=excluded.network_id,
-                 name=excluded.name, agent_type=excluded.agent_type, tier=excluded.tier,
+                 name=excluded.name, tier=excluded.tier,
                  domains=excluded.domains, skills=excluded.skills,
                  url=excluded.url, description=excluded.description""",
             (
@@ -499,7 +529,6 @@ class Database:
                 card["server_id"],
                 card.get("network_id", ""),
                 card["name"],
-                card["agent_type"],
                 card.get("tier", "general"),
                 json.dumps(card["domains"]),
                 json.dumps(card["skills"]),
@@ -511,7 +540,7 @@ class Database:
 
     async def get_agent_card(self, agent_id: str) -> dict[str, Any] | None:
         async with self.db.execute(
-            "SELECT agent_id, server_id, network_id, name, agent_type, tier, domains, skills, url, description FROM agent_cards WHERE agent_id = ?",
+            "SELECT agent_id, server_id, network_id, name, tier, domains, skills, url, description FROM agent_cards WHERE agent_id = ?",
             (agent_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -522,12 +551,11 @@ class Database:
                 "server_id": row[1],
                 "network_id": row[2],
                 "name": row[3],
-                "agent_type": row[4],
-                "tier": row[5],
-                "domains": json.loads(row[6]),
-                "skills": json.loads(row[7]),
-                "url": row[8],
-                "description": row[9],
+                "tier": row[4],
+                "domains": json.loads(row[5]),
+                "skills": json.loads(row[6]),
+                "url": row[7],
+                "description": row[8],
             }
 
     async def delete_agent_card(self, agent_id: str) -> None:
@@ -538,7 +566,7 @@ class Database:
 
     async def query_agent_cards_by_domain(self, domain: str) -> list[dict[str, Any]]:
         async with self.db.execute(
-            """SELECT agent_id, server_id, network_id, name, agent_type, tier, domains, skills, url, description
+            """SELECT agent_id, server_id, network_id, name, tier, domains, skills, url, description
                FROM agent_cards
                WHERE domains LIKE ?""",
             (f'%"{domain}"%',),
@@ -547,9 +575,9 @@ class Database:
             return [
                 {
                     "agent_id": r[0], "server_id": r[1], "network_id": r[2],
-                    "name": r[3], "agent_type": r[4], "tier": r[5],
-                    "domains": json.loads(r[6]), "skills": json.loads(r[7]),
-                    "url": r[8], "description": r[9],
+                    "name": r[3], "tier": r[4],
+                    "domains": json.loads(r[5]), "skills": json.loads(r[6]),
+                    "url": r[7], "description": r[8],
                 }
                 for r in rows
             ]

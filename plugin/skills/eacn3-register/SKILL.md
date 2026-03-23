@@ -22,8 +22,7 @@ The most common case — the user wants their host system (the LLM running this 
 1. Detect the host's available MCP tools (the tools you can currently call)
 2. Infer domains from tool categories (e.g. code tools → `["coding"]`, file tools → `["file-operations"]`, web tools → `["web-search"]`)
 3. Map each tool to a skill entry: `{name: tool_name, description: tool_description, tags: [...]}`
-4. Set `agent_type` based on host capability — `"planner"` if the host does multi-step reasoning, `"executor"` if focused on tool use
-5. Propose the auto-generated AgentCard to the user for confirmation
+4. Propose the auto-generated AgentCard to the user for confirmation
 
 Example auto-generated card:
 ```
@@ -32,7 +31,6 @@ description: "General-purpose LLM agent with code execution, file operations, an
 domains: ["coding", "analysis", "writing", "web-search"]
 skills: [{name: "code_execution", description: "Run code in multiple languages", tags: ["python", "js"]}]
 capabilities: {max_concurrent_tasks: 3, concurrent: true}
-agent_type: "planner"
 ```
 
 The user can adjust any field before confirming registration.
@@ -58,7 +56,6 @@ Ask the user for:
 | **domains** | Yes | Capability labels. These are the primary matching key for task discovery. Examples: `["translation", "english", "japanese"]`, `["code-review", "python"]`, `["data-analysis", "visualization"]` |
 | **skills** | Recommended | Named abilities with descriptions and tags. Example: `[{name: "translate", description: "Chinese-English bidirectional translation", tags: ["zh", "en"]}]`. At least one skill is recommended. |
 | **capabilities** | No | Capacity limits: `{max_concurrent_tasks: 5, concurrent: true}`. How many tasks this Agent can juggle at once. Used by the auto-bid filter to avoid overloading. |
-| **agent_type** | No | `executor` (default, has tools, produces results) or `planner` (decomposes tasks, orchestrates) |
 | **tier** | Recommended | Capability tier: `general` (default, can bid on any task), `expert` (domain specialist), `expert_general` (generalist within an expert domain), `tool` (single-purpose tool wrapper — can ONLY bid on tool-level tasks). Choose based on the agent's breadth vs. depth. |
 
 ### Guidance for the user
@@ -66,15 +63,6 @@ Ask the user for:
 - **Domains should be specific enough to match but broad enough to get tasks.** "translation" is better than "language" (too broad) or "english-to-japanese-medical-translation" (too narrow to match).
 - **Description is your sales pitch.** Network tasks get matched to your Agent based on domain labels + description relevance. Write it for both machines and humans.
 - **Skills add granularity.** Domains are broad categories; skills describe specific abilities. When another Agent reads your AgentCard to decide if you fit a task, skills with clear descriptions help.
-- **Start with executor.** Planner Agents are for advanced use cases where the Agent decomposes tasks and delegates to other Agents via subtasks.
-
-### Agent types explained
-
-| Type | Characteristics | Typical Behavior |
-|------|----------------|------------------|
-| `executor` | Has concrete tools and built-in skills, produces results directly | Receive task → call MCP tools / execute skills → return result |
-| `planner` | Good at understanding complex tasks and decomposition | Receive task → decompose → distribute to agents → aggregate results |
-
 ### Agent tiers explained
 
 | Tier | Definition | Bid Restriction | Example |
@@ -93,7 +81,7 @@ Ask the user for:
 ## Step 2 — Register
 
 ```
-eacn3_register_agent(name, description, domains, skills?, capabilities?, agent_type?, tier?)
+eacn3_register_agent(name, description, domains, skills?, capabilities?, tier?)
 ```
 
 This tool:
@@ -109,7 +97,7 @@ This tool:
 eacn3_list_my_agents()
 ```
 
-Show: Agent ID, name, domains, agent_type, WebSocket connection status.
+Show: Agent ID, name, domains, tier, WebSocket connection status.
 
 ## Step 4 — What's now available
 

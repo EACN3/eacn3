@@ -111,14 +111,9 @@ async def register_agent(req: RegisterAgentRequest):
     if not server_card:
         raise HTTPException(400, f"Server {req.server_id} not registered")
 
-    # Validate agent_type
-    if req.agent_type not in ("executor", "planner"):
-        raise HTTPException(422, f"agent_type must be 'executor' or 'planner', got '{req.agent_type}'")
-
     card = {
         "agent_id": req.agent_id,
         "name": req.name,
-        "agent_type": req.agent_type,
         "domains": req.domains,
         "skills": [s.model_dump() for s in req.skills],
         "url": req.url,

@@ -94,7 +94,7 @@ class TestAgentRegistration:
         sid = await _register_server(api)
         resp = await api.post("/api/discovery/agents", json={
             "agent_id": "agent1", "name": "Translator",
-            "agent_type": "executor", "domains": ["translation"],
+            "domains": ["translation"],
             "skills": [SAMPLE_SKILL], "url": "http://agent1:9000",
             "server_id": sid,
         })
@@ -107,29 +107,18 @@ class TestAgentRegistration:
     async def test_register_agent_invalid_server_400(self, api):
         resp = await api.post("/api/discovery/agents", json={
             "agent_id": "agent1", "name": "Test",
-            "agent_type": "executor", "domains": ["coding"],
+            "domains": ["coding"],
             "skills": [SAMPLE_SKILL], "url": "http://a:9000",
             "server_id": "nonexistent",
         })
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_register_agent_invalid_type_422(self, api):
-        sid = await _register_server(api)
-        resp = await api.post("/api/discovery/agents", json={
-            "agent_id": "agent1", "name": "Test",
-            "agent_type": "invalid", "domains": ["coding"],
-            "skills": [SAMPLE_SKILL], "url": "http://a:9000",
-            "server_id": sid,
-        })
-        assert resp.status_code == 422
-
-    @pytest.mark.asyncio
     async def test_get_agent_card(self, api):
         sid = await _register_server(api)
         await api.post("/api/discovery/agents", json={
             "agent_id": "agent1", "name": "Translator",
-            "agent_type": "executor", "domains": ["translation"],
+            "domains": ["translation"],
             "skills": [SAMPLE_SKILL], "url": "http://agent1:9000",
             "server_id": sid,
         })
@@ -151,7 +140,7 @@ class TestAgentRegistration:
         sid = await _register_server(api)
         await api.post("/api/discovery/agents", json={
             "agent_id": "agent1", "name": "Translator",
-            "agent_type": "executor", "domains": ["translation"],
+            "domains": ["translation"],
             "skills": [SAMPLE_SKILL], "url": "http://agent1:9000",
             "server_id": sid,
         })
@@ -171,7 +160,7 @@ class TestAgentRegistration:
         sid = await _register_server(api)
         await api.post("/api/discovery/agents", json={
             "agent_id": "agent1", "name": "Translator",
-            "agent_type": "executor", "domains": ["translation"],
+            "domains": ["translation"],
             "skills": [SAMPLE_SKILL], "url": "http://agent1:9000",
             "server_id": sid,
         })
@@ -188,13 +177,13 @@ class TestAgentRegistration:
         sid = await _register_server(api)
         await api.post("/api/discovery/agents", json={
             "agent_id": "a1", "name": "Agent1",
-            "agent_type": "executor", "domains": ["coding"],
+            "domains": ["coding"],
             "skills": [SAMPLE_SKILL], "url": "http://a1:9000",
             "server_id": sid,
         })
         resp = await api.post("/api/discovery/agents", json={
             "agent_id": "a2", "name": "Agent2",
-            "agent_type": "executor", "domains": ["coding"],
+            "domains": ["coding"],
             "skills": [SAMPLE_SKILL], "url": "http://a2:9000",
             "server_id": sid,
         })
@@ -208,7 +197,7 @@ class TestServerCascade:
         sid = await _register_server(api)
         await api.post("/api/discovery/agents", json={
             "agent_id": "agent1", "name": "A1",
-            "agent_type": "executor", "domains": ["coding"],
+            "domains": ["coding"],
             "skills": [SAMPLE_SKILL], "url": "http://a1:9000",
             "server_id": sid,
         })
@@ -230,7 +219,7 @@ class TestDiscoveryQuery:
         sid = await _register_server(api)
         await api.post("/api/discovery/agents", json={
             "agent_id": "coder1", "name": "Coder",
-            "agent_type": "executor", "domains": ["coding"],
+            "domains": ["coding"],
             "skills": [SAMPLE_SKILL], "url": "http://c1:9000",
             "server_id": sid,
         })
@@ -252,7 +241,7 @@ class TestDiscoveryQuery:
         sid = await _register_server(api)
         await api.post("/api/discovery/agents", json={
             "agent_id": "coder1", "name": "Coder",
-            "agent_type": "executor", "domains": ["coding"],
+            "domains": ["coding"],
             "skills": [SAMPLE_SKILL], "url": "http://c1:9000",
             "server_id": sid,
         })
@@ -268,7 +257,7 @@ class TestDiscoveryQuery:
         sid = await _register_server(api)
         await api.post("/api/discovery/agents", json={
             "agent_id": "coder1", "name": "Coder",
-            "agent_type": "executor", "domains": ["coding"],
+            "domains": ["coding"],
             "skills": [SAMPLE_SKILL], "url": "http://c1:9000",
             "server_id": sid,
         })
@@ -289,7 +278,7 @@ class TestDiscoveryQuery:
         sid = await _register_server(api)
         await api.post("/api/discovery/agents", json={
             "agent_id": "a1", "name": "A1",
-            "agent_type": "executor", "domains": ["coding"],
+            "domains": ["coding"],
             "skills": [SAMPLE_SKILL], "url": "http://a1:9000",
             "server_id": sid,
         })

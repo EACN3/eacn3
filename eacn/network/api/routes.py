@@ -244,7 +244,7 @@ async def select_result(task_id: str, req: SelectResultRequest):
             initiator_id=req.initiator_id,
         )
         return OkResponse(message="Result selected, settlement done")
-    except TaskError as e:
+    except (TaskError, BudgetError) as e:
         raise HTTPException(400, str(e))
 
 
@@ -378,7 +378,7 @@ async def create_subtask(task_id: str, req: CreateSubtaskRequest):
 
 @router.post("/reputation/events", response_model=ReputationResponse)
 async def receive_reputation_event(req: ReputationEventRequest):
-    score = _net().receive_reputation_event(
+    score = await _net().receive_reputation_event(
         req.agent_id, req.event_type, req.server_id,
     )
     return ReputationResponse(agent_id=req.agent_id, score=score)

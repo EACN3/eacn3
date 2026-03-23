@@ -47,8 +47,8 @@ class Network:
         self.adjudication = AdjudicationService()
         self.matcher = GlobalMatcher(config=self.config.matcher)
         self.logger = GlobalLogger()
-        self.reputation = GlobalReputation(config=self.config.reputation)
-        self.escrow = EscrowService()
+        self.reputation = GlobalReputation(config=self.config.reputation, db=self.db)
+        self.escrow = EscrowService(db=self.db)
         self.settlement = SettlementService(
             self.escrow,
             platform_fee_rate=self.config.economy.platform_fee_rate,
@@ -61,6 +61,8 @@ class Network:
     async def start(self) -> None:
         """Bootstrap the network node."""
         _log.info("EACN Network starting...")
+        await self.escrow.load_from_db()
+        await self.reputation.load_from_db()
         await self.cluster.start()
 
     async def create_task(
@@ -78,7 +80,7 @@ class Network:
         invited_agent_ids: list[str] | None = None,
     ) -> Task:
         """Publish a new task: freeze budget → create → discover → broadcast."""
-        self.escrow.freeze_budget(initiator_id, task_id, budget)
+        await self.escrow.freeze_budget(initiator_id, task_id, budget)
         task = Task(
             id=task_id,
             content=content,
@@ -356,9 +358,9 @@ class Network:
                 break
 
         if task.type != TaskType.ADJUDICATION and bid_price > 0:
-            self.settlement.settle(task_id, agent_id, bid_price)
+            await self.settlement.settle(task_id, agent_id, bid_price)
 
-        self.reputation.propagate_selection(task.initiator_id, agent_id)
+        await self.reputation.propagate_selection(task.initiator_id, agent_id)
 
         await self.cluster.trigger_gossip(task_id)
 
@@ -378,7 +380,7 @@ class Network:
         if task.status == TaskStatus.AWAITING_RETRIEVAL:
             await self.push.notify_task_collected(task)
         elif task.status == TaskStatus.NO_ONE_ABLE:
-            self.settlement.refund_no_one_capable(task_id)
+            await self.settlement.refund_no_one_capable(task_id)
 
         await self._notify_status_cross_node(task, task.status.value)
 
@@ -453,7 +455,7 @@ class Network:
         # Approved: update budget if new_budget provided
         if new_budget is not None and new_budget > task.budget:
             additional = new_budget - task.budget
-            self.escrow.confirm_budget_increase(initiator_id, task_id, additional)
+            await self.escrow.confirm_budget_increase(initiator_id, task_id, additional)
             task.budget = new_budget
             if task.remaining_budget is not None:
                 task.remaining_budget += additional
@@ -514,7 +516,7 @@ class Network:
         )
 
         # Transfer escrow
-        self.escrow.allocate_subtask_budget(
+        await self.escrow.allocate_subtask_budget(
             parent_task_id, subtask.id, initiator_id, budget,
         )
 
@@ -542,7 +544,7 @@ class Network:
             if new_status == TaskStatus.AWAITING_RETRIEVAL:
                 await self.push.notify_task_collected(task)
             elif new_status == TaskStatus.NO_ONE_ABLE:
-                self.settlement.refund_no_one_capable(task.id)
+                await self.settlement.refund_no_one_capable(task.id)
 
             await self._notify_status_cross_node(task, "timeout")
 
@@ -551,7 +553,7 @@ class Network:
         return expired_ids
 
 
-    def receive_reputation_event(
+    async def receive_reputation_event(
         self,
         agent_id: str,
         event_type: str,
@@ -562,7 +564,7 @@ class Network:
         Only raw events are accepted (not scores).
         Returns the updated reputation score.
         """
-        return self.reputation.aggregate(
+        return await self.reputation.aggregate(
             agent_id,
             [{"type": event_type}],
             server_id=server_id,

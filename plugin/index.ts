@@ -5,10 +5,12 @@
  * All logic delegates to the same src/ modules.
  */
 
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { type AgentCard, type PushEvent, type AgentTier, type TaskLevel, EACN3_DEFAULT_NETWORK_ENDPOINT, isTierEligible } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
 import * as ws from "./src/ws-manager.js";
+import * as a2a from "./src/a2a-server.js";
 
 // ---------------------------------------------------------------------------
 // Heartbeat
@@ -148,10 +150,14 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
 // Plugin entry
 // ---------------------------------------------------------------------------
 
-export default function (api: any) {
-  // Load state and register event callbacks
-  state.load();
-  registerEventCallbacks();
+export default definePluginEntry({
+  id: "eacn3",
+  name: "EACN3 Network Plugin",
+  description: "Agent collaboration network — install to go online, uninstall to go offline. Publish tasks, register agents, earn reputation.",
+  register(api) {
+    // Load state and register event callbacks
+    state.load();
+    registerEventCallbacks();
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Health / Cluster (2)
@@ -206,7 +212,7 @@ export default function (api: any) {
   // #1 eacn3_connect
   api.registerTool({
     name: "eacn3_connect",
-    description: "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online}. Side effects: opens WebSocket connections for any previously registered agents. Call eacn3_register_agent next.",
+    description: "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: opens WebSocket connections for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
     parameters: {
       type: "object",
       properties: {
@@ -229,24 +235,63 @@ export default function (api: any) {
       }
 
       s.network_endpoint = endpoint;
-      const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
-      s.server_card = { server_id: res.server_id, version: "0.3.0", endpoint: "plugin://local", owner: "plugin-user", status: "online" };
+
+      // Reuse existing server identity if available; otherwise register new
+      let sid: string;
+      if (s.server_card) {
+        try {
+          await net.heartbeat();
+          sid = s.server_card.server_id;
+          s.server_card.status = "online";
+        } catch {
+          const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
+          sid = res.server_id;
+          s.server_card = { server_id: sid, version: "0.3.0", endpoint: "plugin://local", owner: "plugin-user", status: "online" };
+          for (const agent of Object.values(s.agents)) {
+            agent.server_id = sid;
+            try { await net.registerAgent(agent); } catch { /* best-effort */ }
+          }
+        }
+      } else {
+        const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
+        sid = res.server_id;
+        s.server_card = { server_id: sid, version: "0.3.0", endpoint: "plugin://local", owner: "plugin-user", status: "online" };
+      }
       state.save();
       startHeartbeat();
-      for (const agentId of Object.keys(s.agents)) ws.connect(agentId);
-      return ok({ connected: true, server_id: res.server_id, network_endpoint: endpoint, fallback, agents_online: Object.keys(s.agents).length });
+
+      // Reconnect WS for all existing agents; re-register if network lost them
+      for (const agent of Object.values(s.agents)) {
+        try { await net.getAgentInfo(agent.agent_id); } catch {
+          try { await net.registerAgent(agent); } catch { /* best-effort */ }
+        }
+        ws.connect(agent.agent_id);
+      }
+
+      const restoredAgents = Object.values(s.agents).map((a: any) => ({
+        agent_id: a.agent_id, name: a.name, domains: a.domains, tier: a.tier,
+      }));
+      return ok({
+        connected: true, server_id: sid, network_endpoint: endpoint, fallback,
+        agents_online: restoredAgents.length,
+        restored_agents: restoredAgents,
+        hint: restoredAgents.length > 0
+          ? "You have previously registered agents restored and reconnected. You can use them directly without re-registering. Call eacn3_list_my_agents() for full details."
+          : "No previous agents found. Register a new agent with eacn3_register_agent().",
+      });
     },
   });
 
   // #2 eacn3_disconnect
   api.registerTool({
     name: "eacn3_disconnect",
-    description: "Disconnect from the EACN3 network, unregister the server, and close all WebSocket connections. Requires: eacn3_connect first. Side effects: clears all local agent state; active tasks will timeout and hurt reputation. Returns {disconnected: true}. Only call at end of session.",
+    description: "Disconnect from the EACN3 network and close all WebSocket connections. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
     parameters: { type: "object", properties: {} },
     async execute() {
       stopHeartbeat(); ws.disconnectAll();
-      try { await net.unregisterServer(); } catch { /* */ }
-      const s = state.getState(); s.server_card = null; s.agents = {};
+      // Do NOT call unregisterServer — it cascade-deletes all agents on the network side.
+      const s = state.getState();
+      if (s.server_card) s.server_card.status = "offline";
       state.save();
       return ok({ disconnected: true });
     },
@@ -273,6 +318,40 @@ export default function (api: any) {
     },
   });
 
+  // #4b eacn3_a2a_server
+  api.registerTool({
+    name: "eacn3_a2a_server",
+    description: "Start or stop the A2A (Agent-to-Agent) HTTP server for direct messaging. When started, other agents can POST messages directly to this server instead of relaying through the network. Returns {running, port, url}. Pass action='stop' to shut it down. After starting, re-register agents or call eacn3_update_agent to advertise the real URL.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["start", "stop", "status"], description: "Action to perform. Defaults to 'start'." },
+        port: { type: "number", description: "Port to listen on. 0 = OS auto-assign. Defaults to 0." },
+        url: { type: "string", description: "Public URL for this server (e.g. 'http://my-host:3001'). Auto-generated from port if omitted." },
+      },
+    },
+    async execute(_id: string, params: any) {
+      const action = params.action ?? "start";
+
+      if (action === "status") {
+        return ok({ running: a2a.isRunning(), port: a2a.getServerPort() });
+      }
+
+      if (action === "stop") {
+        await a2a.stopServer();
+        return ok({ running: false, port: 0 });
+      }
+
+      // start
+      const port = params.port ?? 0;
+      const actualPort = await a2a.startServer(port);
+      const baseUrl = params.url
+        ? params.url.replace(/\/$/, "")
+        : `http://localhost:${actualPort}`;
+      return ok({ running: true, port: actualPort, url: baseUrl });
+    },
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Agent Management (7)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -289,9 +368,10 @@ export default function (api: any) {
         domains: { type: "array", items: { type: "string" }, description: "Capability domains" },
         skills: { type: "array", items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" }, description: { type: "string" }, tags: { type: "array", items: { type: "string" } }, parameters: { type: "object" } } }, description: "Agent skills" },
         capabilities: { type: "object", properties: { max_concurrent_tasks: { type: "number", description: "Max tasks simultaneously (0 = unlimited)" }, concurrent: { type: "boolean", description: "Whether Agent supports concurrent execution" } }, description: "Agent capacity limits" },
-        agent_type: { type: "string", enum: ["executor", "planner"], description: "Defaults to executor" },
         tier: { type: "string", enum: ["general", "expert", "expert_general", "tool"], description: "Capability tier: general > expert > expert_general > tool. Defaults to general." },
         agent_id: { type: "string", description: "Custom agent ID. Auto-generated if omitted." },
+        a2a_port: { type: "number", description: "Port for A2A HTTP server. Enables direct agent-to-agent messaging. Omit to use Network relay only." },
+        a2a_url: { type: "string", description: "Full public URL for A2A callbacks (e.g. 'http://my-server.com:3001'). Auto-generated from a2a_port if omitted." },
       },
       required: ["name", "description", "domains"],
     },
@@ -301,23 +381,40 @@ export default function (api: any) {
       if (!params.name?.trim()) return err("name cannot be empty");
       if (!params.domains?.length) return err("domains cannot be empty");
       const agentId = params.agent_id ?? `agent-${Date.now().toString(36)}`;
+
+      // Determine agent URL: real A2A endpoint or local placeholder
+      let agentUrl = `plugin://local/agents/${agentId}`;
+      if (params.a2a_port || params.a2a_url) {
+        const port = params.a2a_port ?? 0;
+        const actualPort = await a2a.startServer(port);
+        if (params.a2a_url) {
+          agentUrl = `${params.a2a_url.replace(/\/$/, "")}/agents/${agentId}`;
+        } else {
+          agentUrl = `http://localhost:${actualPort}/agents/${agentId}`;
+        }
+      }
+
       const card: AgentCard = {
-        agent_id: agentId, name: params.name, agent_type: params.agent_type ?? "executor",
+        agent_id: agentId, name: params.name,
         tier: params.tier ?? "general",
         domains: params.domains, skills: params.skills ?? [], capabilities: params.capabilities,
-        url: `plugin://local/agents/${agentId}`, server_id: s.server_card.server_id,
+        url: agentUrl, server_id: s.server_card.server_id,
         network_id: "", description: params.description,
       };
       const res = await net.registerAgent(card);
       state.addAgent(card); ws.connect(agentId);
-      return ok({ registered: true, agent_id: agentId, seeds: res.seeds, domains: params.domains });
+      return ok({
+        registered: true, agent_id: agentId, seeds: res.seeds, domains: params.domains,
+        url: agentUrl,
+        a2a_server: a2a.isRunning() ? { port: a2a.getServerPort() } : null,
+      });
     },
   });
 
   // #6 eacn3_get_agent
   api.registerTool({
     name: "eacn3_get_agent",
-    description: "Fetch the full AgentCard for any agent by ID — checks local state first, then queries the network. Returns {agent_id, name, agent_type, domains, skills, capabilities, url, server_id, description}. No side effects. Use to inspect an agent before sending messages or evaluating bids.",
+    description: "Fetch the full AgentCard for any agent by ID — checks local state first, then queries the network. Returns {agent_id, name, domains, skills, capabilities, url, server_id, description}. No side effects. Use to inspect an agent before sending messages or evaluating bids.",
     parameters: { type: "object", properties: { agent_id: { type: "string" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
       const local = state.getAgent(params.agent_id);
@@ -363,6 +460,10 @@ export default function (api: any) {
     async execute(_id: string, params: any) {
       const res = await net.unregisterAgent(params.agent_id);
       ws.disconnect(params.agent_id); state.removeAgent(params.agent_id);
+      // Stop A2A server if no agents remain
+      if (state.listAgents().length === 0 && a2a.isRunning()) {
+        await a2a.stopServer();
+      }
       return ok({ unregistered: true, agent_id: params.agent_id, ...res });
     },
   });
@@ -370,11 +471,11 @@ export default function (api: any) {
   // #9 eacn3_list_my_agents
   api.registerTool({
     name: "eacn3_list_my_agents",
-    description: "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, agent_type, domains, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
+    description: "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
     parameters: { type: "object", properties: {} },
     async execute() {
       const agents = state.listAgents();
-      return ok({ count: agents.length, agents: agents.map((a) => ({ agent_id: a.agent_id, name: a.name, agent_type: a.agent_type, domains: a.domains, ws_connected: ws.isConnected(a.agent_id) })) });
+      return ok({ count: agents.length, agents: agents.map((a) => ({ agent_id: a.agent_id, name: a.name, domains: a.domains, tier: a.tier, ws_connected: ws.isConnected(a.agent_id) })) });
     },
   });
 
@@ -789,4 +890,5 @@ export default function (api: any) {
       return ok({ count: events.length, events });
     },
   });
-}
+  },
+});

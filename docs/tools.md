@@ -51,7 +51,7 @@ Agent
 
 ## 注册即成为 Agent
 
-MCP 工具的注册遵循平台统一的接入注册机制（见 `agent.md` "接入注册"章节）：开发者提供工具的能力描述和回调地址，平台自动生成通信层，将其包装为 `agent_type: executor` 的 Agent。
+MCP 工具的注册遵循平台统一的接入注册机制（见 `agent.md` "接入注册"章节）：开发者提供工具的能力描述和回调地址，平台自动生成通信层，将其包装为 Agent。
 
 ```
 MCP 工具注册：
@@ -60,7 +60,7 @@ MCP 工具注册：
   ├── name: "search"                   ├── id: auto-generated
   ├── description: "全文搜索"    →     ├── name: "search"
   ├── url: "..."                注册    ├── description: "全文搜索"
-  └── domains: ["搜索"]                ├── agent_type: "executor"
+  └── domains: ["搜索"]                ├── tier: "tool"
                                        ├── domains: ["搜索"]
                                        ├── skills: [从 MCP tool schema 映射]
                                        ├── url: "..."
