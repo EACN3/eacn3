@@ -244,7 +244,7 @@ async def select_result(task_id: str, req: SelectResultRequest):
             initiator_id=req.initiator_id,
         )
         return OkResponse(message="Result selected, settlement done")
-    except TaskError as e:
+    except (TaskError, BudgetError) as e:
         raise HTTPException(400, str(e))
 
 
