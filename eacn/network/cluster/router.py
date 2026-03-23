@@ -26,6 +26,11 @@ class ClusterRouter:
         self._routes: dict[str, str] = {}
         self._participants: dict[str, set[str]] = {}
         self._endpoints: dict[str, str] = {}
+        self._http: httpx.AsyncClient | None = None
+
+    def set_http_client(self, client: httpx.AsyncClient) -> None:
+        """Inject the shared HTTP client for connection reuse."""
+        self._http = client
 
     def set_endpoint(self, node_id: str, endpoint: str) -> None:
         self._endpoints[node_id] = endpoint
@@ -33,30 +38,30 @@ class ClusterRouter:
     def get_endpoint(self, node_id: str) -> str | None:
         return self._endpoints.get(node_id)
 
-    # ── Route management ─────────────────────────────────────────────
-
-    def is_local(self, task_id: str) -> bool:
-        origin = self._routes.get(task_id)
-        return origin is None or origin == self._local_node_id
-
-    def set_route(self, task_id: str, origin_node: str) -> None:
-        self._routes[task_id] = origin_node
+    def set_route(self, task_id: str, origin: str) -> None:
+        self._routes[task_id] = origin
 
     def get_route(self, task_id: str) -> str | None:
         return self._routes.get(task_id)
-
-    def remove_route(self, task_id: str) -> None:
-        self._routes.pop(task_id, None)
-
-    # ── Participant tracking ─────────────────────────────────────────
 
     def add_participant(self, task_id: str, node_id: str) -> None:
         self._participants.setdefault(task_id, set()).add(node_id)
 
     def get_participants(self, task_id: str) -> set[str]:
-        return self._participants.get(task_id, set())
+        return set(self._participants.get(task_id, set()))
 
     def remove_participants(self, task_id: str) -> None:
+        self._participants.pop(task_id, None)
+
+    def is_local(self, task_id: str) -> bool:
+        origin = self._routes.get(task_id)
+        return origin is None or origin == self._local_node_id
+
+    def remove_route(self, task_id: str) -> None:
+        self._routes.pop(task_id, None)
+
+    def remove_task(self, task_id: str) -> None:
+        self._routes.pop(task_id, None)
         self._participants.pop(task_id, None)
 
     # ── Forwarding ───────────────────────────────────────────────────
@@ -72,10 +77,13 @@ class ClusterRouter:
         return endpoint
 
     async def _post(self, url: str, body: dict, timeout: float = 10.0) -> dict:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=body)
-            resp.raise_for_status()
-            return resp.json()
+        if self._http:
+            resp = await self._http.post(url, json=body, timeout=timeout)
+        else:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(url, json=body)
+        resp.raise_for_status()
+        return resp.json()
 
     async def forward_bid(self, task_id: str, agent_id: str,
                           server_id: str | None, confidence: float,

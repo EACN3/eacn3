@@ -24,12 +24,12 @@ class SettlementService:
         self.platform_fee_rate = platform_fee_rate
         self.total_fees_collected: float = 0.0
 
-    def settle(
+    async def settle(
         self,
         task_id: str,
         executor_id: str,
         bid_price: float,
-    ) -> SettlementResult:
+    ) -> "SettlementResult":
         """Full settlement flow for a task.
 
         1. Calculate platform fee
@@ -41,17 +41,18 @@ class SettlementService:
         total_deduction = bid_price + platform_fee
 
         # Deduct from escrow
-        initiator_id = self.escrow.deduct_for_settlement(task_id, total_deduction)
+        initiator_id = await self.escrow.deduct_for_settlement(task_id, total_deduction)
 
         # Credit executor
         executor_account = self.escrow.get_or_create_account(executor_id)
         executor_account.credit(bid_price)
+        await self.escrow._persist_account(executor_id)
 
         # Track platform fees
         self.total_fees_collected += platform_fee
 
         # Refund remainder
-        refund = self.escrow.release(task_id)
+        refund = await self.escrow.release(task_id)
 
         return SettlementResult(
             task_id=task_id,
@@ -62,9 +63,9 @@ class SettlementService:
             refund=refund,
         )
 
-    def refund_no_one_capable(self, task_id: str) -> float:
+    async def refund_no_one_capable(self, task_id: str) -> float:
         """Refund entire escrow when no one can complete the task."""
-        return self.escrow.release(task_id)
+        return await self.escrow.release(task_id)
 
 
 class SettlementResult:

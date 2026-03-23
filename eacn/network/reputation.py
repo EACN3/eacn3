@@ -5,14 +5,19 @@ Design:
 - Cap mechanism: single adjudication gain/penalty capped, counts tracked
 - Cold-start: new servers' events initially discounted
 - Anti-gaming: anomaly detection for rapid success clusters
+
+All score mutations are persisted to the database when a db reference is provided.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from eacn.core.models import LogEntry
+
+if TYPE_CHECKING:
+    from eacn.network.db.database import Database
 
 _logger = logging.getLogger(__name__)
 
@@ -20,9 +25,14 @@ _logger = logging.getLogger(__name__)
 class GlobalReputation:
     """Aggregates reputation from all server events with weighted PageRank."""
 
-    def __init__(self, config: "ReputationConfig | None" = None) -> None:
+    def __init__(
+        self,
+        config: "ReputationConfig | None" = None,
+        db: "Database | None" = None,
+    ) -> None:
         from eacn.network.config import ReputationConfig
         cfg = config or ReputationConfig()
+        self._db = db
         self.MAX_GAIN: float = cfg.max_gain
         self.MAX_PENALTY: float = cfg.max_penalty
         self.DEFAULT_SCORE: float = cfg.default_score
@@ -44,6 +54,41 @@ class GlobalReputation:
         # Anomaly tracking: recent events per agent for burst detection
         self._recent_events: dict[str, list[str]] = {}
 
+    async def load_from_db(self) -> None:
+        """Restore reputation state from the database."""
+        if not self._db:
+            return
+        for agent_id, score, cap_counts in await self._db.list_all_reputations():
+            self._scores[agent_id] = score
+            self._cap_counts[agent_id] = cap_counts
+        for server_id, score, event_count in await self._db.list_all_server_reputations():
+            self._server_reputation[server_id] = score
+            self._server_event_counts[server_id] = event_count
+        _logger.info(
+            "Loaded %d agent reputations, %d server reputations from DB",
+            len(self._scores), len(self._server_reputation),
+        )
+
+    # ── DB sync helpers ───────────────────────────────────────────────
+
+    async def _persist_agent(self, agent_id: str) -> None:
+        if not self._db:
+            return
+        await self._db.upsert_reputation(
+            agent_id,
+            self._scores.get(agent_id, self.DEFAULT_SCORE),
+            self._cap_counts.get(agent_id, {}),
+        )
+
+    async def _persist_server(self, server_id: str) -> None:
+        if not self._db:
+            return
+        await self._db.upsert_server_reputation(
+            server_id,
+            self._server_reputation.get(server_id, self.DEFAULT_SCORE),
+            self._server_event_counts.get(server_id, 0),
+        )
+
     def update_config(self, config: "ReputationConfig") -> None:
         """Update config parameters without resetting accumulated state."""
         self.MAX_GAIN = config.max_gain
@@ -63,7 +108,7 @@ class GlobalReputation:
 
     # ── Core API ─────────────────────────────────────────────────────
 
-    def aggregate(
+    async def aggregate(
         self,
         agent_id: str,
         events: list[dict[str, Any] | LogEntry],
@@ -116,6 +161,9 @@ class GlobalReputation:
                 )
 
         self._scores[agent_id] = score
+        await self._persist_agent(agent_id)
+        if server_id:
+            await self._persist_server(server_id)
         return score
 
     def get_score(self, agent_id: str) -> float:
@@ -132,7 +180,7 @@ class GlobalReputation:
 
     # ── PageRank: result selection propagation ───────────────────────
 
-    def propagate_selection(
+    async def propagate_selection(
         self,
         selector_id: str,
         selected_id: str,
@@ -151,11 +199,15 @@ class GlobalReputation:
         selector_score = self.get_score(selector_id)
         self._scores[selector_id] = min(1.0, selector_score + self._selector_judgment_boost)
 
+        await self._persist_agent(selected_id)
+        await self._persist_agent(selector_id)
+
     # ── Server reputation ────────────────────────────────────────────
 
-    def set_server_reputation(self, server_id: str, score: float) -> None:
+    async def set_server_reputation(self, server_id: str, score: float) -> None:
         """Set a server's own reputation (derived from its agents' aggregate)."""
         self._server_reputation[server_id] = max(0.0, min(1.0, score))
+        await self._persist_server(server_id)
 
     def get_server_reputation(self, server_id: str) -> float:
         return self._server_reputation.get(server_id, self.DEFAULT_SCORE)

@@ -57,6 +57,7 @@ class ClusterService:
         self._push_handler: LocalPushHandler | None = None
         self._agent_counts: dict[str, int] = {}  # node_id → connected agent count
         self._standalone = not bool(self.config.seed_nodes)
+        self._http: httpx.AsyncClient | None = None
 
     @property
     def standalone(self) -> bool:
@@ -69,6 +70,11 @@ class ClusterService:
     # ── Lifecycle ────────────────────────────────────────────────────
 
     async def start(self) -> None:
+        # Create a shared HTTP client for all cluster communication
+        self._http = httpx.AsyncClient(timeout=10.0)
+        self.router.set_http_client(self._http)
+        self.bootstrap.set_http_client(self._http)
+
         if self._standalone:
             _log.info("Cluster starting in standalone mode")
             return
@@ -85,11 +91,14 @@ class ClusterService:
                    self.node_id, self.members.count() - 1)
 
     async def stop(self) -> None:
-        if self._standalone:
-            return
-        await self.bootstrap.leave_network(
-            self.members.all_nodes(exclude=self.node_id))
-        await self.dht.revoke_all(self.node_id)
+        if not self._standalone:
+            await self.bootstrap.leave_network(
+                self.members.all_nodes(exclude=self.node_id))
+            await self.dht.revoke_all(self.node_id)
+        # Close the shared HTTP client
+        if self._http:
+            await self._http.aclose()
+            self._http = None
 
     # ── Domain management ────────────────────────────────────────────
 
@@ -148,13 +157,19 @@ class ClusterService:
                 else:
                     continue
             try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(
+                if self._http:
+                    resp = await self._http.post(
                         f"{endpoint}/peer/task/broadcast",
                         json={**task_summary, "origin": self.node_id},
                     )
-                    resp.raise_for_status()
-                    notified.append(node_id)
+                else:
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        resp = await client.post(
+                            f"{endpoint}/peer/task/broadcast",
+                            json={**task_summary, "origin": self.node_id},
+                        )
+                resp.raise_for_status()
+                notified.append(node_id)
             except Exception:
                 _log.warning("Failed to broadcast task to node %s", node_id)
 
