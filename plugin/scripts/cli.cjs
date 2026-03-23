@@ -230,7 +230,7 @@ function setupOpenclaw() {
     ok(`dist/index.js exists`);
   }
 
-  // 2. Copy plugin files
+  // 2. Copy plugin files (no node_modules — resolved from package root at runtime)
   log(`copying to ${EXT_DIR} ...`);
   fs.mkdirSync(EXT_DIR, { recursive: true });
 
@@ -252,27 +252,28 @@ function setupOpenclaw() {
     ok('openclaw.plugin.json copied');
   }
 
-  // Copy package.json
+  // Copy package.json (needed for metadata, but NOT node_modules)
   fs.copyFileSync(path.join(PKG_ROOT, 'package.json'), path.join(EXT_DIR, 'package.json'));
   ok('package.json copied');
 
-  // Copy node_modules/ (runtime dependencies like ws, zod, @modelcontextprotocol/sdk)
+  // Symlink node_modules so in-process require() resolves dependencies
+  // without duplicating the entire dependency tree
+  const nmDst = path.join(EXT_DIR, 'node_modules');
   const nmSrc = path.join(PKG_ROOT, 'node_modules');
+  if (fs.existsSync(nmDst)) {
+    fs.rmSync(nmDst, { recursive: true, force: true });
+  }
   if (fs.existsSync(nmSrc)) {
-    copyDirRecursive(nmSrc, path.join(EXT_DIR, 'node_modules'));
-    ok('node_modules/ copied');
-  } else {
-    fail('node_modules/ not found — run "npm install" first');
+    fs.symlinkSync(nmSrc, nmDst, 'junction');
+    ok(`node_modules → ${nmSrc} (symlink)`);
   }
 
-  // Clean up stale extension directory from previous installs (used wrong name "eacn")
+  // Clean up stale "eacn" directory from previous installs
   const staleDir = path.join(os.homedir(), '.openclaw', 'extensions', 'eacn');
   if (staleDir !== EXT_DIR && fs.existsSync(staleDir)) {
     fs.rmSync(staleDir, { recursive: true, force: true });
     ok('removed stale extensions/eacn directory');
   }
-
-  // 3. Discover skills
   const skillNames = [];
   if (fs.existsSync(skillsSrc)) {
     for (const d of fs.readdirSync(skillsSrc)) {

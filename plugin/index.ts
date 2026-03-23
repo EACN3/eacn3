@@ -5,7 +5,6 @@
  * All logic delegates to the same src/ modules.
  */
 
-import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { type AgentCard, type PushEvent, type AgentTier, type TaskLevel, EACN3_DEFAULT_NETWORK_ENDPOINT, isTierEligible } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
@@ -150,11 +149,11 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
 // Plugin entry
 // ---------------------------------------------------------------------------
 
-export default definePluginEntry({
+export default {
   id: "eacn3",
   name: "EACN3 Network Plugin",
   description: "Agent collaboration network — install to go online, uninstall to go offline. Publish tasks, register agents, earn reputation.",
-  register(api) {
+  register(api: any) {
     // Load state and register event callbacks
     state.load();
     registerEventCallbacks();
@@ -891,4 +890,4 @@ export default definePluginEntry({
     },
   });
   },
-});
+};
