@@ -143,13 +143,12 @@ function diagnose() {
   console.log('\n── OpenClaw Integration ──');
   check('extensions directory', () => {
     if (!fs.existsSync(EXT_DIR)) throw new Error(`${EXT_DIR} not found — run "npx eacn3 setup"`);
-    const files = fs.readdirSync(EXT_DIR);
-    return `${files.length} entries in ${EXT_DIR}`;
-  });
-  check('dist/index.js in extensions', () => {
-    const p = path.join(EXT_DIR, 'dist', 'index.js');
-    if (!fs.existsSync(p)) throw new Error('not found — run "npx eacn3 setup" to copy');
-    return 'exists';
+    try {
+      const target = fs.readlinkSync(EXT_DIR);
+      return `symlink → ${target}`;
+    } catch (_) {
+      return `plain directory (consider re-running "npx eacn3 setup" to use symlink)`;
+    }
   });
   check('openclaw.json plugin entry', () => {
     if (!fs.existsSync(CONFIG_PATH)) throw new Error(`${CONFIG_PATH} not found`);
@@ -230,42 +229,20 @@ function setupOpenclaw() {
     ok(`dist/index.js exists`);
   }
 
-  // 2. Copy plugin files
-  log(`copying to ${EXT_DIR} ...`);
-  fs.mkdirSync(EXT_DIR, { recursive: true });
+  // 2. Symlink extensions dir to package root (no file duplication)
+  const extParent = path.dirname(EXT_DIR);
+  fs.mkdirSync(extParent, { recursive: true });
 
-  // Copy dist/
-  copyDirRecursive(path.join(PKG_ROOT, 'dist'), path.join(EXT_DIR, 'dist'));
-  ok('dist/ copied');
-
-  // Copy skills/
-  const skillsSrc = path.join(PKG_ROOT, 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    copyDirRecursive(skillsSrc, path.join(EXT_DIR, 'skills'));
-    ok('skills/ copied');
+  // Remove old extensions dir (may be a stale copy from previous installs)
+  if (fs.existsSync(EXT_DIR)) {
+    fs.rmSync(EXT_DIR, { recursive: true, force: true });
+    ok('removed old extensions/eacn3');
   }
 
-  // Copy manifest
-  const manifestSrc = path.join(PKG_ROOT, 'openclaw.plugin.json');
-  if (fs.existsSync(manifestSrc)) {
-    fs.copyFileSync(manifestSrc, path.join(EXT_DIR, 'openclaw.plugin.json'));
-    ok('openclaw.plugin.json copied');
-  }
+  fs.symlinkSync(PKG_ROOT, EXT_DIR, 'junction');
+  ok(`${EXT_DIR} → ${PKG_ROOT} (symlink)`);
 
-  // Copy package.json
-  fs.copyFileSync(path.join(PKG_ROOT, 'package.json'), path.join(EXT_DIR, 'package.json'));
-  ok('package.json copied');
-
-  // Copy node_modules/ (runtime dependencies like ws, zod, @modelcontextprotocol/sdk)
-  const nmSrc = path.join(PKG_ROOT, 'node_modules');
-  if (fs.existsSync(nmSrc)) {
-    copyDirRecursive(nmSrc, path.join(EXT_DIR, 'node_modules'));
-    ok('node_modules/ copied');
-  } else {
-    fail('node_modules/ not found — run "npm install" first');
-  }
-
-  // Clean up stale extension directory from previous installs (used wrong name "eacn")
+  // Clean up stale "eacn" directory from previous installs
   const staleDir = path.join(os.homedir(), '.openclaw', 'extensions', 'eacn');
   if (staleDir !== EXT_DIR && fs.existsSync(staleDir)) {
     fs.rmSync(staleDir, { recursive: true, force: true });
@@ -273,6 +250,7 @@ function setupOpenclaw() {
   }
 
   // 3. Discover skills
+  const skillsSrc = path.join(PKG_ROOT, 'skills');
   const skillNames = [];
   if (fs.existsSync(skillsSrc)) {
     for (const d of fs.readdirSync(skillsSrc)) {
