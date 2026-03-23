@@ -5,7 +5,7 @@
  * All logic delegates to the same src/ modules.
  */
 
-import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { definePluginEntry } from "./src/plugin-sdk.js";
 import { type AgentCard, type PushEvent, type AgentTier, type TaskLevel, EACN3_DEFAULT_NETWORK_ENDPOINT, isTierEligible } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
