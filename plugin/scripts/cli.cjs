@@ -143,12 +143,13 @@ function diagnose() {
   console.log('\n── OpenClaw Integration ──');
   check('extensions directory', () => {
     if (!fs.existsSync(EXT_DIR)) throw new Error(`${EXT_DIR} not found — run "npx eacn3 setup"`);
-    try {
-      const target = fs.readlinkSync(EXT_DIR);
-      return `symlink → ${target}`;
-    } catch (_) {
-      return `plain directory (consider re-running "npx eacn3 setup" to use symlink)`;
-    }
+    const files = fs.readdirSync(EXT_DIR);
+    return `${files.length} entries in ${EXT_DIR}`;
+  });
+  check('dist/index.js in extensions', () => {
+    const p = path.join(EXT_DIR, 'dist', 'index.js');
+    if (!fs.existsSync(p)) throw new Error('not found — run "npx eacn3 setup" to copy');
+    return 'exists';
   });
   check('openclaw.json plugin entry', () => {
     if (!fs.existsSync(CONFIG_PATH)) throw new Error(`${CONFIG_PATH} not found`);
@@ -229,18 +230,43 @@ function setupOpenclaw() {
     ok(`dist/index.js exists`);
   }
 
-  // 2. Symlink extensions dir to package root (no file duplication)
-  const extParent = path.dirname(EXT_DIR);
-  fs.mkdirSync(extParent, { recursive: true });
+  // 2. Copy plugin files (no node_modules — resolved from package root at runtime)
+  log(`copying to ${EXT_DIR} ...`);
+  fs.mkdirSync(EXT_DIR, { recursive: true });
 
-  // Remove old extensions dir (may be a stale copy from previous installs)
-  if (fs.existsSync(EXT_DIR)) {
-    fs.rmSync(EXT_DIR, { recursive: true, force: true });
-    ok('removed old extensions/eacn3');
+  // Copy dist/
+  copyDirRecursive(path.join(PKG_ROOT, 'dist'), path.join(EXT_DIR, 'dist'));
+  ok('dist/ copied');
+
+  // Copy skills/
+  const skillsSrc = path.join(PKG_ROOT, 'skills');
+  if (fs.existsSync(skillsSrc)) {
+    copyDirRecursive(skillsSrc, path.join(EXT_DIR, 'skills'));
+    ok('skills/ copied');
   }
 
-  fs.symlinkSync(PKG_ROOT, EXT_DIR, 'junction');
-  ok(`${EXT_DIR} → ${PKG_ROOT} (symlink)`);
+  // Copy manifest
+  const manifestSrc = path.join(PKG_ROOT, 'openclaw.plugin.json');
+  if (fs.existsSync(manifestSrc)) {
+    fs.copyFileSync(manifestSrc, path.join(EXT_DIR, 'openclaw.plugin.json'));
+    ok('openclaw.plugin.json copied');
+  }
+
+  // Copy package.json (needed for metadata, but NOT node_modules)
+  fs.copyFileSync(path.join(PKG_ROOT, 'package.json'), path.join(EXT_DIR, 'package.json'));
+  ok('package.json copied');
+
+  // Symlink node_modules so in-process require() resolves dependencies
+  // without duplicating the entire dependency tree
+  const nmDst = path.join(EXT_DIR, 'node_modules');
+  const nmSrc = path.join(PKG_ROOT, 'node_modules');
+  if (fs.existsSync(nmDst)) {
+    fs.rmSync(nmDst, { recursive: true, force: true });
+  }
+  if (fs.existsSync(nmSrc)) {
+    fs.symlinkSync(nmSrc, nmDst, 'junction');
+    ok(`node_modules → ${nmSrc} (symlink)`);
+  }
 
   // Clean up stale "eacn" directory from previous installs
   const staleDir = path.join(os.homedir(), '.openclaw', 'extensions', 'eacn');
@@ -248,9 +274,6 @@ function setupOpenclaw() {
     fs.rmSync(staleDir, { recursive: true, force: true });
     ok('removed stale extensions/eacn directory');
   }
-
-  // 3. Discover skills
-  const skillsSrc = path.join(PKG_ROOT, 'skills');
   const skillNames = [];
   if (fs.existsSync(skillsSrc)) {
     for (const d of fs.readdirSync(skillsSrc)) {
