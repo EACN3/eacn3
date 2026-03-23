@@ -41,7 +41,6 @@
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "openclaw": "^2026.3.13",
     "ws": "^8.18.0",
     "zod": "^3.24.0"
   },
