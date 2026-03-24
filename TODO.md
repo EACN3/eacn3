@@ -289,6 +289,61 @@
 ### 15. Deadline 扫描部分失败无测试
 - 扫描多个过期任务时部分退款失败的场景未覆盖。
 
+### 82. Peer 路由 bare `except Exception` 吞掉所有错误并泄露信息
+- **文件**: `eacn/network/api/peer_routes.py:220-269`
+- **问题**: 所有 peer task 端点用 `except Exception as e: raise HTTPException(400, str(e))`，
+  将 KeyError/TypeError/AttributeError 等真实 bug 伪装成 400 错误，且 `str(e)` 泄露内部信息。
+- **修复**: 只 catch TaskError 等业务异常返回 400，其余异常让框架返回 500。
+
+### 83. Push 重试循环捕获 CancelledError — 阻碍优雅关闭
+- **文件**: `eacn/network/push.py:197-206`
+- **问题**: `except Exception` 包含 `asyncio.CancelledError`，导致 shutdown 时
+  push task 不响应取消，继续重试直到超时。
+- **修复**: 在 except 块前加 `except asyncio.CancelledError: raise`。
+
+### 84. Adjudication score `float()` 转换可抛 ValueError
+- **文件**: `eacn/network/app.py:354`
+- **问题**: `score = float(content.get("score", 1.0))` 若 score 为非数字字符串如 `"high"`，
+  `float()` 抛 ValueError，导致 submit_result 整体失败。
+- **修复**: 用 try/except 包裹并 fallback 到 1.0，或在 schema 层校验类型。
+
+### 85. Escrow `_persist_account` 失败被静默忽略
+- **文件**: `eacn/network/economy/escrow.py:52-57`
+- **问题**: DB 写入异常（磁盘满、约束冲突）未捕获处理，内存已更新但持久化失败。
+  重启后账户状态回到旧值。
+- **修复**: 捕获异常并回滚内存状态，或至少记录 ERROR 日志。
+
+### 86. WebSocket 接收循环 bare `except Exception` 静默断连
+- **文件**: `eacn/network/api/websocket.py:221-222`
+- **问题**: JSON 解析错误、ACK 处理 bug 等均被静默捕获并断开连接，无日志。
+- **修复**: 添加 warning 级别日志记录异常详情。
+
+### 87. 跨节点广播丢失 level 和 invited_agent_ids 字段
+- **文件**: `eacn/network/api/peer_routes.py:77-86`
+- **问题**: `TaskBroadcastRequest` schema 缺少 `level` 和 `invited_agent_ids` 字段。
+  `app.py:109` 发送了这些字段，但接收端 Pydantic 验证时静默丢弃，
+  远程节点上的任务 level 默认为 GENERAL，邀请列表为空。
+- **修复**: 在 TaskBroadcastRequest 中添加 `level: str | None = None` 和
+  `invited_agent_ids: list[str] = Field(default_factory=list)`。
+
+### 88. 跨节点广播的 task type 被忽略
+- **文件**: `eacn/network/api/peer_routes.py:210-214`
+- **问题**: `peer_task_broadcast` 创建 Task 时不传 `type`，
+  adjudication 任务广播到远程节点后变成 normal 类型，绕过 adjudication 逻辑。
+- **修复**: 从 `req.type` 解析 TaskType 并传入 Task 构造。
+
+### 89. Forward subtask 不传 level — 远程子任务丢失层级
+- **文件**: `eacn/network/api/routes.py:345-353`
+- **问题**: `forward_subtask` 的 dict 中缺少 `level` 字段，
+  远程节点创建子任务时 level 回退为父任务的 level 或默认值。
+- **修复**: 在转发 dict 中添加 `"level": req.level`。
+
+### 90. Peer join 只捕获 ValueError — KeyError/TypeError 导致 500
+- **文件**: `eacn/network/api/peer_routes.py:139-140`
+- **问题**: `NodeCard.from_dict()` 缺少必填字段时抛 KeyError，字段类型错误时抛 TypeError，
+  均不在 `except ValueError` 范围内，导致不可控的 500 错误。
+- **修复**: 扩展为 `except (ValueError, KeyError, TypeError)`。
+
 ### 77. Discussion 消息无作者字段 — 无法追溯谁说了什么
 - **文件**: `eacn/network/task_manager.py:259-262`
 - **问题**: discussion 条目只存 `message` 和 `timestamp`，不存发送者 ID。
