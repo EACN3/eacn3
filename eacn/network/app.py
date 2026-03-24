@@ -124,6 +124,19 @@ class Network:
         """Agent bids on a task: validate → add bid → push result."""
         task = self.task_manager.get(task_id)
 
+        # Guard: reject bids on child tasks whose parent has terminated
+        if task.parent_id:
+            try:
+                parent = self.task_manager.get(task.parent_id)
+                if parent.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+                    raise TaskError(
+                        f"Parent task {task.parent_id} already terminated; "
+                        f"cannot bid on child task {task_id}"
+                    )
+            except TaskError as e:
+                if "already terminated" in str(e):
+                    raise
+
         if any(b.agent_id == agent_id for b in task.bids):
             raise TaskError(f"Agent {agent_id} already bid on task {task_id}")
 
@@ -272,6 +285,21 @@ class Network:
         """Agent submits result: validate → store → adjudicate → promote."""
         task = self.task_manager.get(task_id)
 
+        # Guard: reject if parent task has already terminated
+        if task.parent_id:
+            try:
+                parent = self.task_manager.get(task.parent_id)
+                if parent.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+                    raise TaskError(
+                        f"Parent task {task.parent_id} already terminated "
+                        f"(status={parent.status.value}); "
+                        f"cannot submit result to child task {task_id}"
+                    )
+            except TaskError as e:
+                if "already terminated" in str(e):
+                    raise
+                # Parent not found is OK (cross-node scenario)
+
         bidder_ids = [
             b.agent_id for b in task.bids
             if b.status in (BidStatus.EXECUTING, BidStatus.ACCEPTED, BidStatus.WAITING)
@@ -381,6 +409,9 @@ class Network:
 
         self._log_event("select_result", task_id=task_id, agent_id=agent_id)
 
+        # Cascade-close child tasks (adjudication tasks etc.)
+        await self._terminate_children(task)
+
 
     async def close_task(self, task_id: str, initiator_id: str) -> Task:
         """Initiator closes task → AWAITING_RETRIEVAL or NO_ONE_ABLE."""
@@ -398,6 +429,9 @@ class Network:
             await self.settlement.refund_no_one_capable(task_id)
 
         await self._notify_status_cross_node(task, task.status.value)
+
+        # Cascade-close child tasks (adjudication tasks etc.)
+        await self._terminate_children(task)
 
         return task
 
@@ -605,6 +639,31 @@ class Network:
             task.id, status, participant_nodes,
             payload={"status": status, "recipients": recipients},
         )
+
+    async def _terminate_children(self, task: Task) -> None:
+        """Cascade-close all active child tasks (including adjudication tasks).
+
+        When a parent task terminates, its children should not continue
+        accepting bids or results.
+        """
+        for child_id in task.child_ids:
+            try:
+                child = self.task_manager.get(child_id)
+            except TaskError:
+                continue
+            if child.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+                continue
+            # Close the child
+            try:
+                child = self.task_manager.close_task(child_id)
+                _log.info(
+                    "Cascade-closed child task %s (parent %s terminated)",
+                    child_id, task.id,
+                )
+            except TaskError:
+                continue
+            # Recurse into grandchildren
+            await self._terminate_children(child)
 
     async def _broadcast_to_candidates(self, task: Task) -> None:
         """Discover agents, match, and push task broadcast."""
