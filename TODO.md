@@ -289,6 +289,60 @@
 ### 15. Deadline 扫描部分失败无测试
 - 扫描多个过期任务时部分退款失败的场景未覆盖。
 
+### 59. DB: offline_drain 的 SELECT-DELETE 窗口导致消息丢失
+- **文件**: `eacn/network/db/database.py:888-922`
+- **问题**: `offline_drain()` 先 SELECT 再 DELETE，两步之间新 INSERT 的消息会被 DELETE 一并删除，
+  但从未返回给调用方，消息永久丢失。
+- **修复**: 用单个事务包裹 SELECT + DELETE，或用 RETURNING 子句。
+
+### 60. DB: gossip_add_many 非原子批量插入 — 崩溃导致部分写入
+- **文件**: `eacn/network/db/database.py:673-679, 844-850`
+- **问题**: 循环执行多个 INSERT，最后一个 COMMIT。中间崩溃只持久化部分记录，
+  导致 gossip 知识不对称，任务路由不完整。
+- **修复**: 用 `executemany()` 或显式 BEGIN/COMMIT 事务包裹。
+
+### 61. DB: save_task UPSERT 覆盖 update_task_status 的 json_set
+- **文件**: `eacn/network/db/database.py:230-235`
+- **问题**: `update_task_status()` 用 `json_set()` 更新 JSON 中的 status 字段，
+  但并发的 `save_task()` UPSERT 整个 data blob 会用旧数据覆盖 json_set 的结果。
+- **修复**: 引入 version 字段做乐观锁，或统一使用 save_task 而非 json_set。
+
+### 62. DB: 未设置 PRAGMA busy_timeout — 并发读写立即报错
+- **文件**: `eacn/network/db/database.py:28`
+- **问题**: WAL 模式下默认 busy_timeout=0，写操作遇到读锁立即失败而非等待重试。
+- **修复**: 添加 `PRAGMA busy_timeout=5000`。
+
+### 63. DB: query_agent_cards_by_domain 的 LIKE 通配符注入
+- **文件**: `eacn/network/db/database.py:584-600`
+- **问题**: `LIKE '%"{domain}"%'` 中 domain 若含 `%` 或 `_`，可匹配非预期行，
+  或用 `%%` 触发全表扫描（DoS）。
+- **修复**: 对 LIKE 特殊字符转义，或改用 `json_each()` 精确匹配。
+
+### 64. auto_collect 后仍执行 promote_from_queue — 状态矛盾
+- **文件**: `eacn/network/app.py:371-375`
+- **问题**: `check_auto_collect()` 将任务转为 AWAITING_RETRIEVAL 后，代码继续调用
+  `promote_from_queue()`，将 WAITING 的 agent 提升为 EXECUTING —— 但任务已进入收集阶段。
+- **修复**: auto_collect 返回 True 后应 return，跳过后续的 promote 逻辑。
+
+### 65. Settlement 不检查 remaining_budget 是否足够 — 可能超支
+- **文件**: `eacn/network/app.py:425-432`
+- **问题**: `select_result()` 中 settlement 在 `_terminate_children()` 之前执行，
+  若子任务已分配了部分 escrow，结算可能超出剩余预算。
+- **修复**: 结算前检查 parent 的 remaining_budget 是否覆盖 bid_price。
+
+### 66. `_create_adjudication` 不检查父任务状态
+- **文件**: `eacn/network/app.py:740`
+- **问题**: 创建 adjudication 任务时不验证父任务是否仍可接受 adjudication。
+  父任务可能已被关闭，adjudication 任务变成孤儿。initiator_id="system" 也违反了
+  "所有任务都有合法发起者"的不变式。
+- **修复**: 创建前检查父任务状态；用父任务 initiator_id 代替 "system"。
+
+### 67. `_terminate_children` 修改 bid 状态不持久化
+- **文件**: `eacn/network/app.py:709`
+- **问题**: 直接修改 `bid.status = BidStatus.REJECTED` 但未触发 save_task 或任何持久化。
+  重启后 bid 状态回到旧值，agent 仍认为自己是 EXECUTING。
+- **修复**: 修改后调用 `save_task()` 持久化。
+
 ### 49. Subtask escrow 全流程无测试
 - 无测试覆盖 subtask 创建 → 结算 → 退款的完整 escrow 流转，尤其是退款归属问题（#16）。
 
