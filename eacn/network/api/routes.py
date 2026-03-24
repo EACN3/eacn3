@@ -242,6 +242,7 @@ async def select_result(task_id: str, req: SelectResultRequest):
             task_id=task_id,
             agent_id=req.agent_id,
             initiator_id=req.initiator_id,
+            close_task=req.close_task,
         )
         return OkResponse(message="Result selected, settlement done")
     except (TaskError, BudgetError) as e:

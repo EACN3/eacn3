@@ -336,18 +336,33 @@ class Network:
         task_id: str,
         agent_id: str,
         initiator_id: str,
+        close_task: bool = False,
     ) -> None:
-        """Initiator selects winning result: settle payment → update reputation."""
+        """Initiator selects winning result: settle payment → update reputation.
+
+        When close_task=True, allows selection during BIDDING status —
+        the task is closed first, then the result is selected.
+        """
         task = self.task_manager.get(task_id)
 
         if task.initiator_id != initiator_id:
             raise TaskError("Only the task initiator can select a result")
 
         if task.status not in (TaskStatus.AWAITING_RETRIEVAL, TaskStatus.COMPLETED):
-            raise TaskError(
-                f"Cannot select result in status {task.status.value}; "
-                "task must be in awaiting_retrieval or completed"
-            )
+            if close_task and task.status == TaskStatus.BIDDING:
+                # Close the task first, then select
+                task = self.task_manager.close_task(task_id)
+                self._log_event("close_task", task_id=task_id, agent_id=initiator_id)
+                if task.status == TaskStatus.NO_ONE_ABLE:
+                    await self.settlement.refund_no_one_capable(task_id)
+                    raise TaskError("No results submitted; task closed as no_one_able")
+                await self._notify_status_cross_node(task, task.status.value)
+            else:
+                raise TaskError(
+                    f"Cannot select result in status {task.status.value}; "
+                    "task must be in awaiting_retrieval or completed "
+                    "(use close_task=true to close during bidding)"
+                )
 
         selected = self.task_manager.select_result(task_id, agent_id)
 

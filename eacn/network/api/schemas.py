@@ -84,6 +84,7 @@ class SubmitResultRequest(BaseModel):
 class SelectResultRequest(BaseModel):
     initiator_id: str
     agent_id: str
+    close_task: bool = False
 
 
 # ── Subtask ──────────────────────────────────────────────────────────
