@@ -289,6 +289,42 @@
 ### 15. Deadline 扫描部分失败无测试
 - 扫描多个过期任务时部分退款失败的场景未覆盖。
 
+### 68. WebSocket 端点无认证 — 任意人可冒充任意 agent 接收消息
+- **文件**: `eacn/network/api/websocket.py:195-196`
+- **问题**: `/ws/{agent_id}` 直接从 URL 取 agent_id，无 token/签名验证。
+  攻击者连接 `/ws/victim-agent` 即可接收该 agent 的所有推送并代发 ACK。
+- **修复**: 添加 WS 握手阶段的认证（query param token 或 header）。
+
+### 69. broadcast_event 对所有 recipient 使用同一 msg_id — ACK 混淆
+- **文件**: `eacn/network/api/websocket.py:136-156`
+- **问题**: 广播事件对 N 个 recipient 共用同一 msg_id，`_pending_acks` 中同一 key 被覆盖。
+  第一个 recipient 的 ACK 可能被误认为第二个的，导致投递状态错误。
+- **修复**: 为每个 recipient 生成独立的 msg_id。
+
+### 70. Offline drain 部分发送失败后剩余消息永久丢失
+- **文件**: `eacn/network/api/websocket.py:63-87`
+- **问题**: `drain()` 已从 DB 删除所有消息，然后逐条发送。若第 6 条发送失败 `break`，
+  第 7-10 条已从 DB 删除但从未发送，永久丢失。
+- **修复**: 先发送再删除，或发送失败时将剩余消息重新存回 offline store。
+
+### 71. send_to 在释放锁后发送 — 连接可能已被关闭
+- **文件**: `eacn/network/api/websocket.py:94-105`
+- **问题**: 获取 ws 引用后释放锁，实际 `ws.send_json()` 在锁外执行。
+  释放锁后另一个协程可能调用 `disconnect()` 关闭该连接。
+- **修复**: 将 send_json 移入锁内，或用 per-agent 锁避免全局锁阻塞。
+
+### 72. WebSocket/Offline 无消息大小限制 — 内存耗尽 DoS
+- **文件**: `eacn/network/api/websocket.py:70-78,205-218`
+- **问题**: PushEvent.payload 无大小限制，`receive_text()` 也无大小限制。
+  攻击者可发送 GB 级 payload 或创建巨型任务触发广播导致 OOM。
+- **修复**: 添加 payload 大小上限和 WS 帧大小限制。
+
+### 73. 并发重连同一 agent 导致 offline 消息重复投递
+- **文件**: `eacn/network/api/websocket.py:47-61`
+- **问题**: `connect()` 先 accept 再加锁。两个连接同时到达同一 agent_id，
+  都被 accept，各自触发 `drain()`，可能获取到相同的离线消息。
+- **修复**: accept 移到锁内；或 drain 加 per-agent 锁防止并发。
+
 ### 59. DB: offline_drain 的 SELECT-DELETE 窗口导致消息丢失
 - **文件**: `eacn/network/db/database.py:888-922`
 - **问题**: `offline_drain()` 先 SELECT 再 DELETE，两步之间新 INSERT 的消息会被 DELETE 一并删除，
