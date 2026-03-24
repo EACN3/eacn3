@@ -124,14 +124,14 @@ class Network:
         """Agent bids on a task: validate → add bid → push result."""
         task = self.task_manager.get(task_id)
 
-        # Guard: reject bids on child tasks whose parent has terminated
-        if task.parent_id:
+        # Guard: reject bids on adjudication tasks whose parent has terminated
+        if task.type == TaskType.ADJUDICATION and task.parent_id:
             try:
                 parent = self.task_manager.get(task.parent_id)
                 if parent.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
                     raise TaskError(
                         f"Parent task {task.parent_id} already terminated; "
-                        f"cannot bid on child task {task_id}"
+                        f"cannot bid on adjudication task {task_id}"
                     )
             except TaskError as e:
                 if "already terminated" in str(e):
@@ -285,15 +285,15 @@ class Network:
         """Agent submits result: validate → store → adjudicate → promote."""
         task = self.task_manager.get(task_id)
 
-        # Guard: reject if parent task has already terminated
-        if task.parent_id:
+        # Guard: reject adjudication results if parent task already terminated
+        if task.type == TaskType.ADJUDICATION and task.parent_id:
             try:
                 parent = self.task_manager.get(task.parent_id)
                 if parent.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
                     raise TaskError(
                         f"Parent task {task.parent_id} already terminated "
                         f"(status={parent.status.value}); "
-                        f"cannot submit result to child task {task_id}"
+                        f"cannot submit result to adjudication task {task_id}"
                     )
             except TaskError as e:
                 if "already terminated" in str(e):
@@ -641,29 +641,29 @@ class Network:
         )
 
     async def _terminate_children(self, task: Task) -> None:
-        """Cascade-close all active child tasks (including adjudication tasks).
+        """Cascade-close active adjudication child tasks.
 
-        When a parent task terminates, its children should not continue
-        accepting bids or results.
+        When a parent task terminates, its adjudication tasks are
+        meaningless and should be closed. Regular subtasks are left
+        alone as they have independent lifecycles.
         """
         for child_id in task.child_ids:
             try:
                 child = self.task_manager.get(child_id)
             except TaskError:
                 continue
+            if child.type != TaskType.ADJUDICATION:
+                continue
             if child.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
                 continue
-            # Close the child
             try:
                 child = self.task_manager.close_task(child_id)
                 _log.info(
-                    "Cascade-closed child task %s (parent %s terminated)",
+                    "Cascade-closed adjudication task %s (parent %s terminated)",
                     child_id, task.id,
                 )
             except TaskError:
                 continue
-            # Recurse into grandchildren
-            await self._terminate_children(child)
 
     async def _broadcast_to_candidates(self, task: Task) -> None:
         """Discover agents, match, and push task broadcast."""
