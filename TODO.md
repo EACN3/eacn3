@@ -515,6 +515,23 @@
 ### 58. Adjudication 任务内存增长无测试
 - 无测试监控大量 adjudication 完成后 `_tasks` 字典的大小变化（#40）。
 
+### 101. Server 注销级联删除存在 TOCTOU 竞态
+- **文件**: `eacn/network/api/discovery_routes.py:82-93`
+- **问题**: 先查询 server 下的 agent 列表，再逐个注销。期间新 agent 可注册到该 server，
+  级联删除遗漏新注册的 agent。域名使用检查也在 revoke 前执行，并发注册可导致过早 revoke。
+- **修复**: 用事务或锁包裹整个级联删除流程。
+
+### 102. Agent 更新时 server 存在性不校验
+- **文件**: `eacn/network/api/discovery_routes.py:143-166`
+- **问题**: `update_agent` 不检查 agent 所属 server 是否仍然存在。
+  若 server 已被删除，agent card 引用了不存在的 server，清理逻辑断裂。
+- **修复**: 更新前校验 server 存在性。
+
+### 103. Server endpoint URL 无格式校验
+- **文件**: `eacn/network/api/schemas.py:157`
+- **问题**: server endpoint 接受任意字符串，包括 `javascript:`、`file://` 等非法协议。
+- **修复**: 添加 URL 格式校验（限 http/https）。
+
 ### 91. Settlement 零退款边界无测试
 - bid_price ≈ budget 时退款趋近 0，float 截断/舍入行为无测试。
 
