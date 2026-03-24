@@ -515,6 +515,25 @@
 ### 58. Adjudication 任务内存增长无测试
 - 无测试监控大量 adjudication 完成后 `_tasks` 字典的大小变化（#40）。
 
+### 104. ClusterRouter 三个共享字典无锁保护
+- **文件**: `eacn/network/cluster/router.py:41-65`
+- **问题**: `_routes`、`_participants`、`_endpoints` 从多个异步端点并发读写，无锁。
+  `add_participant()` 的 `setdefault().add()` 与 `remove_task()` 的 `.pop()` 可竞态，
+  导致路由信息丢失或参与者集合不一致。
+- **修复**: 添加 asyncio.Lock 保护，或用 per-task 锁减少竞争。
+
+### 105. `_agent_counts` 字典并发读写无同步
+- **文件**: `eacn/network/cluster/service.py:117-132,203-214`
+- **问题**: heartbeat 更新 `_agent_counts[node_id]` 与 `mark_node_offline` 的 `.pop()` 竞态。
+  健康检查可能删除刚更新的 agent 计数，导致节点观测数据丢失。
+- **修复**: 用锁保护 `_agent_counts` 的所有读写。
+
+### 106. Reputation `_recent_events` 列表并发修改 — 异常检测不可靠
+- **文件**: `eacn/network/reputation.py:235-245`
+- **问题**: `_detect_anomaly` 的 list append 和 slice 操作从多个并发 `aggregate()` 调用触发，
+  无锁保护。list corruption 或漏检导致 burst 检测失效。
+- **修复**: 用 deque(maxlen=BURST_WINDOW) 替代手动 slice，或加 per-agent 锁。
+
 ### 101. Server 注销级联删除存在 TOCTOU 竞态
 - **文件**: `eacn/network/api/discovery_routes.py:82-93`
 - **问题**: 先查询 server 下的 agent 列表，再逐个注销。期间新 agent 可注册到该 server，
