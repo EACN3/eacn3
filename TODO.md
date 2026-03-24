@@ -289,6 +289,37 @@
 ### 15. Deadline 扫描部分失败无测试
 - 扫描多个过期任务时部分退款失败的场景未覆盖。
 
+### 77. Discussion 消息无作者字段 — 无法追溯谁说了什么
+- **文件**: `eacn/network/task_manager.py:259-262`
+- **问题**: discussion 条目只存 `message` 和 `timestamp`，不存发送者 ID。
+  多方参与时无法区分谁发了哪条消息，审计追踪完全缺失。
+- **修复**: 添加 `author` 字段，从 `update_discussions` 的 `initiator_id` 参数传入。
+
+### 78. `/messages` 端点无发送者身份验证 — 可冒充任意 agent 发消息
+- **文件**: `eacn/network/api/routes.py:427-473`
+- **问题**: `relay_message` 直接使用 `req.from_.agent_id` 作为发送者，不验证调用方身份。
+  攻击者可伪装成 "system-admin" 向任意 agent 发送钓鱼指令。
+- **修复**: 验证调用方 token/签名与 from.agent_id 匹配。
+
+### 79. PENDING 状态的竞标者收不到 Discussion 更新
+- **文件**: `eacn/network/push.py:110-115`
+- **问题**: `notify_discussion_update` 只推送给 executing/waiting/accepted 的 bidder，
+  PENDING（等待预算确认）的 bidder 被排除。initiator 更新需求后该 bidder 按旧需求工作。
+- **修复**: 将 PENDING 加入通知范围。
+
+### 80. 任务完成后 offline 消息不清理 — DB 无限膨胀
+- **文件**: `eacn/network/offline_store.py`
+- **问题**: 任务 COMPLETED/NO_ONE_ABLE 后，相关的 offline 消息不会被清理。
+  只靠 TTL 过期和 per-agent overflow 裁剪，长期运行后 DB 膨胀。
+  Agent 重连后可能收到已完成任务的幽灵通知。
+- **修复**: 任务终止时清理相关 task_id 的 offline 消息。
+
+### 81. Discussion 仅允许 BIDDING 状态更新 — 结果审查阶段无法讨论
+- **文件**: `eacn/network/app.py:493-497`
+- **问题**: `task.status != TaskStatus.BIDDING` 就拒绝 discussion 更新。
+  AWAITING_RETRIEVAL 阶段 initiator 发现结果有误想讨论时被阻止。
+- **修复**: 扩展允许状态至 AWAITING_RETRIEVAL。
+
 ### 74. DHT store/revoke 接受空字符串 domain/node_id — 污染路由表
 - **文件**: `eacn/network/api/peer_routes.py:62-69,162-176`
 - **问题**: `DHTStoreRequest` 的 domain 和 node_id 字段无 `min_length` 约束，
