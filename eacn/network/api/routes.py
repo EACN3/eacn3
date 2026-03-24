@@ -562,6 +562,17 @@ async def fund_account(agent_id: str = Body(...), amount: float = Body(...)):
     return {"agent_id": agent_id, "available": account.available, "frozen": account.frozen}
 
 
+@router.get("/admin/offline-stats")
+async def offline_stats():
+    """Query offline message queue stats per agent."""
+    from eacn.network.api.websocket import manager
+    store = manager._offline_store
+    if not store:
+        return {"agents": {}, "total": 0}
+    counts = await store.count_all()
+    return {"agents": counts, "total": sum(counts.values())}
+
+
 @router.get("/admin/logs")
 async def query_logs(
     task_id: str | None = None,

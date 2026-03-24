@@ -68,6 +68,9 @@ class EconomyConfig(BaseModel):
 
 class PushConfig(BaseModel):
     max_retries: int = 2
+    ack_timeout: int = 30
+    offline_max_per_agent: int = 200
+    offline_ttl_seconds: int = 86400
 
 
 class TaskConfig(BaseModel):

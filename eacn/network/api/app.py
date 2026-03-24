@@ -1,6 +1,6 @@
 """Network FastAPI application with lifespan management.
 
-Startup: connect DB, init Network, wire push handler.
+Startup: connect DB, init Network, wire push handler + offline store.
 Shutdown: close DB.
 """
 
@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from eacn.network.app import Network
 from eacn.network.db import Database
+from eacn.network.offline_store import OfflineStore
 from eacn.network.api.routes import router, set_network
 from eacn.network.api.discovery_routes import discovery_router, set_discovery_network
 from eacn.network.api.peer_routes import peer_router, set_peer_cluster, set_peer_network
@@ -29,6 +30,16 @@ async def lifespan(app: FastAPI):
 
     network = Network(db=db)
     await network.start()
+
+    # ── Offline store & ACK config ───────────────────────────────────
+    push_cfg = network.config.push
+    offline_store = OfflineStore(
+        db=db,
+        max_per_agent=push_cfg.offline_max_per_agent,
+        ttl_seconds=push_cfg.offline_ttl_seconds,
+    )
+    manager.set_offline_store(offline_store)
+    manager.ack_timeout = push_cfg.ack_timeout
 
     # Wire push handler → WebSocket delivery + cross-node forwarding
     async def ws_push_handler(event):
@@ -62,6 +73,7 @@ async def lifespan(app: FastAPI):
 
     app.state.db = db
     app.state.network = network
+    app.state.offline_store = offline_store
     set_network(network)
     set_discovery_network(network)
     set_peer_cluster(network.cluster)

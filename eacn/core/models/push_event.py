@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from enum import Enum
 from typing import Any
 
@@ -20,7 +21,12 @@ class PushEventType(str, Enum):
     DIRECT_MESSAGE = "direct_message"
 
 
+def _gen_msg_id() -> str:
+    return uuid.uuid4().hex
+
+
 class PushEvent(BaseModel):
+    msg_id: str = Field(default_factory=_gen_msg_id)
     type: PushEventType
     task_id: str
     recipients: list[str] = Field(min_length=1)

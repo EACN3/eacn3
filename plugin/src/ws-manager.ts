@@ -46,6 +46,15 @@ function wsUrl(agentId: string): string {
   return `${wsBase}/ws/${agentId}`;
 }
 
+function sendAck(agentId: string, msgId: string): void {
+  const conn = connections.get(agentId);
+  if (conn?.ws?.readyState === WebSocket.OPEN) {
+    try {
+      conn.ws.send(JSON.stringify({ ack: msgId }));
+    } catch { /* ACK send failure is non-fatal */ }
+  }
+}
+
 function handleMessage(agentId: string, data: WebSocket.Data): void {
   try {
     const raw = typeof data === "string" ? data : data.toString("utf-8");
@@ -53,6 +62,11 @@ function handleMessage(agentId: string, data: WebSocket.Data): void {
     const event = JSON.parse(raw) as Omit<PushEvent, "received_at">;
     const pushEvent: PushEvent = { ...event, received_at: Date.now() } as PushEvent;
     pushEvents([pushEvent]);
+
+    // Send ACK to server for reliable delivery
+    if (event.msg_id) {
+      sendAck(agentId, event.msg_id);
+    }
 
     // Trigger registered callback for auto-actions
     if (onEventCallback) {
