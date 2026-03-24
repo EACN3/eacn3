@@ -514,3 +514,33 @@
 
 ### 58. Adjudication 任务内存增长无测试
 - 无测试监控大量 adjudication 完成后 `_tasks` 字典的大小变化（#40）。
+
+### 91. Settlement 零退款边界无测试
+- bid_price ≈ budget 时退款趋近 0，float 截断/舍入行为无测试。
+
+### 92. Budget 确认后队列提升交互无测试
+- confirm_budget 增额后 PENDING bid 重新评估 + WAITING bid 提升的完整流程无测试。
+
+### 93. 多子任务连续创建后 remaining_budget 一致性无测试
+- 连续创建 3+ 个子任务后验证 parent.remaining_budget == budget - sum(subtasks) 无测试。
+
+### 94. Deadline 过期时混合 bid 状态（部分有 result）的处理无测试
+- 任务有 executing+waiting bid 且部分已提交 result 时过期的状态转换无测试。
+
+### 95. Anomaly detection 跨事件类型快速提交无测试
+- agent 快速交替提交不同 event_type 绕过 same_type_count 检测的场景无测试。
+
+### 96. Confirm_budget 账户余额不足场景无测试
+- initiator 确认增额但 available 不够冻结时的处理无测试。
+
+### 97. Collect_results 幂等性无测试
+- 对已 COMPLETED 任务再次调用 collect_results 的行为无测试。
+
+### 98. Escrow release 对不存在 task_id 的行为无测试
+- escrow 条目被提前删除后 release() 静默返回 0 的场景无测试（#17 关联）。
+
+### 99. Invited agent 跨 tier 竞标无测试
+- tool-tier agent 被 invite 到 general-level 任务时 check_bid 的完整路径无测试（#8 关联）。
+
+### 100. Auto-collect 触发后 promote_from_queue 的执行顺序无测试
+- auto_collect 和 promote 的交互（#64 关联）：提升后立即检查是否该 collect 无测试。
