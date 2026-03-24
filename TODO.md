@@ -289,6 +289,26 @@
 ### 15. Deadline 扫描部分失败无测试
 - 扫描多个过期任务时部分退款失败的场景未覆盖。
 
+### 74. DHT store/revoke 接受空字符串 domain/node_id — 污染路由表
+- **文件**: `eacn/network/api/peer_routes.py:62-69,162-176`
+- **问题**: `DHTStoreRequest` 的 domain 和 node_id 字段无 `min_length` 约束，
+  空字符串可写入 cluster_dht 表，污染域名查找结果。
+- **修复**: 添加 `Field(min_length=1)` 约束。
+
+### 75. Agent 域名更新时 discovery DHT 与 cluster DHT 不一致
+- **文件**: `eacn/network/api/discovery_routes.py:168-182`
+- **问题**: 更新 agent domains 时，discovery.dht.revoke() 总是执行，
+  但 cluster.revoke_domain() 在 `still_used=True` 时跳过。导致 cluster DHT
+  仍指向已不再服务该域名的 agent，跨节点查找命中过期条目。
+- **修复**: 区分"agent 级别 revoke"和"domain 级别 revoke"，只在 agent 移除域名时
+  从 cluster DHT 中移除该 agent 的映射，而非整个 domain。
+
+### 76. Agent 注册部分失败 — DHT 和集群广播不原子
+- **文件**: `eacn/network/api/discovery_routes.py:103-130`
+- **问题**: `register_agent()` 先写 discovery DHT，再广播 cluster。后者失败时
+  agent 本地可见但跨节点不可发现，无回滚机制。
+- **修复**: 失败时回滚 discovery DHT 注册，或加重试队列。
+
 ### 68. WebSocket 端点无认证 — 任意人可冒充任意 agent 接收消息
 - **文件**: `eacn/network/api/websocket.py:195-196`
 - **问题**: `/ws/{agent_id}` 直接从 URL 取 agent_id，无 token/签名验证。
