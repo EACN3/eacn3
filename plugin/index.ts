@@ -10,6 +10,7 @@ import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
 import * as ws from "./src/ws-manager.js";
 import * as a2a from "./src/a2a-server.js";
+import * as rc from "./src/reverse-control.js";
 
 // ---------------------------------------------------------------------------
 // Heartbeat
@@ -75,6 +76,9 @@ function resolveAgentId(provided?: string): string {
 function registerEventCallbacks(): void {
   ws.setEventCallback((agentId, event) => {
     const taskId = event.task_id;
+
+    // Reverse control: try to handle event proactively
+    rc.handleEvent(agentId, event).catch(() => { /* non-critical */ });
 
     switch (event.type) {
       case "awaiting_retrieval":

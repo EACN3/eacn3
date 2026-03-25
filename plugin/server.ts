@@ -15,13 +15,26 @@ import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
 import * as ws from "./src/ws-manager.js";
 import * as a2a from "./src/a2a-server.js";
+import * as rc from "./src/reverse-control.js";
 
 // ---------------------------------------------------------------------------
 // Helper: MCP text result
 // ---------------------------------------------------------------------------
 
 function ok(data: unknown) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
+  const result: { content: Array<{ type: "text"; text: string }> } = {
+    content: [{ type: "text" as const, text: JSON.stringify(data) }],
+  };
+
+  // Fallback directive injection: when sampling is unavailable,
+  // append pending event directives to any tool response so the
+  // Host LLM sees actionable events without explicit polling.
+  const directives = rc.drainDirectives();
+  if (directives) {
+    result.content.push({ type: "text" as const, text: directives });
+  }
+
+  return result;
 }
 
 function err(message: string) {
@@ -307,6 +320,11 @@ server.tool(
     agent_id: z.string().optional().describe("Custom agent ID. Auto-generated if omitted."),
     a2a_port: z.number().optional().describe("Port for A2A HTTP server. Enables direct agent-to-agent messaging. Omit to use Network relay only."),
     a2a_url: z.string().optional().describe("Full public URL for A2A callbacks (e.g. 'http://my-server.com:3001'). Auto-generated from a2a_port if omitted."),
+    reverse_control: z.object({
+      enabled: z.boolean().optional().describe("Enable MCP reverse control (sampling/notifications). Default true."),
+      sampling_events: z.array(z.string()).optional().describe("Event types that trigger LLM sampling (e.g. ['task_broadcast', 'direct_message']). Default: all actionable events."),
+      notification_events: z.array(z.string()).optional().describe("Event types that send notifications only (e.g. ['awaiting_retrieval', 'timeout']). Default: status events."),
+    }).optional().describe("Configure MCP reverse control — lets the network proactively drive your agent via sampling requests."),
   },
   async (params) => {
     const s = state.getState();
@@ -354,6 +372,21 @@ server.tool(
     // Open WebSocket for event push
     ws.connect(agentId);
 
+    // Configure reverse control for this agent
+    if (params.reverse_control?.enabled !== false) {
+      const rcPolicies: Record<string, { method: "sampling" | "notification" | "auto_action" | "buffer_only"; autoAction?: string }> = {};
+      const samplingEvents = params.reverse_control?.sampling_events ?? ["task_broadcast", "direct_message", "subtask_completed", "budget_confirmation", "discussions_updated"];
+      const notifEvents = params.reverse_control?.notification_events ?? ["awaiting_retrieval"];
+
+      for (const e of samplingEvents) rcPolicies[e] = { method: "sampling" };
+      for (const e of notifEvents) rcPolicies[e] = { method: "notification" };
+      rcPolicies["timeout"] = { method: "auto_action", autoAction: "report_and_close" };
+
+      rc.configure(agentId, { enabled: true, policies: rcPolicies });
+    }
+
+    const rcStatus = rc.getStatus();
+
     return ok({
       registered: true,
       agent_id: agentId,
@@ -361,6 +394,11 @@ server.tool(
       domains: params.domains,
       url: agentUrl,
       a2a_server: a2a.isRunning() ? { port: a2a.getServerPort() } : null,
+      reverse_control: {
+        enabled: params.reverse_control?.enabled !== false,
+        sampling_available: rcStatus.samplingAvailable,
+        fallback: rcStatus.samplingAvailable ? "none" : "directive_injection",
+      },
     });
   },
 );
@@ -428,6 +466,7 @@ server.tool(
   async (params) => {
     const res = await net.unregisterAgent(params.agent_id);
     ws.disconnect(params.agent_id);
+    rc.unconfigure(params.agent_id);
     state.removeAgent(params.agent_id);
 
     // Stop A2A server if no agents remain
@@ -1102,14 +1141,25 @@ server.tool(
 // #34 eacn3_get_events
 server.tool(
   "eacn3_get_events",
-  "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[]} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. Call periodically in your main loop. Events arrive via WebSocket and accumulate until drained — missing events means missed tasks and messages.",
+  "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details. Call periodically in your main loop.",
   {},
   async () => {
     const events = state.drainEvents();
     return ok({
       count: events.length,
       events,
+      reverse_control: rc.getStatus(),
     });
+  },
+);
+
+// #39 eacn3_reverse_control_status
+server.tool(
+  "eacn3_reverse_control_status",
+  "Get the current status of the MCP reverse control engine. Shows whether sampling is available, which agents are configured, pending directive count, and rate limiting info. Use for debugging reverse control behavior.",
+  {},
+  async () => {
+    return ok(rc.getStatus());
   },
 );
 
@@ -1125,6 +1175,13 @@ function registerEventCallbacks(): void {
   ws.setEventCallback((agentId, event) => {
     const taskId = event.task_id;
 
+    // --- Reverse Control: try to handle event proactively ---
+    // This runs async; if it handles the event, it may take action
+    // (sampling, notification, auto-action) without waiting for polling.
+    rc.handleEvent(agentId, event).catch(() => { /* non-critical */ });
+
+    // --- Legacy behavior: local state updates + event buffering ---
+    // These still run regardless of reverse control, to keep local state consistent.
     switch (event.type) {
       case "awaiting_retrieval":
         // Task has results ready — update local status so dashboard/skills see it
@@ -1233,6 +1290,10 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Initialize reverse control engine with the underlying MCP Server instance.
+  // Must be called AFTER connect() so client capabilities are available.
+  rc.init((server as any).server ?? server);
 }
 
 main().catch((e) => {
