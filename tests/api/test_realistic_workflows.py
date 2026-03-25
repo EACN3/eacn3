@@ -496,15 +496,16 @@ class TestDirectMessaging:
 
     @pytest.mark.asyncio
     async def test_relay_message(self, client, funded_network):
-        """Send a direct message — returns 200 (delivery depends on offline_store setup)."""
+        """Send a direct message — without offline store, returns undeliverable."""
         resp = await client.post("/api/messages", json={
             "to": {"agent_id": "a2"},
             "from": {"agent_id": "a1"},
             "content": "Hello from a1",
         })
         assert resp.status_code == 200
-        # In test env without offline_store, delivery may not succeed
-        # but the endpoint should not crash
+        data = resp.json()
+        # Without offline_store wired, message is undeliverable (standalone mode, no peers)
+        assert data["method"] in ("queue", "undeliverable", "forwarded")
 
 
 # ═════════════════════════════════════════════════════════════════════

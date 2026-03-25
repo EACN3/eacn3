@@ -888,12 +888,13 @@ class Database:
             if not rows:
                 await self.db.commit()
                 return []
-            # Delete only the rows we fetched
+            # Delete only the rows we fetched (raw execute, already inside lock)
             ids = [r[0] for r in rows]
             placeholders = ",".join("?" for _ in ids)
-            await self._exec_write(
+            await self.db.execute(
                 f"DELETE FROM offline_messages WHERE id IN ({placeholders})", ids,
             )
+            await self.db.commit()
 
         return [
             {

@@ -97,9 +97,10 @@ async def live_server(funded_network):
 
     # Wire push handler → queue delivery (same as production app.py)
     async def queue_push_handler(event):
+        import uuid
         for agent_id in event.recipients:
             await offline_store.store(
-                msg_id=event.msg_id,
+                msg_id=uuid.uuid4().hex,
                 agent_id=agent_id,
                 event_type=event.type.value,
                 task_id=event.task_id,

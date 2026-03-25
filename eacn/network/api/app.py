@@ -50,10 +50,12 @@ async def lifespan(app: FastAPI):
     # Agents drain it via HTTP GET /api/events/{agent_id}.
     # No WebSocket — just a queue.
     async def queue_push_handler(event):
-        """Enqueue for all recipients."""
+        """Enqueue for all recipients with unique msg_id per recipient (#69)."""
+        import uuid
         for agent_id in event.recipients:
+            per_agent_msg_id = uuid.uuid4().hex
             await offline_store.store(
-                msg_id=event.msg_id,
+                msg_id=per_agent_msg_id,
                 agent_id=agent_id,
                 event_type=event.type.value,
                 task_id=event.task_id,
@@ -76,9 +78,11 @@ async def lifespan(app: FastAPI):
 
     # Cluster handler: remote node forwarded an event — enqueue locally.
     async def cluster_push_handler(event):
+        import uuid
         for agent_id in event.recipients:
+            per_agent_msg_id = uuid.uuid4().hex
             await offline_store.store(
-                msg_id=event.msg_id,
+                msg_id=per_agent_msg_id,
                 agent_id=agent_id,
                 event_type=event.type.value,
                 task_id=event.task_id,
