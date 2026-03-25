@@ -7,6 +7,7 @@ All public methods are async and concurrency-safe via aiosqlite's internal lock.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -19,6 +20,8 @@ class Database:
     def __init__(self, path: str = ":memory:") -> None:
         self._path = path
         self._db: aiosqlite.Connection | None = None
+        # Serialize all write operations to prevent concurrent access errors
+        self._write_lock = asyncio.Lock()
 
     # ── Lifecycle ────────────────────────────────────────────────────
 
@@ -39,6 +42,18 @@ class Database:
     def db(self) -> aiosqlite.Connection:
         assert self._db is not None, "Database not connected"
         return self._db
+
+    async def _exec_write(self, sql: str, params: tuple | list = ()) -> None:
+        """Execute a single write statement under the write lock."""
+        async with self._write_lock:
+            await self.db.execute(sql, params)
+            await self.db.commit()
+
+    async def _exec_write_many(self, sql: str, params_list: list) -> None:
+        """Execute many write statements atomically under the write lock."""
+        async with self._write_lock:
+            await self.db.executemany(sql, params_list)
+            await self.db.commit()
 
     # ── Schema ───────────────────────────────────────────────────────
 
@@ -308,14 +323,13 @@ class Database:
     async def upsert_account(
         self, agent_id: str, available: float, frozen: float
     ) -> None:
-        await self.db.execute(
+        await self._exec_write(
             """INSERT INTO accounts (agent_id, available, frozen)
                VALUES (?, ?, ?)
                ON CONFLICT(agent_id) DO UPDATE SET
                  available=excluded.available, frozen=excluded.frozen""",
             (agent_id, available, frozen),
         )
-        await self.db.commit()
 
 
     async def list_all_escrows(self) -> list[tuple[str, str, float]]:
@@ -328,14 +342,13 @@ class Database:
     async def save_escrow(
         self, task_id: str, initiator_id: str, amount: float
     ) -> None:
-        await self.db.execute(
+        await self._exec_write(
             """INSERT INTO escrow (task_id, initiator_id, amount)
                VALUES (?, ?, ?)
                ON CONFLICT(task_id) DO UPDATE SET
                  initiator_id=excluded.initiator_id, amount=excluded.amount""",
             (task_id, initiator_id, amount),
         )
-        await self.db.commit()
 
     async def get_escrow(self, task_id: str) -> tuple[str, float] | None:
         async with self.db.execute(
@@ -346,8 +359,7 @@ class Database:
             return (row[0], row[1]) if row else None
 
     async def delete_escrow(self, task_id: str) -> None:
-        await self.db.execute("DELETE FROM escrow WHERE task_id = ?", (task_id,))
-        await self.db.commit()
+        await self._exec_write("DELETE FROM escrow WHERE task_id = ?", (task_id,))
 
 
     async def list_all_reputations(self) -> list[tuple[str, float, dict]]:
@@ -377,14 +389,13 @@ class Database:
     async def upsert_reputation(
         self, agent_id: str, score: float, cap_counts: dict
     ) -> None:
-        await self.db.execute(
+        await self._exec_write(
             """INSERT INTO reputation (agent_id, score, cap_counts)
                VALUES (?, ?, ?)
                ON CONFLICT(agent_id) DO UPDATE SET
                  score=excluded.score, cap_counts=excluded.cap_counts""",
             (agent_id, score, json.dumps(cap_counts)),
         )
-        await self.db.commit()
 
     async def get_server_reputation(self, server_id: str) -> tuple[float, int] | None:
         async with self.db.execute(
@@ -397,14 +408,13 @@ class Database:
     async def upsert_server_reputation(
         self, server_id: str, score: float, event_count: int
     ) -> None:
-        await self.db.execute(
+        await self._exec_write(
             """INSERT INTO server_reputation (server_id, score, event_count)
                VALUES (?, ?, ?)
                ON CONFLICT(server_id) DO UPDATE SET
                  score=excluded.score, event_count=excluded.event_count""",
             (server_id, score, event_count),
         )
-        await self.db.commit()
 
 
     async def insert_log(
@@ -888,14 +898,13 @@ class Database:
         expires_at: str | None = None,
     ) -> None:
         """Store a message for an offline agent."""
-        await self.db.execute(
+        await self._exec_write(
             """INSERT OR IGNORE INTO offline_messages
                (msg_id, agent_id, type, task_id, payload, expires_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (msg_id, agent_id, event_type, task_id,
              json.dumps(payload, ensure_ascii=False), expires_at),
         )
-        await self.db.commit()
 
     async def offline_drain(self, agent_id: str) -> list[dict[str, Any]]:
         """Retrieve and delete all pending offline messages for an agent.
@@ -903,28 +912,30 @@ class Database:
         Returns messages ordered oldest-first. Expired messages are pruned.
         Uses specific IDs to avoid deleting messages inserted between SELECT and DELETE (#59).
         """
-        # Prune expired
-        await self.db.execute(
-            "DELETE FROM offline_messages WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')",
-        )
-        # Fetch with IDs for precise deletion
-        async with self.db.execute(
-            """SELECT id, msg_id, type, task_id, payload, created_at
-               FROM offline_messages
-               WHERE agent_id = ?
-               ORDER BY id ASC""",
-            (agent_id,),
-        ) as cursor:
-            rows = await cursor.fetchall()
-        if not rows:
-            return []
-        # Delete only the rows we fetched
-        ids = [r[0] for r in rows]
-        placeholders = ",".join("?" for _ in ids)
-        await self.db.execute(
-            f"DELETE FROM offline_messages WHERE id IN ({placeholders})", ids,
-        )
-        await self.db.commit()
+        async with self._write_lock:
+            # Prune expired
+            await self.db.execute(
+                "DELETE FROM offline_messages WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')",
+            )
+            # Fetch with IDs for precise deletion
+            async with self.db.execute(
+                """SELECT id, msg_id, type, task_id, payload, created_at
+                   FROM offline_messages
+                   WHERE agent_id = ?
+                   ORDER BY id ASC""",
+                (agent_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+            if not rows:
+                await self.db.commit()
+                return []
+            # Delete only the rows we fetched
+            ids = [r[0] for r in rows]
+            placeholders = ",".join("?" for _ in ids)
+            await self.db.execute(
+                f"DELETE FROM offline_messages WHERE id IN ({placeholders})", ids,
+            )
+            await self.db.commit()
         return [
             {
                 "msg_id": r[1],
