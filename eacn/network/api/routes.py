@@ -382,11 +382,13 @@ async def create_subtask(task_id: str, req: CreateSubtaskRequest):
             domains=req.domains,
             budget=req.budget,
             deadline=req.deadline,
-            level=req.level,
+            level=req.level.value if req.level else None,
         )
         return _task_to_response(sub)
     except (TaskError, BudgetError) as e:
         raise HTTPException(400, str(e))
+    except (ValueError, ValidationError) as e:
+        raise HTTPException(422, str(e))
 
 
 

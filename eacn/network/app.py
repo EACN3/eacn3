@@ -101,8 +101,13 @@ class Network:
             await self.escrow.release(task_id)
             raise
         self._log_event("create_task", task_id=task_id, agent_id=initiator_id)
-        await self._broadcast_to_candidates(task)
-        await self.cluster.broadcast_task({
+        # Broadcast is best-effort — failure should not lose the task or escrow
+        try:
+            await self._broadcast_to_candidates(task)
+        except Exception:
+            _log.warning("Failed to broadcast task %s to candidates", task_id, exc_info=True)
+        try:
+            await self.cluster.broadcast_task({
             "task_id": task.id,
             "initiator_id": initiator_id,
             "domains": domains,
@@ -114,6 +119,8 @@ class Network:
             "level": task.level.value,
             "invited_agent_ids": task.invited_agent_ids,
         })
+        except Exception:
+            _log.warning("Failed to broadcast task %s to cluster", task_id, exc_info=True)
 
         return task
 
@@ -474,6 +481,10 @@ class Network:
                     "(use close_task=true to close during bidding)"
                 )
 
+        # Save pre-select state for rollback
+        pre_select_status = task.status
+        pre_bid_statuses = {b.agent_id: b.status for b in task.bids}
+
         selected = self.task_manager.select_result(task_id, agent_id)
 
         bid_price = 0.0
@@ -488,13 +499,11 @@ class Network:
             try:
                 await self.settlement.settle(task_id, agent_id, bid_price)
             except Exception:
-                # Rollback bid states on settlement failure (#3)
+                # Full rollback: task status, bid statuses, result selection
+                task.status = pre_select_status
                 for bid in task.bids:
-                    if bid.agent_id == agent_id:
-                        bid.status = BidStatus.EXECUTING
-                    elif bid.status == BidStatus.REJECTED:
-                        # Can't reliably restore previous status; leave as-is
-                        pass
+                    if bid.agent_id in pre_bid_statuses:
+                        bid.status = pre_bid_statuses[bid.agent_id]
                 selected.selected = False
                 raise
 
@@ -799,11 +808,13 @@ class Network:
 
             try:
                 child = self.task_manager.close_task(child_id)
-                # Refund child escrow (#67)
-                await self.settlement.refund_no_one_capable(child_id)
+                # Only refund if no results (no_one_able). Children with results
+                # go to awaiting_retrieval — their escrow should stay for potential settlement.
+                if child.status == TaskStatus.NO_ONE_ABLE:
+                    await self.settlement.refund_no_one_capable(child_id)
                 _log.info(
-                    "Cascade-closed child task %s (parent %s terminated)",
-                    child_id, task.id,
+                    "Cascade-closed child task %s → %s (parent %s terminated)",
+                    child_id, child.status.value, task.id,
                 )
             except TaskError:
                 continue

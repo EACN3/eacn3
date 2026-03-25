@@ -40,10 +40,9 @@ class SettlementService:
         3. Credit executor with bid_price
         4. Refund remainder to initiator
         """
-        # Idempotency guard: prevent double settlement (#18)
+        # Idempotency guard: prevent double settlement
         if task_id in self._settled:
             raise BudgetError(f"Task {task_id} already settled")
-        self._settled.add(task_id)
 
         platform_fee = bid_price * self.platform_fee_rate
         total_deduction = bid_price + platform_fee
@@ -51,16 +50,23 @@ class SettlementService:
         # Deduct from escrow
         initiator_id = await self.escrow.deduct_for_settlement(task_id, total_deduction)
 
-        # Credit executor
-        executor_account = self.escrow.get_or_create_account(executor_id)
-        executor_account.credit(bid_price)
-        await self.escrow._persist_account(executor_id)
+        # Credit executor — wrap in try to rollback on failure
+        try:
+            executor_account = self.escrow.get_or_create_account(executor_id)
+            executor_account.credit(bid_price)
+            await self.escrow._persist_account(executor_id)
 
-        # Track platform fees
+            # Refund remainder
+            refund = await self.escrow.release(task_id)
+        except Exception:
+            # Rollback executor credit if release or persist failed
+            if executor_account:
+                executor_account.available -= bid_price
+            raise
+
+        # Track platform fees and mark as settled AFTER all mutations succeed
         self.total_fees_collected += platform_fee
-
-        # Refund remainder
-        refund = await self.escrow.release(task_id)
+        self._settled.add(task_id)
 
         return SettlementResult(
             task_id=task_id,
