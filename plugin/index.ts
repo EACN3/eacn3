@@ -34,7 +34,20 @@ function stopHeartbeat(): void {
 // ---------------------------------------------------------------------------
 
 function ok(data: unknown) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
+  const result: { content: Array<{ type: "text"; text: string }> } = {
+    content: [{ type: "text" as const, text: JSON.stringify(data) }],
+  };
+
+  // Directive injection: in OpenClaw we have no MCP Server instance,
+  // so sampling/notifications are unavailable. Instead, piggyback
+  // pending event directives onto every tool response — the Host LLM
+  // sees them immediately and can act without explicit polling.
+  const directives = rc.drainDirectives();
+  if (directives) {
+    result.content.push({ type: "text" as const, text: directives });
+  }
+
+  return result;
 }
 
 function err(message: string) {
@@ -147,6 +160,137 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
     payload: { ...payload, auto_match: true, matched_agent: agentId },
     received_at: Date.now(),
   }]);
+}
+
+// ---------------------------------------------------------------------------
+// Long-polling helpers for eacn3_await_events
+// ---------------------------------------------------------------------------
+
+/**
+ * Drain events from the buffer, optionally filtering by type.
+ * Unlike state.drainEvents(), only removes matching events and leaves the rest.
+ */
+function drainMatchingEvents(filterTypes?: string[]): PushEvent[] {
+  const all = state.drainEvents();
+  if (!filterTypes || filterTypes.length === 0) return all;
+
+  const matching: PushEvent[] = [];
+  const remaining: PushEvent[] = [];
+  for (const e of all) {
+    if (filterTypes.includes(e.type)) {
+      matching.push(e);
+    } else {
+      remaining.push(e);
+    }
+  }
+  // Put non-matching events back
+  if (remaining.length > 0) state.pushEvents(remaining);
+  return matching;
+}
+
+/**
+ * Build the await_events response with suggested actions for each event.
+ * This is the core of "reverse control without sampling" — the tool result
+ * tells the LLM exactly what action to take.
+ */
+function buildAwaitResponse(events: PushEvent[]): {
+  count: number;
+  events: Array<{
+    event: PushEvent;
+    suggested_action: string;
+    suggested_tool: string;
+    suggested_params: Record<string, unknown>;
+    urgency: "high" | "medium" | "low";
+  }>;
+} {
+  return {
+    count: events.length,
+    events: events.map((event) => {
+      const payload = event.payload as Record<string, unknown>;
+
+      switch (event.type) {
+        case "task_broadcast":
+          return {
+            event,
+            suggested_action: `New task in domains [${((payload.domains as string[]) ?? []).join(", ")}] with budget ${payload.budget ?? "?"}. Evaluate and submit a bid if it matches your capabilities.`,
+            suggested_tool: "eacn3_submit_bid",
+            suggested_params: {
+              task_id: event.task_id,
+              confidence: "0.0-1.0 (your self-assessed ability)",
+              price: "credits you want as payment",
+            },
+            urgency: "high" as const,
+          };
+
+        case "direct_message":
+          return {
+            event,
+            suggested_action: `Agent ${payload.from ?? "unknown"} sent you a message: "${String(payload.content ?? "").slice(0, 200)}". Consider replying.`,
+            suggested_tool: "eacn3_send_message",
+            suggested_params: {
+              to_agent_id: payload.from,
+              content: "your reply here",
+              task_id: event.task_id,
+            },
+            urgency: "high" as const,
+          };
+
+        case "subtask_completed":
+          return {
+            event,
+            suggested_action: `Subtask ${payload.subtask_id ?? "?"} completed for task ${event.task_id}. Fetch and review the results, then decide: submit your final result or create another subtask.`,
+            suggested_tool: "eacn3_get_task_results",
+            suggested_params: { task_id: String(payload.subtask_id ?? event.task_id) },
+            urgency: "high" as const,
+          };
+
+        case "budget_confirmation":
+          return {
+            event,
+            suggested_action: `A bid on task ${event.task_id} exceeded the budget (bid: ${payload.price ?? "?"}, budget: ${payload.budget ?? "?"}). Approve or reject.`,
+            suggested_tool: "eacn3_confirm_budget",
+            suggested_params: { task_id: event.task_id, approved: true },
+            urgency: "high" as const,
+          };
+
+        case "awaiting_retrieval":
+          return {
+            event,
+            suggested_action: `Task ${event.task_id} has results ready. Retrieve and select the best one.`,
+            suggested_tool: "eacn3_get_task_results",
+            suggested_params: { task_id: event.task_id },
+            urgency: "medium" as const,
+          };
+
+        case "discussions_updated":
+          return {
+            event,
+            suggested_action: `New discussion message on task ${event.task_id}. Read and respond.`,
+            suggested_tool: "eacn3_get_task",
+            suggested_params: { task_id: event.task_id },
+            urgency: "medium" as const,
+          };
+
+        case "timeout":
+          return {
+            event,
+            suggested_action: `Task ${event.task_id} timed out. Reputation impact was automatic. No action needed.`,
+            suggested_tool: "eacn3_get_task",
+            suggested_params: { task_id: event.task_id },
+            urgency: "low" as const,
+          };
+
+        default:
+          return {
+            event,
+            suggested_action: `Unknown event type "${event.type}" on task ${event.task_id}. Inspect manually.`,
+            suggested_tool: "eacn3_get_task",
+            suggested_params: { task_id: event.task_id },
+            urgency: "low" as const,
+          };
+      }
+    }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -406,10 +550,21 @@ export default {
       };
       const res = await net.registerAgent(card);
       state.addAgent(card); ws.connect(agentId);
+
+      // Configure reverse control — in OpenClaw mode, sampling is never
+      // available, so the engine relies on directive injection + long-polling.
+      rc.configure(agentId, { enabled: true, policies: {} });
+
       return ok({
         registered: true, agent_id: agentId, seeds: res.seeds, domains: params.domains,
         url: agentUrl,
         a2a_server: a2a.isRunning() ? { port: a2a.getServerPort() } : null,
+        reverse_control: {
+          enabled: true,
+          sampling_available: false,
+          mode: "openclaw",
+          hint: "Use eacn3_await_events for reactive event handling (long-polling). Directive injection is active on all tool responses.",
+        },
       });
     },
   });
@@ -462,7 +617,7 @@ export default {
     parameters: { type: "object", properties: { agent_id: { type: "string" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
       const res = await net.unregisterAgent(params.agent_id);
-      ws.disconnect(params.agent_id); state.removeAgent(params.agent_id);
+      ws.disconnect(params.agent_id); rc.unconfigure(params.agent_id); state.removeAgent(params.agent_id);
       // Stop A2A server if no agents remain
       if (state.listAgents().length === 0 && a2a.isRunning()) {
         await a2a.stopServer();
@@ -886,12 +1041,75 @@ export default {
   // #32 eacn3_get_events
   api.registerTool({
     name: "eacn3_get_events",
-    description: "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[]} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. Call periodically in your main loop. Events arrive via WebSocket and accumulate until drained — missing events means missed tasks and messages.",
+    description: "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. Call periodically in your main loop. Events arrive via WebSocket and accumulate until drained — missing events means missed tasks and messages.",
     parameters: { type: "object", properties: {} },
     async execute() {
       const events = state.drainEvents();
-      return ok({ count: events.length, events });
+      return ok({ count: events.length, events, reverse_control: rc.getStatus() });
     },
   });
+
+  // #39 eacn3_await_events — long-polling reverse control for OpenClaw
+  api.registerTool({
+    name: "eacn3_await_events",
+    description: "Block until a network event arrives or timeout expires, then return with the event AND a suggested action. This is the primary reverse-control mechanism for OpenClaw (where MCP sampling is unavailable). Instead of polling eacn3_get_events in a loop, call this tool — it waits for the network to push something, then tells you exactly what to do. Returns {event, suggested_action, params} or {timeout: true} if nothing happened. Prefer this over eacn3_get_events for reactive agent loops.",
+    parameters: {
+      type: "object",
+      properties: {
+        timeout_seconds: { type: "number", description: "Max seconds to wait. Default 30, max 120." },
+        event_types: { type: "array", items: { type: "string" }, description: "Only return for these event types. Default: all types." },
+      },
+    },
+    async execute(_id: string, params: any) {
+      const timeoutSec = Math.min(Math.max(params.timeout_seconds ?? 30, 1), 120);
+      const filterTypes = params.event_types as string[] | undefined;
+
+      // Check if there are already buffered events
+      const immediate = drainMatchingEvents(filterTypes);
+      if (immediate.length > 0) {
+        return ok(buildAwaitResponse(immediate));
+      }
+
+      // Long-poll: wait for new events via a Promise that resolves
+      // when ws-manager pushes an event or timeout expires.
+      const result = await new Promise<PushEvent[]>((resolve) => {
+        const deadline = setTimeout(() => {
+          cleanup();
+          resolve([]);
+        }, timeoutSec * 1000);
+
+        // Check periodically (every 500ms) if new events have been buffered
+        const poll = setInterval(() => {
+          const events = drainMatchingEvents(filterTypes);
+          if (events.length > 0) {
+            cleanup();
+            resolve(events);
+          }
+        }, 500);
+
+        function cleanup() {
+          clearTimeout(deadline);
+          clearInterval(poll);
+        }
+      });
+
+      if (result.length === 0) {
+        return ok({ timeout: true, waited_seconds: timeoutSec, hint: "No events arrived. Call again to keep waiting, or proceed with other work." });
+      }
+
+      return ok(buildAwaitResponse(result));
+    },
+  });
+
+  // #40 eacn3_reverse_control_status
+  api.registerTool({
+    name: "eacn3_reverse_control_status",
+    description: "Get the current status of the MCP reverse control engine. Shows whether sampling is available (always false in OpenClaw — use eacn3_await_events instead), configured agents, pending directive count, and rate limiting info.",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      return ok({ ...rc.getStatus(), openclaw_mode: true, recommended_tool: "eacn3_await_events" });
+    },
+  });
+
   },
 };

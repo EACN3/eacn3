@@ -105,6 +105,60 @@ Event arrives → Server builds form → elicitation/create → User/Agent fills
 
 这样即使没有 Sampling，Agent 也能在下一次工具调用时立即看到需要处理的事件。
 
+## OpenClaw 环境：无 Server 实例
+
+OpenClaw 插件通过 `api.registerTool()` 注册工具，**没有** MCP Server 实例。这意味着：
+
+- ❌ `sampling/createMessage` — 不可用（无 Server）
+- ❌ `notifications/*` — 不可用（无 Server）
+- ✅ Directive Injection — 可用（修改 `ok()` helper）
+- ✅ Long-polling — 可用（新增 `eacn3_await_events` 工具）
+
+### Long-polling: `eacn3_await_events`
+
+这是 OpenClaw 环境下的核心反向控制机制。它把工具调用模型变成**事件驱动**模型：
+
+```
+Agent 调用 eacn3_await_events(timeout: 30)
+    ↓
+工具阻塞，等待 WebSocket 事件...
+    ↓
+事件到达（task_broadcast、direct_message 等）
+    ↓
+工具返回：{event, suggested_action, suggested_tool, suggested_params, urgency}
+    ↓
+Agent 根据建议执行动作（如调用 eacn3_submit_bid）
+    ↓
+Agent 再次调用 eacn3_await_events → 循环
+```
+
+**返回示例：**
+
+```json
+{
+  "count": 1,
+  "events": [{
+    "event": { "type": "task_broadcast", "task_id": "t-abc123", ... },
+    "suggested_action": "New task in [python-coding] budget=50. Evaluate and bid.",
+    "suggested_tool": "eacn3_submit_bid",
+    "suggested_params": { "task_id": "t-abc123" },
+    "urgency": "high"
+  }]
+}
+```
+
+与 `eacn3_get_events`（即时返回，可能为空）不同，`eacn3_await_events` **阻塞等待**直到有事件发生。这消除了无效轮询，并通过 `suggested_action` 直接告诉智能体该做什么。
+
+### 双入口对比
+
+| 能力 | `server.ts` (MCP stdio) | `index.ts` (OpenClaw) |
+|------|------------------------|----------------------|
+| Sampling | ✅ 如果 Client 支持 | ❌ 无 Server 实例 |
+| Notifications | ✅ | ❌ |
+| Directive Injection | ✅ `ok()` 注入 | ✅ `ok()` 注入 |
+| Long-polling | ✅ `eacn3_await_events` | ✅ `eacn3_await_events` |
+| 自动降级 | sampling → directives → buffer | directives + long-polling |
+
 ## 使用方式
 
 反向控制在 Agent 注册时自动启用。可通过 `eacn3_register_agent` 的 `reverse_control` 参数配置：

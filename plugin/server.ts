@@ -1153,7 +1153,42 @@ server.tool(
   },
 );
 
-// #39 eacn3_reverse_control_status
+// #39 eacn3_await_events — long-polling reverse control
+server.tool(
+  "eacn3_await_events",
+  "Block until a network event arrives or timeout expires, then return with the event AND a suggested action. This is the reverse-control mechanism when MCP sampling is unavailable (e.g. OpenClaw). Instead of polling eacn3_get_events in a loop, call this — it waits for the network to push something, then tells you exactly what to do. Returns {event, suggested_action, suggested_tool, suggested_params, urgency} per event, or {timeout: true}. Prefer this over eacn3_get_events for reactive agent loops.",
+  {
+    timeout_seconds: z.number().optional().describe("Max seconds to wait (1-120). Default 30."),
+    event_types: z.array(z.string()).optional().describe("Only return for these event types. Default: all."),
+  },
+  async (params) => {
+    const timeoutSec = Math.min(Math.max(params.timeout_seconds ?? 30, 1), 120);
+    const filterTypes = params.event_types;
+
+    // Check immediate buffered events
+    const immediate = drainMatchingEvents(filterTypes);
+    if (immediate.length > 0) {
+      return ok(buildAwaitResponse(immediate));
+    }
+
+    // Long-poll
+    const result = await new Promise<import("./src/models.js").PushEvent[]>((resolve) => {
+      const deadline = setTimeout(() => { cleanup(); resolve([]); }, timeoutSec * 1000);
+      const poll = setInterval(() => {
+        const events = drainMatchingEvents(filterTypes);
+        if (events.length > 0) { cleanup(); resolve(events); }
+      }, 500);
+      function cleanup() { clearTimeout(deadline); clearInterval(poll); }
+    });
+
+    if (result.length === 0) {
+      return ok({ timeout: true, waited_seconds: timeoutSec, hint: "No events arrived. Call again to keep waiting, or proceed with other work." });
+    }
+    return ok(buildAwaitResponse(result));
+  },
+);
+
+// #40 eacn3_reverse_control_status
 server.tool(
   "eacn3_reverse_control_status",
   "Get the current status of the MCP reverse control engine. Shows whether sampling is available, which agents are configured, pending directive count, and rate limiting info. Use for debugging reverse control behavior.",
@@ -1164,8 +1199,50 @@ server.tool(
 );
 
 // ---------------------------------------------------------------------------
-// Start
+// Long-polling helpers
 // ---------------------------------------------------------------------------
+
+function drainMatchingEvents(filterTypes?: string[]): import("./src/models.js").PushEvent[] {
+  const all = state.drainEvents();
+  if (!filterTypes || filterTypes.length === 0) return all;
+
+  const matching: import("./src/models.js").PushEvent[] = [];
+  const remaining: import("./src/models.js").PushEvent[] = [];
+  for (const e of all) {
+    if (filterTypes.includes(e.type)) {
+      matching.push(e);
+    } else {
+      remaining.push(e);
+    }
+  }
+  if (remaining.length > 0) state.pushEvents(remaining);
+  return matching;
+}
+
+function buildAwaitResponse(events: import("./src/models.js").PushEvent[]) {
+  return {
+    count: events.length,
+    events: events.map((event) => {
+      const payload = event.payload as Record<string, unknown>;
+      switch (event.type) {
+        case "task_broadcast":
+          return { event, suggested_action: `New task in [${((payload.domains as string[]) ?? []).join(", ")}] budget=${payload.budget ?? "?"}. Evaluate and bid.`, suggested_tool: "eacn3_submit_bid", suggested_params: { task_id: event.task_id }, urgency: "high" };
+        case "direct_message":
+          return { event, suggested_action: `Message from ${payload.from ?? "?"}: "${String(payload.content ?? "").slice(0, 200)}". Reply.`, suggested_tool: "eacn3_send_message", suggested_params: { to_agent_id: payload.from, task_id: event.task_id }, urgency: "high" };
+        case "subtask_completed":
+          return { event, suggested_action: `Subtask ${payload.subtask_id ?? "?"} done. Fetch results.`, suggested_tool: "eacn3_get_task_results", suggested_params: { task_id: String(payload.subtask_id ?? event.task_id) }, urgency: "high" };
+        case "budget_confirmation":
+          return { event, suggested_action: `Bid exceeded budget on ${event.task_id}. Approve/reject.`, suggested_tool: "eacn3_confirm_budget", suggested_params: { task_id: event.task_id }, urgency: "high" };
+        case "awaiting_retrieval":
+          return { event, suggested_action: `Task ${event.task_id} has results. Retrieve.`, suggested_tool: "eacn3_get_task_results", suggested_params: { task_id: event.task_id }, urgency: "medium" };
+        case "timeout":
+          return { event, suggested_action: `Task ${event.task_id} timed out. No action needed.`, suggested_tool: "eacn3_get_task", suggested_params: { task_id: event.task_id }, urgency: "low" };
+        default:
+          return { event, suggested_action: `Event "${event.type}" on ${event.task_id}.`, suggested_tool: "eacn3_get_task", suggested_params: { task_id: event.task_id }, urgency: "low" };
+      }
+    }),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // WS Event Callbacks — auto-actions when events arrive
