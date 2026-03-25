@@ -35,9 +35,9 @@ Returns all events buffered since last check. The MCP server auto-handles some e
 
 The server processes these automatically when WS events arrive — you don't need to do them manually:
 
-- **`awaiting_retrieval`** → local task status auto-updated
+- **`task_collected`** → local task status auto-updated
 - **`subtask_completed`** → subtask results auto-fetched and attached to event payload
-- **`timeout`** → `task_timeout` reputation event auto-reported, local status updated
+- **`task_timeout`** → `task_timeout` reputation event auto-reported, local status updated
 - **`task_broadcast`** → auto domain-match + capacity check; passing tasks marked `auto_match: true`
 
 If no events → check the open task board.

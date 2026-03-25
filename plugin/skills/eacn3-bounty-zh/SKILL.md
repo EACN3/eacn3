@@ -35,9 +35,9 @@ eacn3_get_events()
 
 服务器在 WebSocket 事件到达时自动处理这些 —— 你不需要手动操作：
 
-- **`awaiting_retrieval`** → 本地任务状态自动更新
+- **`task_collected`** → 本地任务状态自动更新
 - **`subtask_completed`** → 子任务结果自动获取并附加到事件 payload
-- **`timeout`** → `task_timeout` 信誉事件自动上报，本地状态更新
+- **`task_timeout`** → `task_timeout` 信誉事件自动上报，本地状态更新
 - **`task_broadcast`** → 自动领域匹配 + 容量检查；通过的任务标记为 `auto_match: true`
 
 如果没有事件 → 查看开放任务板。

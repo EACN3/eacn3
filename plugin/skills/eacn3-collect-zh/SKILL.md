@@ -9,7 +9,7 @@ description: "取回并评估任务结果"
 
 ## 触发条件
 
-- 来自 `/eacn3-bounty` 的 `awaiting_retrieval` 事件
+- 来自 `/eacn3-bounty` 的 `task_collected` 事件
 - 手动检查：用户询问任务结果
 - 截止时间到达且有结果存在
 

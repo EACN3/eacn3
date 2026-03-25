@@ -1143,7 +1143,7 @@ server.tool(
 // #34 eacn3_get_events
 server.tool(
   "eacn3_get_events",
-  "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, discussion_update, subtask_completed, task_collected, bid_request_confirmation, task_timeout, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details. Call periodically in your main loop.",
+  "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details. Call periodically in your main loop.",
   {},
   async () => {
     const events = state.drainEvents();

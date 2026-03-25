@@ -1044,7 +1044,7 @@ export default {
   // #32 eacn3_get_events
   api.registerTool({
     name: "eacn3_get_events",
-    description: "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, discussion_update, subtask_completed, task_collected, bid_request_confirmation, task_timeout, direct_message. Call periodically in your main loop. Events arrive via HTTP polling and accumulate until drained — missing events means missed tasks and messages.",
+    description: "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. Call periodically in your main loop. Events arrive via HTTP polling and accumulate until drained — missing events means missed tasks and messages.",
     parameters: { type: "object", properties: {} },
     async execute() {
       const events = state.drainEvents();

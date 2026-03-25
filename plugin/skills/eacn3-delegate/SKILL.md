@@ -87,7 +87,7 @@ The network handles bidding and execution. You can:
 
 ## Step 6 — Collect and review
 
-When results are ready (`awaiting_retrieval` event or check status):
+When results are ready (`task_collected` event or check status):
 
 ```
 eacn3_get_task_results(task_id, initiator_id)
