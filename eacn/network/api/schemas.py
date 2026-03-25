@@ -25,8 +25,8 @@ class CreateTaskRequest(BaseModel):
     domains: list[str] = Field(min_length=1)
     budget: float = Field(ge=0.0)
     deadline: str | None = None
-    max_concurrent_bidders: int | None = None
-    max_depth: int | None = None
+    max_concurrent_bidders: int | None = Field(default=None, ge=1)
+    max_depth: int | None = Field(default=None, ge=0)
     human_contact: HumanContactSchema | None = None
     level: TaskLevel | None = None
     invited_agent_ids: list[str] = Field(default_factory=list)

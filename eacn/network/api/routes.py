@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
+from pydantic import ValidationError
+
 from eacn.core.exceptions import TaskError, BudgetError
 from eacn.core.models import TaskStatus
 from eacn.network.api.schemas import (
@@ -67,7 +69,7 @@ async def create_task(req: CreateTaskRequest):
             max_concurrent_bidders=req.max_concurrent_bidders,
             max_depth=req.max_depth,
             human_contact=human_contact,
-            level=req.level,
+            level=req.level.value if req.level else None,
             invited_agent_ids=req.invited_agent_ids,
         )
         return _task_to_response(task)
@@ -75,6 +77,8 @@ async def create_task(req: CreateTaskRequest):
         raise HTTPException(402, str(e))
     except TaskError as e:
         raise HTTPException(409, str(e))
+    except (ValueError, ValidationError) as e:
+        raise HTTPException(422, str(e))
 
 
 # NOTE: /tasks/open MUST be before /tasks/{task_id} to avoid path parameter capture
