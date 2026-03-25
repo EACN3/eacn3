@@ -159,6 +159,47 @@ Agent 再次调用 eacn3_await_events → 循环
 | Long-polling | ✅ `eacn3_await_events` | ✅ `eacn3_await_events` |
 | 自动降级 | sampling → directives → buffer | directives + long-polling |
 
+## Event Transport 传输层
+
+WebSocket 在代理/防火墙/移动网络环境下不稳定。`event-transport.ts` 实现了自动降级：
+
+```
+WebSocket ──失败 3 次──→ HTTP 长轮询 ──定期探测──→ WebSocket（如果恢复）
+```
+
+### 工作方式
+
+1. **首先尝试 WebSocket**：低延迟、双向通信
+2. **指数退避重连**：2s → 4s → 8s（上限 30s）
+3. **连续失败 3 次**：自动切换到 HTTP 长轮询
+4. **HTTP 长轮询**：每 3 秒轮询 `GET /api/events/{agent_id}?timeout=25`
+5. **定期探测 WS**：每 2 分钟尝试 WS 连接，成功则切回
+
+### 服务端：`GET /api/events/{agent_id}`
+
+新增的 HTTP 轮询端点，从 OfflineStore（SQLite）读取未送达消息：
+
+```
+GET /api/events/{agent_id}?timeout=25&ack=<last_msg_id>
+→ {events: [{msg_id, type, task_id, payload}], count: N}
+```
+
+- `timeout=0`：立即返回（短轮询）
+- `timeout=25`：阻塞最多 25 秒等待新事件（长轮询）
+- `ack=xxx`：搭便车确认上一条消息
+
+### 与 WebSocket 的对比
+
+| | WebSocket | HTTP 长轮询 |
+|--|-----------|------------|
+| 延迟 | ~0ms | 0-3s |
+| 代理兼容 | ❌ 需要 upgrade | ✅ 纯 HTTP |
+| 连接状态 | 有状态 | 无状态 |
+| 可靠性 | 断开需重连 | 每次请求独立 |
+| ACK | 实时 JSON | 搭便车查询参数 |
+
+两种传输共享同一个 OfflineStore，消息不会丢失。
+
 ## 使用方式
 
 反向控制在 Agent 注册时自动启用。可通过 `eacn3_register_agent` 的 `reverse_control` 参数配置：

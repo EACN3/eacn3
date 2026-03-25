@@ -548,6 +548,101 @@ async def update_config(patch: dict):
 
 
 
+# ── Event Polling (HTTP alternative to WebSocket) ───────────────────
+
+@router.get("/events/{agent_id}")
+async def poll_events(
+    agent_id: str,
+    timeout: int = Query(default=0, ge=0, le=120),
+    ack: str | None = Query(default=None),
+):
+    """HTTP long-polling endpoint for receiving push events.
+
+    Alternative to WebSocket for environments where WS is unstable or
+    unavailable (proxies, firewalls, serverless, OpenClaw).
+
+    - Immediately returns any buffered offline messages.
+    - If timeout > 0 and no messages are available, blocks up to `timeout`
+      seconds waiting for new events (long-polling).
+    - If `ack` is provided, acknowledges a previously received message ID
+      before returning new events (piggybacked ACK).
+
+    Returns: {events: [...], count: int}
+    """
+    import asyncio
+    from eacn.network.api.websocket import manager
+
+    store = manager._offline_store
+
+    # Piggybacked ACK from previous response
+    if ack:
+        manager.handle_ack(ack)
+
+    # Fast path: return buffered offline messages immediately
+    if store:
+        messages = await store.drain(agent_id)
+        if messages:
+            return {
+                "events": [
+                    {
+                        "msg_id": m["msg_id"],
+                        "type": m["type"],
+                        "task_id": m["task_id"],
+                        "payload": m["payload"],
+                        "_offline": True,
+                    }
+                    for m in messages
+                ],
+                "count": len(messages),
+            }
+
+    # No messages and no timeout — return empty immediately
+    if timeout <= 0:
+        return {"events": [], "count": 0}
+
+    # Long-poll: register a temporary listener and wait
+    new_events: list[dict] = []
+    notify = asyncio.Event()
+
+    # Temporarily hook into the connection manager to receive events
+    # directed at this agent. We store a "virtual" polling connection.
+    original_connected = manager.is_connected(agent_id)
+
+    async def _poll_check():
+        """Periodically check the offline store for new messages."""
+        while not notify.is_set():
+            await asyncio.sleep(1)
+            if store:
+                messages = await store.drain(agent_id)
+                if messages:
+                    new_events.extend(
+                        {
+                            "msg_id": m["msg_id"],
+                            "type": m["type"],
+                            "task_id": m["task_id"],
+                            "payload": m["payload"],
+                        }
+                        for m in messages
+                    )
+                    notify.set()
+
+    poll_task = asyncio.create_task(_poll_check())
+
+    try:
+        await asyncio.wait_for(notify.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        pass
+    finally:
+        notify.set()
+        poll_task.cancel()
+        try:
+            await poll_task
+        except asyncio.CancelledError:
+            pass
+
+    return {"events": new_events, "count": len(new_events)}
+
+
 @router.post("/admin/scan-deadlines")
 async def scan_deadlines(now: str | None = None):
     expired_ids = await _net().scan_deadlines(now)

@@ -8,7 +8,7 @@
 import { type AgentCard, type PushEvent, type AgentTier, type TaskLevel, EACN3_DEFAULT_NETWORK_ENDPOINT, isTierEligible } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
-import * as ws from "./src/ws-manager.js";
+import * as ws from "./src/event-transport.js";
 import * as a2a from "./src/a2a-server.js";
 import * as rc from "./src/reverse-control.js";
 

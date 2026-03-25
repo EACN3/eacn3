@@ -13,7 +13,7 @@ import { z } from "zod";
 import { type EacnState, type AgentCard, type PushEvent, type AgentTier, type TaskLevel, createDefaultState, EACN3_DEFAULT_NETWORK_ENDPOINT, isTierEligible, AGENT_TIER_HIERARCHY } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
-import * as ws from "./src/ws-manager.js";
+import * as ws from "./src/event-transport.js";
 import * as a2a from "./src/a2a-server.js";
 import * as rc from "./src/reverse-control.js";
 
@@ -491,7 +491,8 @@ server.tool(
         agent_id: a.agent_id,
         name: a.name,
         domains: a.domains,
-        ws_connected: ws.isConnected(a.agent_id),
+        connected: ws.isConnected(a.agent_id),
+        transport: ws.getTransportStatus(a.agent_id),
       })),
     });
   },
