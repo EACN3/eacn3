@@ -161,44 +161,50 @@ Agent 再次调用 eacn3_await_events → 循环
 
 ## Event Transport 传输层
 
-WebSocket 在代理/防火墙/移动网络环境下不稳定。`event-transport.ts` 实现了自动降级：
+**HTTP 到处都有，WebSocket 不一定**。很多环境（代理、CDN、serverless、企业防火墙）不支持 WebSocket 的 upgrade 握手，但 HTTP 是万能的。
+
+因此 `event-transport.ts` 的策略是：
 
 ```
-WebSocket ──失败 3 次──→ HTTP 长轮询 ──定期探测──→ WebSocket（如果恢复）
+HTTP 长轮询（默认，到处都能用）
+    └── WebSocket（可选升级，仅当明确启用时）
 ```
 
-### 工作方式
+### 默认模式：HTTP 长轮询
 
-1. **首先尝试 WebSocket**：低延迟、双向通信
-2. **指数退避重连**：2s → 4s → 8s（上限 30s）
-3. **连续失败 3 次**：自动切换到 HTTP 长轮询
-4. **HTTP 长轮询**：每 3 秒轮询 `GET /api/events/{agent_id}?timeout=25`
-5. **定期探测 WS**：每 2 分钟尝试 WS 连接，成功则切回
-
-### 服务端：`GET /api/events/{agent_id}`
-
-新增的 HTTP 轮询端点，从 OfflineStore（SQLite）读取未送达消息：
+1. 插件发 `GET /api/events/{agent_id}?timeout=25`
+2. 服务端从 OfflineStore（SQLite）读取未送达消息
+3. 有消息 → 立即返回
+4. 没消息 → 阻塞最多 25 秒等待
+5. 插件处理事件，立即发起下一次轮询（搭便车 ACK）
+6. 出错时指数退避（5s → 10s → 20s → 30s cap）
 
 ```
 GET /api/events/{agent_id}?timeout=25&ack=<last_msg_id>
 → {events: [{msg_id, type, task_id, payload}], count: N}
 ```
 
-- `timeout=0`：立即返回（短轮询）
-- `timeout=25`：阻塞最多 25 秒等待新事件（长轮询）
-- `ack=xxx`：搭便车确认上一条消息
+### 可选：WebSocket 升级
 
-### 与 WebSocket 的对比
+需要低延迟时，可以 `connect(agentId, { preferWebSocket: true })`。
+WS 连续失败 3 次后自动降回 HTTP 轮询。
 
-| | WebSocket | HTTP 长轮询 |
-|--|-----------|------------|
-| 延迟 | ~0ms | 0-3s |
-| 代理兼容 | ❌ 需要 upgrade | ✅ 纯 HTTP |
-| 连接状态 | 有状态 | 无状态 |
-| 可靠性 | 断开需重连 | 每次请求独立 |
-| ACK | 实时 JSON | 搭便车查询参数 |
+### 对比
+
+| | HTTP 长轮询（默认） | WebSocket（可选） |
+|--|-------------------|------------------|
+| 兼容性 | ✅ 到处都能用 | ❌ 需要 upgrade 支持 |
+| 延迟 | 0-5s | ~0ms |
+| 状态 | 无状态 | 有状态（需重连） |
+| 代理/CDN | ✅ | ❌ |
+| ACK | 搭便车查询参数 | 实时 JSON |
+| 死连接检测 | 不需要 | 需要 ping/pong |
 
 两种传输共享同一个 OfflineStore，消息不会丢失。
+
+### 消息去重
+
+OfflineStore 中的消息可能在传输切换或重连时被重复投递。`event-transport.ts` 维护一个滑动窗口（最近 500 个 msg_id），自动去重。
 
 ## 使用方式
 
