@@ -1,6 +1,6 @@
 """Network FastAPI application with lifespan management.
 
-Startup: connect DB, init Network, wire push handler + offline store.
+Startup: connect DB, init Network, wire push handler + message queue.
 Shutdown: close DB.
 """
 
@@ -15,10 +15,9 @@ from fastapi.responses import JSONResponse
 from eacn.network.app import Network
 from eacn.network.db import Database
 from eacn.network.offline_store import OfflineStore
-from eacn.network.api.routes import router, set_network
+from eacn.network.api.routes import router, set_network, set_offline_store
 from eacn.network.api.discovery_routes import discovery_router, set_discovery_network
 from eacn.network.api.peer_routes import peer_router, set_peer_cluster, set_peer_network
-from eacn.network.api.websocket import ws_router, manager
 
 
 @asynccontextmanager
@@ -31,26 +30,21 @@ async def lifespan(app: FastAPI):
     network = Network(db=db)
     await network.start()
 
-    # ── Offline store & ACK config ───────────────────────────────────
+    # ── Message queue (per-agent) ─────────────────────────────────────
     push_cfg = network.config.push
     offline_store = OfflineStore(
         db=db,
         max_per_agent=push_cfg.offline_max_per_agent,
         ttl_seconds=push_cfg.offline_ttl_seconds,
     )
-    manager.set_offline_store(offline_store)
-    manager.ack_timeout = push_cfg.ack_timeout
 
     # Wire push handler → queue-first delivery
     #
-    # Every event is written to the per-agent message queue (OfflineStore)
-    # FIRST. This is the source of truth — agents poll via HTTP to drain it.
-    # WebSocket is an optional accelerator: if the agent happens to be
-    # connected, we push a copy for low-latency delivery. But the queue
-    # is always populated regardless.
-    async def queue_first_push_handler(event):
-        """Enqueue for all recipients, then optionally notify via WS."""
-        # 1. Enqueue for every recipient (primary delivery path)
+    # Every event is written to the per-agent message queue unconditionally.
+    # Agents drain it via HTTP GET /api/events/{agent_id}.
+    # No WebSocket — just a queue.
+    async def queue_push_handler(event):
+        """Enqueue for all recipients."""
         for agent_id in event.recipients:
             await offline_store.store(
                 msg_id=event.msg_id,
@@ -60,39 +54,21 @@ async def lifespan(app: FastAPI):
                 payload=event.payload,
             )
 
-        # 2. Best-effort WS push for low-latency (optional accelerator)
-        #    Agents that are WS-connected get notified immediately.
-        #    They still drain the queue via HTTP — WS is just a hint.
-        for agent_id in event.recipients:
-            if manager.is_connected(agent_id):
-                try:
-                    await manager.send_to(agent_id, {
-                        "msg_id": event.msg_id,
-                        "type": event.type.value,
-                        "task_id": event.task_id,
-                        "payload": event.payload,
-                    })
-                except Exception:
-                    pass  # Queue already has it — WS failure is harmless
-
-        # 3. Forward to remote cluster nodes for their local agents
-        local_agents = {r for r in event.recipients if manager.is_connected(r)}
-        remote_agents = [r for r in event.recipients if r not in local_agents]
-        if remote_agents:
+        # Forward to remote cluster nodes for their local agents
+        if len(event.recipients) > 0:
             participant_nodes = network.cluster.router.get_participants(event.task_id)
             if participant_nodes:
                 await network.cluster.router.forward_push(
                     event.type.value,
                     event.task_id,
-                    remote_agents,
+                    event.recipients,
                     event.payload,
                     participant_nodes,
                 )
 
-    network.push.set_handler(queue_first_push_handler)
+    network.push.set_handler(queue_push_handler)
 
-    # Cluster handler: remote node forwarded an event to us.
-    # Same logic: enqueue first, then WS hint.
+    # Cluster handler: remote node forwarded an event — enqueue locally.
     async def cluster_push_handler(event):
         for agent_id in event.recipients:
             await offline_store.store(
@@ -102,16 +78,6 @@ async def lifespan(app: FastAPI):
                 task_id=event.task_id,
                 payload=event.payload,
             )
-            if manager.is_connected(agent_id):
-                try:
-                    await manager.send_to(agent_id, {
-                        "msg_id": event.msg_id,
-                        "type": event.type.value,
-                        "task_id": event.task_id,
-                        "payload": event.payload,
-                    })
-                except Exception:
-                    pass
 
     network.cluster.set_push_handler(cluster_push_handler)
 
@@ -119,6 +85,7 @@ async def lifespan(app: FastAPI):
     app.state.network = network
     app.state.offline_store = offline_store
     set_network(network)
+    set_offline_store(offline_store)
     set_discovery_network(network)
     set_peer_cluster(network.cluster)
     set_peer_network(network)
@@ -148,5 +115,4 @@ def create_app(db_path: str | None = None) -> FastAPI:
     app.include_router(router)
     app.include_router(discovery_router)
     app.include_router(peer_router)
-    app.include_router(ws_router)
     return app

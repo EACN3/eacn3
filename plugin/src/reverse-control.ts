@@ -6,7 +6,7 @@
  * 2. Notifications — push state updates to Host
  * 3. Enhanced tool results — inject pending events into any tool response (fallback)
  *
- * When WebSocket events arrive from the EACN3 network, instead of just buffering
+ * When push events arrive from the EACN3 network, instead of just buffering
  * them for polling, this engine evaluates each event and may invoke the Host's LLM
  * to make a decision (bid on a task, reply to a message, etc.).
  */
@@ -145,7 +145,7 @@ export function unconfigure(agentId: string): void {
 
 /**
  * Main entry point: process a WebSocket event through the reverse control engine.
- * Called by ws-manager's event callback instead of directly buffering.
+ * Called by event-transport's callback instead of directly buffering.
  *
  * Returns true if the event was handled (sampling/notification/auto-action).
  * Returns false if it should fall through to normal event buffering.

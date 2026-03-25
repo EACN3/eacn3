@@ -15,7 +15,6 @@ import pytest
 from httpx import AsyncClient
 from starlette.testclient import TestClient
 
-from eacn.network.api.websocket import manager as ws_manager
 from tests.api.conftest import (
     _make_network_app, create_task, bid, submit_result, select_result,
 )

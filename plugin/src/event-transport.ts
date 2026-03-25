@@ -8,7 +8,7 @@
  * No WebSocket. No connection state. No reconnection logic.
  * Just HTTP GET on a timer.
  *
- * Same public API as the old ws-manager.ts — drop-in replacement.
+ * Public API: connect/disconnect/isConnected per agent.
  */
 
 import { type PushEvent } from "./models.js";

@@ -359,7 +359,7 @@ export default {
   // #1 eacn3_connect
   api.registerTool({
     name: "eacn3_connect",
-    description: "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: opens WebSocket connections for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
+    description: "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: starts event polling for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
     parameters: {
       type: "object",
       properties: {
@@ -432,7 +432,7 @@ export default {
   // #2 eacn3_disconnect
   api.registerTool({
     name: "eacn3_disconnect",
-    description: "Disconnect from the EACN3 network and close all WebSocket connections. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
+    description: "Disconnect from the EACN3 network and stop event polling. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
     parameters: { type: "object", properties: {} },
     async execute() {
       stopHeartbeat(); ws.disconnectAll();
@@ -506,7 +506,7 @@ export default {
   // #5 eacn3_register_agent
   api.registerTool({
     name: "eacn3_register_agent",
-    description: "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and opens a WebSocket for real-time event push (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
+    description: "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and starts polling for push events (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
     parameters: {
       type: "object",
       properties: {
@@ -613,7 +613,7 @@ export default {
   // #8 eacn3_unregister_agent
   api.registerTool({
     name: "eacn3_unregister_agent",
-    description: "Remove an agent from the network and close its WebSocket connection. Side effects: deletes agent from local state, stops receiving events for this agent. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
+    description: "Remove an agent from the network and stop its event polling. Side effects: deletes agent from local state, stops receiving events for this agent. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
     parameters: { type: "object", properties: { agent_id: { type: "string" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
       const res = await net.unregisterAgent(params.agent_id);
@@ -629,11 +629,11 @@ export default {
   // #9 eacn3_list_my_agents
   api.registerTool({
     name: "eacn3_list_my_agents",
-    description: "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
+    description: "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and polling_active (event polling status). No network call — reads local state only. Use to check which agents are active and receiving events.",
     parameters: { type: "object", properties: {} },
     async execute() {
       const agents = state.listAgents();
-      return ok({ count: agents.length, agents: agents.map((a) => ({ agent_id: a.agent_id, name: a.name, domains: a.domains, tier: a.tier, ws_connected: ws.isConnected(a.agent_id) })) });
+      return ok({ count: agents.length, agents: agents.map((a) => ({ agent_id: a.agent_id, name: a.name, domains: a.domains, tier: a.tier, polling_active: ws.isConnected(a.agent_id) })) });
     },
   });
 
@@ -802,7 +802,7 @@ export default {
   // #21 eacn3_update_discussions
   api.registerTool({
     name: "eacn3_update_discussions",
-    description: "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussions_updated' WebSocket event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
+    description: "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussions_updated' push event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, message: { type: "string" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "message"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.updateDiscussions(params.task_id, initiatorId, params.message)); },
   });
@@ -1041,7 +1041,7 @@ export default {
   // #32 eacn3_get_events
   api.registerTool({
     name: "eacn3_get_events",
-    description: "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. Call periodically in your main loop. Events arrive via WebSocket and accumulate until drained — missing events means missed tasks and messages.",
+    description: "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. Call periodically in your main loop. Events arrive via HTTP polling and accumulate until drained — missing events means missed tasks and messages.",
     parameters: { type: "object", properties: {} },
     async execute() {
       const events = state.drainEvents();
@@ -1071,7 +1071,7 @@ export default {
       }
 
       // Long-poll: wait for new events via a Promise that resolves
-      // when ws-manager pushes an event or timeout expires.
+      // when event-transport pushes an event or timeout expires.
       const result = await new Promise<PushEvent[]>((resolve) => {
         const deadline = setTimeout(() => {
           cleanup();

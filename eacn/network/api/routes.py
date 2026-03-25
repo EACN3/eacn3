@@ -24,11 +24,17 @@ from eacn.network.api.schemas import (
 router = APIRouter(prefix="/api", tags=["network"])
 
 _network = None
+_store = None  # OfflineStore — per-agent message queue
 
 
 def set_network(network) -> None:
     global _network
     _network = network
+
+
+def set_offline_store(store) -> None:
+    global _store
+    _store = store
 
 
 def _net():
@@ -432,7 +438,6 @@ async def relay_message(req: RelayMessageRequest):
     deliver immediately. Otherwise forward to peer nodes via /peer/message.
     """
     from eacn.core.models import PushEvent, PushEventType
-    from eacn.network.api.websocket import manager
 
     net = _net()
     target_agent_id = req.to.agent_id
@@ -450,10 +455,16 @@ async def relay_message(req: RelayMessageRequest):
         },
     )
 
-    # Try local delivery first
-    if manager.is_connected(target_agent_id):
-        delivered = await manager.broadcast_event(event)
-        return {"ok": True, "delivered": delivered, "method": "local"}
+    # Enqueue locally — agent will pick it up via HTTP polling
+    if _store:
+        await _store.store(
+            msg_id=event.msg_id,
+            agent_id=target_agent_id,
+            event_type=event.type.value,
+            task_id=event.task_id,
+            payload=event.payload,
+        )
+        return {"ok": True, "delivered": 1, "method": "queue"}
 
     # Forward to all peer nodes — they'll try local delivery
     if not net.cluster.standalone:
@@ -569,32 +580,20 @@ async def poll_events(
     timeout: int = Query(default=0, ge=0, le=60),
     ack: str | None = Query(default=None),
 ):
-    """HTTP polling endpoint for receiving push events.
-
-    Primary transport for environments where WebSocket is unavailable
-    (proxies, CDNs, serverless, corporate firewalls).
+    """HTTP polling endpoint for draining the per-agent message queue.
 
     Flow:
-    1. Drain any messages already buffered in OfflineStore.
+    1. Drain any messages already buffered in the queue.
     2. If messages found → return immediately.
     3. If timeout > 0 and no messages → block up to `timeout` seconds,
        checking the store every second for new arrivals.
-    4. If `ack` provided → acknowledge a previously received message
-       (piggybacked on the next poll request).
-
-    The OfflineStore is populated automatically by the push handler when
-    an agent is not connected via WebSocket.
+    4. `ack` parameter is accepted for compatibility but currently a no-op.
 
     Returns: {"events": [...], "count": int}
     """
     import asyncio
-    from eacn.network.api.websocket import manager
 
-    store = manager._offline_store
-
-    # Piggybacked ACK from previous poll
-    if ack:
-        manager.handle_ack(ack)
+    store = _store
 
     # Fast path: drain buffered messages
     if store:
@@ -609,8 +608,8 @@ async def poll_events(
         return {"events": [], "count": 0}
 
     # Long-poll: wait up to `timeout` seconds, checking every 1s.
-    # The push handler writes to OfflineStore when WS delivery fails,
-    # so new events will appear there within ~1s of being pushed.
+    # The push handler writes to the queue unconditionally,
+    # so new events appear within ~1s of being pushed.
     elapsed = 0
     while elapsed < timeout:
         await asyncio.sleep(1)
@@ -643,9 +642,8 @@ async def fund_account(agent_id: str = Body(...), amount: float = Body(...)):
 
 @router.get("/admin/offline-stats")
 async def offline_stats():
-    """Query offline message queue stats per agent."""
-    from eacn.network.api.websocket import manager
-    store = manager._offline_store
+    """Query message queue stats per agent."""
+    store = _store
     if not store:
         return {"agents": {}, "total": 0}
     counts = await store.count_all()

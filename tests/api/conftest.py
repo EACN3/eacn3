@@ -11,9 +11,9 @@ from httpx import AsyncClient, ASGITransport
 from eacn3.network.app import Network
 from eacn3.network.config import NetworkConfig
 from eacn3.network.db import Database
-from eacn3.network.api.routes import router as net_router, set_network
+from eacn3.network.api.routes import router as net_router, set_network, set_offline_store
 from eacn3.network.api.discovery_routes import discovery_router, set_discovery_network
-from eacn3.network.api.websocket import ws_router
+from eacn3.network.offline_store import OfflineStore
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -23,7 +23,6 @@ def _make_network_app(network: Network) -> FastAPI:
     app = FastAPI()
     app.include_router(net_router)
     app.include_router(discovery_router)
-    app.include_router(ws_router)
     set_network(network)
     set_discovery_network(network)
     return app

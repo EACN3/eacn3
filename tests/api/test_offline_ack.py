@@ -1,17 +1,13 @@
-"""Tests: Offline message cache and ACK-based reliable delivery.
+"""Tests: Offline message queue (OfflineStore) and PushEvent msg_id.
 
 Covers:
 - OfflineStore: store, drain, count, prune
-- ConnectionManager: ACK tracking, offline caching on delivery failure
 - PushEvent: msg_id generation
 """
-
-import asyncio
 
 import pytest
 
 from eacn3.core.models import PushEvent, PushEventType
-from eacn3.network.api.websocket import ConnectionManager
 from eacn3.network.db.database import Database
 from eacn3.network.offline_store import OfflineStore
 
@@ -113,63 +109,3 @@ class TestPushEventMsgId:
             recipients=["a1"],
         )
         assert event.msg_id == "custom-id"
-
-
-# ── ConnectionManager ACK tests ─────────────────────────────────────
-
-class TestConnectionManagerAck:
-    @pytest.fixture
-    def mgr(self):
-        m = ConnectionManager()
-        m.ack_timeout = 1  # Short timeout for tests
-        return m
-
-    def test_handle_ack_no_pending(self, mgr):
-        assert mgr.handle_ack("nonexistent") is False
-
-    @pytest.mark.asyncio
-    async def test_handle_ack_resolves_pending(self, mgr):
-        """ACK should set the pending event."""
-        event = asyncio.Event()
-        mgr._pending_acks["m1"] = event
-        assert mgr.handle_ack("m1") is True
-        assert event.is_set()
-
-    @pytest.mark.asyncio
-    async def test_broadcast_to_disconnected_stores_offline(self, mgr):
-        """When no agent is connected, messages should go to offline store."""
-        db = Database()
-        await db.connect()
-        store = OfflineStore(db, max_per_agent=100, ttl_seconds=3600)
-        mgr.set_offline_store(store)
-
-        event = PushEvent(
-            type=PushEventType.TASK_BROADCAST,
-            task_id="t1",
-            recipients=["offline-agent"],
-            payload={"data": "test"},
-        )
-        delivered = await mgr.broadcast_event(event)
-        assert delivered == 0
-
-        # Verify message was stored offline
-        count = await store.count("offline-agent")
-        assert count == 1
-
-        messages = await store.drain("offline-agent")
-        assert messages[0]["msg_id"] == event.msg_id
-        assert messages[0]["payload"] == {"data": "test"}
-
-        await db.close()
-
-    @pytest.mark.asyncio
-    async def test_broadcast_no_offline_store_no_crash(self, mgr):
-        """Without offline store, undelivered messages are dropped silently."""
-        event = PushEvent(
-            type=PushEventType.TASK_BROADCAST,
-            task_id="t1",
-            recipients=["a1"],
-            payload={},
-        )
-        delivered = await mgr.broadcast_event(event)
-        assert delivered == 0

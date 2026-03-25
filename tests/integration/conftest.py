@@ -28,9 +28,9 @@ from fastapi import FastAPI
 from eacn3.network.app import Network
 from eacn3.network.config import NetworkConfig
 from eacn3.network.db import Database
-from eacn3.network.api.routes import router as net_router, set_network
+from eacn3.network.api.routes import router as net_router, set_network, set_offline_store
 from eacn3.network.api.discovery_routes import discovery_router, set_discovery_network
-from eacn3.network.api.websocket import ws_router
+from eacn3.network.offline_store import OfflineStore
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ async def funded_network(network):
 @pytest.fixture
 async def live_server(funded_network):
     """Start a real uvicorn server on a random port. Yields base URL."""
-    from eacn3.network.api.websocket import manager as ws_manager
+    from eacn3.network.db import Database
 
     app = FastAPI()
 
@@ -88,15 +88,25 @@ async def live_server(funded_network):
 
     app.include_router(net_router)
     app.include_router(discovery_router)
-    app.include_router(ws_router)
     set_network(funded_network)
     set_discovery_network(funded_network)
 
-    # Wire push handler → WebSocket delivery (same as production app.py)
-    async def ws_push_handler(event):
-        await ws_manager.broadcast_event(event)
+    # Create an in-memory offline store for the test server
+    offline_store = OfflineStore(db=funded_network.db)
+    set_offline_store(offline_store)
 
-    funded_network.push.set_handler(ws_push_handler)
+    # Wire push handler → queue delivery (same as production app.py)
+    async def queue_push_handler(event):
+        for agent_id in event.recipients:
+            await offline_store.store(
+                msg_id=event.msg_id,
+                agent_id=agent_id,
+                event_type=event.type.value,
+                task_id=event.task_id,
+                payload=event.payload,
+            )
+
+    funded_network.push.set_handler(queue_push_handler)
 
     port = _free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")

@@ -11,7 +11,6 @@ from httpx import AsyncClient, ASGITransport
 from eacn3.network.app import Network
 from eacn3.network.config import NetworkConfig
 from eacn3.network.api.routes import router as net_router, set_network
-from eacn3.network.api.websocket import ws_router
 
 
 @pytest.fixture
@@ -50,7 +49,6 @@ async def large_network():
 async def large_client(large_network):
     app = FastAPI()
     app.include_router(net_router)
-    app.include_router(ws_router)
     set_network(large_network)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:

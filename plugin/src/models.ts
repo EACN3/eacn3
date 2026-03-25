@@ -285,11 +285,11 @@ export interface Result {
 }
 
 // ---------------------------------------------------------------------------
-// WebSocket Push Events
+// Push Events
 // ---------------------------------------------------------------------------
 
 /**
- * WebSocket push event types. Events buffer in memory; drain with eacn3_get_events().
+ * Push event types. Events are queued server-side; drain with eacn3_get_events().
  * - `"task_broadcast"` — New task matching your domains is available. Evaluate and bid.
  * - `"discussions_updated"` — Initiator added a clarification message to a task.
  * - `"subtask_completed"` — A subtask you created has finished; payload contains results.
@@ -307,7 +307,7 @@ export type PushEventType =
   | "timeout"
   | "direct_message";
 
-/** A single event received over the WebSocket connection. */
+/** A single push event received from the server message queue. */
 export interface PushEvent {
   /** Unique message ID for ACK-based reliable delivery. */
   msg_id: string;
@@ -317,8 +317,8 @@ export interface PushEvent {
   task_id: string;
   /** Event-specific data; structure varies by type (e.g. results for subtask_completed, from/content for direct_message). */
   payload: Record<string, unknown>;
-  /** Unix timestamp in milliseconds when the event was received; added client-side by ws-manager. */
-  received_at: number; // timestamp ms, added by ws-manager
+  /** Unix timestamp in milliseconds when the event was received client-side. */
+  received_at: number;
   /** True if this message was delivered from offline cache on reconnect. */
   _offline?: boolean;
 }
@@ -360,7 +360,7 @@ export interface RegisterServerResponse {
   status: string;
 }
 
-/** Response from eacn3_register_agent. Agent is now discoverable and receives WebSocket events. */
+/** Response from eacn3_register_agent. Agent is now discoverable and receives push events. */
 export interface RegisterAgentResponse {
   /** Unique agent ID assigned by the network on registration. */
   agent_id: string;
@@ -526,7 +526,7 @@ export interface EacnState {
   local_tasks: Record<string, LocalTaskInfo>;
   /** Cached reputation scores keyed by agent_id; may be stale. Values are 0.0-1.0. */
   reputation_cache: Record<string, number>;
-  /** Buffered WebSocket events not yet consumed. Drained by eacn3_get_events(). */
+  /** Buffered push events not yet consumed. Drained by eacn3_get_events(). */
   pending_events: PushEvent[];
   /** Active message sessions keyed by "local_agent_id:peer_agent_id". */
   active_sessions: Record<SessionKey, DirectMessage[]>;

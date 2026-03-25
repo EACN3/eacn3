@@ -139,7 +139,7 @@ server.tool(
 // #1 eacn3_connect
 server.tool(
   "eacn3_connect",
-  "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: opens WebSocket connections for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
+  "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: starts event polling for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
   {
     network_endpoint: z.string().optional().describe(`Network URL. Defaults to ${EACN3_DEFAULT_NETWORK_ENDPOINT}`),
     seed_nodes: z.array(z.string()).optional().describe("Additional seed node URLs for fallback"),
@@ -236,7 +236,7 @@ server.tool(
 // #2 eacn3_disconnect
 server.tool(
   "eacn3_disconnect",
-  "Disconnect from the EACN3 network and close all WebSocket connections. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
+  "Disconnect from the EACN3 network and stop event polling. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
   {},
   async () => {
     stopHeartbeat();
@@ -300,7 +300,7 @@ server.tool(
 // Inlines: adapter (AgentCard assembly) + registry (validate + persist + DHT)
 server.tool(
   "eacn3_register_agent",
-  "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and opens a WebSocket for real-time event push (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
+  "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and starts polling for push events (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
   {
     name: z.string().describe("Agent display name"),
     description: z.string().describe("What this Agent does"),
@@ -369,7 +369,7 @@ server.tool(
     // Persist locally
     state.addAgent(card);
 
-    // Open WebSocket for event push
+    // Start polling for push events
     ws.connect(agentId);
 
     // Configure reverse control for this agent
@@ -459,7 +459,7 @@ server.tool(
 // #8 eacn3_unregister_agent
 server.tool(
   "eacn3_unregister_agent",
-  "Remove an agent from the network and close its WebSocket connection. Side effects: deletes agent from local state, stops receiving events for this agent. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
+  "Remove an agent from the network and stop its event polling. Side effects: deletes agent from local state, stops receiving events for this agent. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
   {
     agent_id: z.string(),
   },
@@ -481,7 +481,7 @@ server.tool(
 // #9 eacn3_list_my_agents
 server.tool(
   "eacn3_list_my_agents",
-  "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
+  "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and polling_active (event polling status). No network call — reads local state only. Use to check which agents are active and receiving events.",
   {},
   async () => {
     const agents = state.listAgents();
@@ -734,7 +734,7 @@ server.tool(
 // #21 eacn3_update_discussions
 server.tool(
   "eacn3_update_discussions",
-  "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussions_updated' WebSocket event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
+  "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussions_updated' push event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
   {
     task_id: z.string(),
     message: z.string(),
@@ -955,7 +955,7 @@ server.tool(
 // A2A direct + Network relay fallback — agent.md:358-362
 server.tool(
   "eacn3_send_message",
-  "Send a direct agent-to-agent message. Delivery order: (1) local agent → instant push, (2) remote agent with reachable URL → A2A direct POST, (3) fallback → Network relay via WebSocket. Returns {sent, to, from, method} where method is 'local', 'a2a_direct', or 'relay'. All sent messages are stored in your session history. The recipient sees a 'direct_message' event. Use /eacn3-message to handle received messages.",
+  "Send a direct agent-to-agent message. Delivery order: (1) local agent → instant push, (2) remote agent with reachable URL → A2A direct POST, (3) fallback → Network relay. Returns {sent, to, from, method} where method is 'local', 'a2a_direct', or 'relay'. All sent messages are stored in your session history. The recipient sees a 'direct_message' event. Use /eacn3-message to handle received messages.",
   {
     agent_id: z.string().describe("Target agent ID"),
     content: z.string(),

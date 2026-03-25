@@ -10,7 +10,6 @@ from eacn3.network.db import Database
 from eacn3.network.api.routes import router as net_router, set_network
 from eacn3.network.api.discovery_routes import discovery_router, set_discovery_network
 from eacn3.network.api.peer_routes import peer_router, set_peer_cluster, set_peer_network
-from eacn3.network.api.websocket import ws_router
 
 
 @pytest.fixture
@@ -31,7 +30,6 @@ async def peer_client():
     app.include_router(net_router)
     app.include_router(discovery_router)
     app.include_router(peer_router)
-    app.include_router(ws_router)
     set_network(net)
     set_discovery_network(net)
     set_peer_cluster(net.cluster)
