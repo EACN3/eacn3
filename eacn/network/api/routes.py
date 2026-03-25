@@ -242,6 +242,7 @@ async def select_result(task_id: str, req: SelectResultRequest):
             task_id=task_id,
             agent_id=req.agent_id,
             initiator_id=req.initiator_id,
+            close_task=req.close_task,
         )
         return OkResponse(message="Result selected, settlement done")
     except (TaskError, BudgetError) as e:
@@ -560,6 +561,17 @@ async def fund_account(agent_id: str = Body(...), amount: float = Body(...)):
     account = _net().escrow.get_or_create_account(agent_id, 0.0)
     account.credit(amount)
     return {"agent_id": agent_id, "available": account.available, "frozen": account.frozen}
+
+
+@router.get("/admin/offline-stats")
+async def offline_stats():
+    """Query offline message queue stats per agent."""
+    from eacn.network.api.websocket import manager
+    store = manager._offline_store
+    if not store:
+        return {"agents": {}, "total": 0}
+    counts = await store.count_all()
+    return {"agents": counts, "total": sum(counts.values())}
 
 
 @router.get("/admin/logs")

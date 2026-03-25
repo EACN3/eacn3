@@ -312,10 +312,12 @@ export async function selectResult(
   taskId: string,
   initiatorId: string,
   agentId: string,
+  closeTask: boolean = false,
 ): Promise<{ ok: boolean; message: string }> {
   return request("POST", `/api/tasks/${taskId}/select`, {
     initiator_id: initiatorId,
     agent_id: agentId,
+    close_task: closeTask,
   });
 }
 

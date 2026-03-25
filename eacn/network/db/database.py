@@ -180,6 +180,23 @@ class Database:
                 known_node_id TEXT NOT NULL,
                 PRIMARY KEY (node_id, known_node_id)
             );
+
+            -- ═══════════════════════════════════════════════════════
+            -- Offline message cache (reliable delivery)
+            -- ═══════════════════════════════════════════════════════
+
+            CREATE TABLE IF NOT EXISTS offline_messages (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                msg_id      TEXT NOT NULL UNIQUE,
+                agent_id    TEXT NOT NULL,
+                type        TEXT NOT NULL,
+                task_id     TEXT NOT NULL DEFAULT '',
+                payload     TEXT NOT NULL DEFAULT '{}',
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                expires_at  TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_offline_agent ON offline_messages(agent_id);
+            CREATE INDEX IF NOT EXISTS idx_offline_expires ON offline_messages(expires_at);
         """)
         await self.db.commit()
 
@@ -846,3 +863,98 @@ class Database:
             (node_id, node_id),
         )
         await self.db.commit()
+
+    # ── Offline message cache ────────────────────────────────────────
+
+    async def offline_store(
+        self,
+        msg_id: str,
+        agent_id: str,
+        event_type: str,
+        task_id: str,
+        payload: dict[str, Any],
+        expires_at: str | None = None,
+    ) -> None:
+        """Store a message for an offline agent."""
+        await self.db.execute(
+            """INSERT OR IGNORE INTO offline_messages
+               (msg_id, agent_id, type, task_id, payload, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (msg_id, agent_id, event_type, task_id,
+             json.dumps(payload, ensure_ascii=False), expires_at),
+        )
+        await self.db.commit()
+
+    async def offline_drain(self, agent_id: str) -> list[dict[str, Any]]:
+        """Retrieve and delete all pending offline messages for an agent.
+
+        Returns messages ordered oldest-first. Expired messages are pruned.
+        """
+        # Prune expired
+        await self.db.execute(
+            "DELETE FROM offline_messages WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')",
+        )
+        # Fetch
+        async with self.db.execute(
+            """SELECT msg_id, type, task_id, payload, created_at
+               FROM offline_messages
+               WHERE agent_id = ?
+               ORDER BY id ASC""",
+            (agent_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        if not rows:
+            return []
+        # Delete fetched
+        await self.db.execute(
+            "DELETE FROM offline_messages WHERE agent_id = ?", (agent_id,),
+        )
+        await self.db.commit()
+        return [
+            {
+                "msg_id": r[0],
+                "type": r[1],
+                "task_id": r[2],
+                "payload": json.loads(r[3]),
+                "created_at": r[4],
+            }
+            for r in rows
+        ]
+
+    async def offline_count(self, agent_id: str) -> int:
+        """Count pending offline messages for an agent."""
+        async with self.db.execute(
+            "SELECT COUNT(*) FROM offline_messages WHERE agent_id = ?",
+            (agent_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def offline_count_all(self) -> dict[str, int]:
+        """Count pending offline messages grouped by agent."""
+        async with self.db.execute(
+            "SELECT agent_id, COUNT(*) FROM offline_messages GROUP BY agent_id",
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return {r[0]: r[1] for r in rows}
+
+    async def offline_prune_overflow(self, agent_id: str, max_per_agent: int) -> int:
+        """Delete oldest messages exceeding the per-agent cap. Returns count deleted."""
+        async with self.db.execute(
+            "SELECT COUNT(*) FROM offline_messages WHERE agent_id = ?",
+            (agent_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            total = row[0] if row else 0
+        if total <= max_per_agent:
+            return 0
+        overflow = total - max_per_agent
+        await self.db.execute(
+            """DELETE FROM offline_messages WHERE id IN (
+                SELECT id FROM offline_messages
+                WHERE agent_id = ? ORDER BY id ASC LIMIT ?
+            )""",
+            (agent_id, overflow),
+        )
+        await self.db.commit()
+        return overflow

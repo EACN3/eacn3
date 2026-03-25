@@ -309,6 +309,8 @@ export type PushEventType =
 
 /** A single event received over the WebSocket connection. */
 export interface PushEvent {
+  /** Unique message ID for ACK-based reliable delivery. */
+  msg_id: string;
   /** Discriminator for the event; determines how to interpret payload. */
   type: PushEventType;
   /** The task this event relates to. */
@@ -317,6 +319,8 @@ export interface PushEvent {
   payload: Record<string, unknown>;
   /** Unix timestamp in milliseconds when the event was received; added client-side by ws-manager. */
   received_at: number; // timestamp ms, added by ws-manager
+  /** True if this message was delivered from offline cache on reconnect. */
+  _offline?: boolean;
 }
 
 // ---------------------------------------------------------------------------

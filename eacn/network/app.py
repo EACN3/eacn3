@@ -124,6 +124,20 @@ class Network:
         """Agent bids on a task: validate → add bid → push result."""
         task = self.task_manager.get(task_id)
 
+        # Guard: reject bids if parent task has already terminated
+        if task.parent_id:
+            try:
+                parent = self.task_manager.get(task.parent_id)
+                if parent.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+                    raise TaskError(
+                        f"Parent task {task.parent_id} already terminated; "
+                        f"cannot bid on child task {task_id}"
+                    )
+            except TaskError as e:
+                if "already terminated" in str(e):
+                    raise
+                # Parent not found is OK (cross-node scenario)
+
         if any(b.agent_id == agent_id for b in task.bids):
             raise TaskError(f"Agent {agent_id} already bid on task {task_id}")
 
@@ -233,6 +247,20 @@ class Network:
             raise TaskError("Only the task initiator can invite agents")
         if task.status.value not in ("unclaimed", "bidding"):
             raise TaskError("Can only invite agents while task is open")
+
+        # Guard: reject invites if parent task has already terminated
+        if task.parent_id:
+            try:
+                parent = self.task_manager.get(task.parent_id)
+                if parent.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+                    raise TaskError(
+                        f"Parent task {task.parent_id} already terminated; "
+                        f"cannot invite agent to child task {task_id}"
+                    )
+            except TaskError as e:
+                if "already terminated" in str(e):
+                    raise
+
         if agent_id not in task.invited_agent_ids:
             task.invited_agent_ids.append(agent_id)
 
@@ -244,6 +272,19 @@ class Network:
     ) -> None:
         """Agent withdraws from task: reject bid → promote next."""
         task = self.task_manager.get(task_id)
+
+        # Guard: reject if parent task has already terminated
+        if task.parent_id:
+            try:
+                parent = self.task_manager.get(task.parent_id)
+                if parent.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+                    raise TaskError(
+                        f"Parent task {task.parent_id} already terminated; "
+                        f"cannot reject bid on child task {task_id}"
+                    )
+            except TaskError as e:
+                if "already terminated" in str(e):
+                    raise
 
         # Find and reject the agent's bid
         self.task_manager.reject_bid(task_id, agent_id)
@@ -271,6 +312,21 @@ class Network:
     ) -> None:
         """Agent submits result: validate → store → adjudicate → promote."""
         task = self.task_manager.get(task_id)
+
+        # Guard: reject results if parent task has already terminated
+        if task.parent_id:
+            try:
+                parent = self.task_manager.get(task.parent_id)
+                if parent.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+                    raise TaskError(
+                        f"Parent task {task.parent_id} already terminated "
+                        f"(status={parent.status.value}); "
+                        f"cannot submit result to child task {task_id}"
+                    )
+            except TaskError as e:
+                if "already terminated" in str(e):
+                    raise
+                # Parent not found is OK (cross-node scenario)
 
         bidder_ids = [
             b.agent_id for b in task.bids
@@ -336,18 +392,33 @@ class Network:
         task_id: str,
         agent_id: str,
         initiator_id: str,
+        close_task: bool = False,
     ) -> None:
-        """Initiator selects winning result: settle payment → update reputation."""
+        """Initiator selects winning result: settle payment → update reputation.
+
+        When close_task=True, allows selection during BIDDING status —
+        the task is closed first, then the result is selected.
+        """
         task = self.task_manager.get(task_id)
 
         if task.initiator_id != initiator_id:
             raise TaskError("Only the task initiator can select a result")
 
         if task.status not in (TaskStatus.AWAITING_RETRIEVAL, TaskStatus.COMPLETED):
-            raise TaskError(
-                f"Cannot select result in status {task.status.value}; "
-                "task must be in awaiting_retrieval or completed"
-            )
+            if close_task and task.status == TaskStatus.BIDDING:
+                # Close the task first, then select
+                task = self.task_manager.close_task(task_id)
+                self._log_event("close_task", task_id=task_id, agent_id=initiator_id)
+                if task.status == TaskStatus.NO_ONE_ABLE:
+                    await self.settlement.refund_no_one_capable(task_id)
+                    raise TaskError("No results submitted; task closed as no_one_able")
+                await self._notify_status_cross_node(task, task.status.value)
+            else:
+                raise TaskError(
+                    f"Cannot select result in status {task.status.value}; "
+                    "task must be in awaiting_retrieval or completed "
+                    "(use close_task=true to close during bidding)"
+                )
 
         selected = self.task_manager.select_result(task_id, agent_id)
 
@@ -366,6 +437,9 @@ class Network:
 
         self._log_event("select_result", task_id=task_id, agent_id=agent_id)
 
+        # Cascade-close child tasks (adjudication tasks etc.)
+        await self._terminate_children(task)
+
 
     async def close_task(self, task_id: str, initiator_id: str) -> Task:
         """Initiator closes task → AWAITING_RETRIEVAL or NO_ONE_ABLE."""
@@ -383,6 +457,9 @@ class Network:
             await self.settlement.refund_no_one_capable(task_id)
 
         await self._notify_status_cross_node(task, task.status.value)
+
+        # Cascade-close child tasks (adjudication tasks etc.)
+        await self._terminate_children(task)
 
         return task
 
@@ -418,6 +495,19 @@ class Network:
                 f"Cannot update discussions in status {task.status.value}; "
                 "task must be in bidding"
             )
+
+        # Guard: reject if parent task has already terminated
+        if task.parent_id:
+            try:
+                parent = self.task_manager.get(task.parent_id)
+                if parent.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+                    raise TaskError(
+                        f"Parent task {task.parent_id} already terminated; "
+                        f"cannot update discussions on child task {task_id}"
+                    )
+            except TaskError as e:
+                if "already terminated" in str(e):
+                    raise
 
         task = self.task_manager.update_discussions(task_id, message)
         self._log_event("update_discussions", task_id=task_id)
@@ -498,6 +588,13 @@ class Network:
     ) -> Task:
         """Executor delegates subtask from parent's budget."""
         parent = self.task_manager.get(parent_task_id)
+
+        # Guard: reject subtask creation if parent already terminated
+        if parent.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+            raise TaskError(
+                f"Parent task {parent_task_id} already terminated "
+                f"(status={parent.status.value}); cannot create subtask"
+            )
 
         bidder_ids = [b.agent_id for b in parent.bids]
         if initiator_id not in bidder_ids:
@@ -590,6 +687,41 @@ class Network:
             task.id, status, participant_nodes,
             payload={"status": status, "recipients": recipients},
         )
+
+    async def _terminate_children(self, task: Task) -> None:
+        """Cascade-close all active child tasks when parent terminates.
+
+        When a parent task terminates, none of its children should
+        continue accepting bids or results.  Active bids are rejected
+        and affected agents are notified.
+        """
+        for child_id in task.child_ids:
+            try:
+                child = self.task_manager.get(child_id)
+            except TaskError:
+                continue
+            if child.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+                continue
+
+            # Reject all active bids and notify affected agents
+            for bid in child.bids:
+                if bid.status in (BidStatus.EXECUTING, BidStatus.WAITING, BidStatus.PENDING):
+                    bid.status = BidStatus.REJECTED
+                    await self.push.notify_bid_result(
+                        child_id, bid.agent_id, accepted=False,
+                        reason="Parent task terminated",
+                    )
+
+            try:
+                child = self.task_manager.close_task(child_id)
+                _log.info(
+                    "Cascade-closed child task %s (parent %s terminated)",
+                    child_id, task.id,
+                )
+            except TaskError:
+                continue
+            # Recurse into grandchildren
+            await self._terminate_children(child)
 
     async def _broadcast_to_candidates(self, task: Task) -> None:
         """Discover agents, match, and push task broadcast."""

@@ -72,6 +72,9 @@ platform_fee_rate = 0.05  # platform fee ratio (5%)
 [push]
 
 max_retries = 2  # max retries on push failure
+ack_timeout = 30  # seconds to wait for client ACK before caching offline
+offline_max_per_agent = 200  # max offline messages per agent (oldest evicted)
+offline_ttl_seconds = 86400  # offline message expiration (24h)
 
 
 # ── Task Defaults ────────────────────────────────────────────────────
