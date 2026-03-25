@@ -485,6 +485,8 @@ export interface HealthResponse {
 export interface LocalTaskInfo {
   /** The task's unique identifier. */
   task_id: string;
+  /** The agent this entry belongs to (#108). */
+  agent_id: string;
   /** Whether this agent created the task ("initiator") or is working on it ("executor"). */
   role: "initiator" | "executor";
   /** Last-known lifecycle state; may be stale if not recently refreshed. */

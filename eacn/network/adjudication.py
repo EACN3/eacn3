@@ -81,6 +81,9 @@ class AdjudicationService:
         # Find the target result and append adjudication
         for result in parent_task.results:
             if result.agent_id == target_result_agent_id:
+                # Idempotency: skip if this adjudicator already submitted (#11)
+                if any(a.adjudicator_id == adjudicator_id for a in result.adjudications):
+                    return adjudication
                 result.adjudications.append(adjudication)
                 return adjudication
 

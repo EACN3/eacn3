@@ -146,6 +146,11 @@ async def update_agent(agent_id: str, req: UpdateAgentRequest):
     if not card:
         raise HTTPException(404, f"Agent {agent_id} not found")
 
+    # Validate server still exists (#102)
+    server_card = await _net().discovery.bootstrap.get_server_card(card.get("server_id", ""))
+    if not server_card:
+        raise HTTPException(400, f"Server {card.get('server_id')} no longer registered")
+
     old_domains = set(card.get("domains", []))
 
     # Apply partial updates

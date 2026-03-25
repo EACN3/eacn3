@@ -12,6 +12,7 @@ All score mutations are persisted to the database when a db reference is provide
 from __future__ import annotations
 
 import logging
+from collections import deque
 from typing import Any, TYPE_CHECKING
 
 from eacn.core.models import LogEntry
@@ -51,8 +52,8 @@ class GlobalReputation:
         self._cap_counts: dict[str, dict[str, int]] = {}
         self._server_event_counts: dict[str, int] = {}
         self._server_reputation: dict[str, float] = {}
-        # Anomaly tracking: recent events per agent for burst detection
-        self._recent_events: dict[str, list[str]] = {}
+        # Anomaly tracking: recent events per agent for burst detection (#106)
+        self._recent_events: dict[str, deque[str]] = {}
 
     async def load_from_db(self) -> None:
         """Restore reputation state from the database."""
@@ -234,12 +235,10 @@ class GlobalReputation:
 
     def _detect_anomaly(self, agent_id: str, event_type: str) -> bool:
         """Simple burst detection: too many same-type events in recent window."""
-        recent = self._recent_events.setdefault(agent_id, [])
+        if agent_id not in self._recent_events:
+            self._recent_events[agent_id] = deque(maxlen=self.BURST_WINDOW)
+        recent = self._recent_events[agent_id]
         recent.append(event_type)
-
-        # Keep only the window
-        if len(recent) > self.BURST_WINDOW:
-            recent[:] = recent[-self.BURST_WINDOW:]
 
         same_type_count = sum(1 for e in recent if e == event_type)
         return same_type_count >= self.BURST_THRESHOLD

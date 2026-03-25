@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -23,6 +24,14 @@ class TaskManager:
 
     def __init__(self) -> None:
         self._tasks: dict[str, Task] = {}
+        # Per-task locks for concurrent mutation safety (#21, #29)
+        self._task_locks: dict[str, asyncio.Lock] = {}
+
+    def get_lock(self, task_id: str) -> asyncio.Lock:
+        """Get or create a per-task asyncio.Lock."""
+        if task_id not in self._task_locks:
+            self._task_locks[task_id] = asyncio.Lock()
+        return self._task_locks[task_id]
 
     # ── CRUD ─────────────────────────────────────────────────────────
 
@@ -140,6 +149,15 @@ class TaskManager:
         task = self.get(task_id)
         if task.status not in (TaskStatus.BIDDING, TaskStatus.AWAITING_RETRIEVAL):
             raise TaskError(f"Cannot submit result in status {task.status}")
+        # Verify submitter has an active bid (#26)
+        active_bidders = {
+            b.agent_id for b in task.bids
+            if b.status in (BidStatus.EXECUTING, BidStatus.ACCEPTED, BidStatus.WAITING)
+        }
+        if result.agent_id not in active_bidders:
+            raise TaskError(
+                f"Agent {result.agent_id} is not an active bidder on task {task_id}"
+            )
         task.results.append(result)
 
     def select_result(self, task_id: str, agent_id: str) -> Result:
@@ -159,6 +177,9 @@ class TaskManager:
                 bid.status = BidStatus.ACCEPTED
             elif bid.status in (BidStatus.EXECUTING, BidStatus.WAITING):
                 bid.status = BidStatus.REJECTED
+        # Transition task to COMPLETED (#28)
+        if task.status in (TaskStatus.BIDDING, TaskStatus.AWAITING_RETRIEVAL):
+            task.status = TaskStatus.COMPLETED
         return selected
 
     # ── Subtask creation ─────────────────────────────────────────────

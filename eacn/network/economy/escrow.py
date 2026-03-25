@@ -54,7 +54,15 @@ class EscrowService:
             return
         acct = self._accounts.get(agent_id)
         if acct:
-            await self._db.upsert_account(agent_id, acct.available, acct.frozen)
+            try:
+                await self._db.upsert_account(agent_id, acct.available, acct.frozen)
+            except Exception:
+                _log.error(
+                    "Failed to persist account %s (available=%s, frozen=%s)",
+                    agent_id, acct.available, acct.frozen,
+                    exc_info=True,
+                )
+                raise
 
     async def _persist_escrow(self, task_id: str) -> None:
         if not self._db:

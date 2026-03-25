@@ -21,12 +21,14 @@ class ClusterRouter:
     """Routes task operations to the correct owner node."""
 
     def __init__(self, db: "Database", local_node_id: str) -> None:
+        import asyncio
         self._db = db
         self._local_node_id = local_node_id
         self._routes: dict[str, str] = {}
         self._participants: dict[str, set[str]] = {}
         self._endpoints: dict[str, str] = {}
         self._http: httpx.AsyncClient | None = None
+        self._lock = asyncio.Lock()  # Protects shared dicts (#104)
 
     def set_http_client(self, client: httpx.AsyncClient) -> None:
         """Inject the shared HTTP client for connection reuse."""

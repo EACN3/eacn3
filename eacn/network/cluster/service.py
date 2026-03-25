@@ -6,6 +6,7 @@ are no-ops. Existing single-node behavior is preserved exactly.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any, Callable, Awaitable, TYPE_CHECKING
@@ -56,6 +57,7 @@ class ClusterService:
 
         self._push_handler: LocalPushHandler | None = None
         self._agent_counts: dict[str, int] = {}  # node_id → connected agent count
+        self._agent_counts_lock = asyncio.Lock()  # Protects _agent_counts (#105)
         self._standalone = not bool(self.config.seed_nodes)
         self._http: httpx.AsyncClient | None = None
 

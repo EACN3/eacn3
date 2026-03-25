@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from eacn.network.app import Network
@@ -28,7 +28,13 @@ async def lifespan(app: FastAPI):
     await db.connect()
 
     network = Network(db=db)
-    await network.start()
+    try:
+        await network.start()
+    except Exception:
+        # Clean up resources on startup failure (#41)
+        await network.cluster.stop()
+        await db.close()
+        raise
 
     # ── Message queue (per-agent) ─────────────────────────────────────
     push_cfg = network.config.push
@@ -84,6 +90,7 @@ async def lifespan(app: FastAPI):
     app.state.db = db
     app.state.network = network
     app.state.offline_store = offline_store
+    app.state.startup_complete = True  # Gate for #42
     set_network(network)
     set_offline_store(offline_store)
     set_discovery_network(network)
@@ -104,6 +111,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    app.state.startup_complete = False
+
+    @app.middleware("http")
+    async def startup_gate(request: Request, call_next):
+        """Return 503 until startup is complete (#42)."""
+        if not getattr(request.app.state, "startup_complete", False):
+            if request.url.path != "/health":
+                return JSONResponse({"detail": "Server starting up"}, status_code=503)
+        return await call_next(request)
+
     # Read from env var if not explicitly provided; fall back to file-based default
     resolved_db_path = db_path or os.environ.get("EACN3_DB_PATH", "eacn3.db")
     # Validate path has no traversal (#48)

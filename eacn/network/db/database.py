@@ -583,11 +583,14 @@ class Database:
         await self.db.commit()
 
     async def query_agent_cards_by_domain(self, domain: str) -> list[dict[str, Any]]:
+        # Use json_each for exact matching instead of LIKE to prevent wildcard injection (#63)
         async with self.db.execute(
             """SELECT agent_id, server_id, network_id, name, tier, domains, skills, url, description
                FROM agent_cards
-               WHERE domains LIKE ?""",
-            (f'%"{domain}"%',),
+               WHERE EXISTS (
+                   SELECT 1 FROM json_each(agent_cards.domains) WHERE json_each.value = ?
+               )""",
+            (domain,),
         ) as cursor:
             rows = await cursor.fetchall()
             return [
@@ -890,14 +893,15 @@ class Database:
         """Retrieve and delete all pending offline messages for an agent.
 
         Returns messages ordered oldest-first. Expired messages are pruned.
+        Uses specific IDs to avoid deleting messages inserted between SELECT and DELETE (#59).
         """
         # Prune expired
         await self.db.execute(
             "DELETE FROM offline_messages WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')",
         )
-        # Fetch
+        # Fetch with IDs for precise deletion
         async with self.db.execute(
-            """SELECT msg_id, type, task_id, payload, created_at
+            """SELECT id, msg_id, type, task_id, payload, created_at
                FROM offline_messages
                WHERE agent_id = ?
                ORDER BY id ASC""",
@@ -906,18 +910,20 @@ class Database:
             rows = await cursor.fetchall()
         if not rows:
             return []
-        # Delete fetched
+        # Delete only the rows we fetched
+        ids = [r[0] for r in rows]
+        placeholders = ",".join("?" for _ in ids)
         await self.db.execute(
-            "DELETE FROM offline_messages WHERE agent_id = ?", (agent_id,),
+            f"DELETE FROM offline_messages WHERE id IN ({placeholders})", ids,
         )
         await self.db.commit()
         return [
             {
-                "msg_id": r[0],
-                "type": r[1],
-                "task_id": r[2],
-                "payload": json.loads(r[3]),
-                "created_at": r[4],
+                "msg_id": r[1],
+                "type": r[2],
+                "task_id": r[3],
+                "payload": json.loads(r[4]),
+                "created_at": r[5],
             }
             for r in rows
         ]

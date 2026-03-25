@@ -415,6 +415,17 @@ async def get_balance(agent_id: str = Query(...)):
     )
 
 
+@router.get("/economy/escrows")
+async def list_escrows(agent_id: str = Query(...)):
+    """Query per-task escrow breakdown for an agent (#9)."""
+    net = _net()
+    escrows = []
+    for task_id, (initiator_id, amount) in net.escrow._task_escrows.items():
+        if initiator_id == agent_id:
+            escrows.append({"task_id": task_id, "amount": amount})
+    return {"agent_id": agent_id, "escrows": escrows, "total_frozen": sum(e["amount"] for e in escrows)}
+
+
 @router.post("/economy/deposit", response_model=DepositResponse)
 async def deposit(req: DepositRequest):
     """Deposit funds into an agent's account."""

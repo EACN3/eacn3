@@ -127,6 +127,19 @@ class Network:
         server_id: str | None = None,
     ) -> BidStatus:
         """Agent bids on a task: validate → add bid → push result."""
+        async with self.task_manager.get_lock(task_id):
+            return await self._submit_bid_inner(
+                task_id, agent_id, confidence, price, server_id,
+            )
+
+    async def _submit_bid_inner(
+        self,
+        task_id: str,
+        agent_id: str,
+        confidence: float,
+        price: float,
+        server_id: str | None = None,
+    ) -> BidStatus:
         task = self.task_manager.get(task_id)
 
         # Guard: reject bids if parent task has already terminated
@@ -316,6 +329,15 @@ class Network:
         content: Any,
     ) -> None:
         """Agent submits result: validate → store → adjudicate → promote."""
+        async with self.task_manager.get_lock(task_id):
+            await self._submit_result_inner(task_id, agent_id, content)
+
+    async def _submit_result_inner(
+        self,
+        task_id: str,
+        agent_id: str,
+        content: Any,
+    ) -> None:
         task = self.task_manager.get(task_id)
 
         # Guard: reject results if parent task has already terminated
@@ -419,6 +441,18 @@ class Network:
         When close_task=True, allows selection during BIDDING status —
         the task is closed first, then the result is selected.
         """
+        async with self.task_manager.get_lock(task_id):
+            await self._select_result_inner(
+                task_id, agent_id, initiator_id, close_task,
+            )
+
+    async def _select_result_inner(
+        self,
+        task_id: str,
+        agent_id: str,
+        initiator_id: str,
+        close_task: bool = False,
+    ) -> None:
         task = self.task_manager.get(task_id)
 
         if task.initiator_id != initiator_id:
@@ -449,6 +483,8 @@ class Network:
                 break
 
         if task.type != TaskType.ADJUDICATION and bid_price > 0:
+            # Terminate children first to reclaim sub-escrow before settlement (#65)
+            await self._terminate_children(task)
             try:
                 await self.settlement.settle(task_id, agent_id, bid_price)
             except Exception:
@@ -468,8 +504,7 @@ class Network:
 
         self._log_event("select_result", task_id=task_id, agent_id=agent_id)
 
-        # Cascade-close child tasks (adjudication tasks etc.)
-        await self._terminate_children(task)
+        # Children already terminated before settlement (#65)
 
 
     async def close_task(self, task_id: str, initiator_id: str) -> Task:
@@ -764,6 +799,8 @@ class Network:
 
             try:
                 child = self.task_manager.close_task(child_id)
+                # Refund child escrow (#67)
+                await self.settlement.refund_no_one_capable(child_id)
                 _log.info(
                     "Cascade-closed child task %s (parent %s terminated)",
                     child_id, task.id,
@@ -791,6 +828,9 @@ class Network:
         self, parent_task: Task, result_agent_id: str
     ) -> None:
         """Create and broadcast an adjudication task (non-blocking)."""
+        # Don't create adjudication for terminated parents (#66)
+        if parent_task.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+            return
         adj_task = self.adjudication.create_adjudication_task(
             parent_task, result_agent_id,
         )
