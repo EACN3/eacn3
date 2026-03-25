@@ -534,6 +534,72 @@
   无锁保护。list corruption 或漏检导致 burst 检测失效。
 - **修复**: 用 deque(maxlen=BURST_WINDOW) 替代手动 slice，或加 per-agent 锁。
 
+---
+
+## CRITICAL: 同一客户端多智能体并发问题 (Plugin Side)
+
+### 107. `state.save()` 无文件锁 — 并发写丢失
+- **文件**: `plugin/src/state.ts:54-62`
+- **问题**: 多个 agent 并发操作触发 `save()`，对同一 JSON 文件的 `writeFileSync` 存在竞态。
+  Agent A 读取 state → Agent B 读取 state → Agent A 写入 → Agent B 写入（覆盖 A 的更新）。
+  JavaScript 单线程不能保护此场景，因为 async 操作在 await 点交错。
+- **影响**: 状态数据丢失（任务信息、agent 配置等）。
+- **修复**: 使用 write-file-atomic 或在 save 前加互斥锁序列化写操作。
+
+### 108. `local_tasks` 全局共享 — 多 agent 任务归属冲突
+- **文件**: `plugin/src/state.ts:101-117`, `plugin/src/models.ts`
+- **问题**: `state.local_tasks` 是所有 agent 共享的字典，key 为 task_id。
+  当 Agent A 和 Agent B 都收到同一 task 的广播（同 domain）时，两者先后调用
+  `updateTask()`，后者覆盖前者。`LocalTaskInfo` 中无 `agent_id` 字段区分归属。
+- **影响**: 无法区分哪个 agent 是执行者，auto-bid 逻辑（`activeTasks.length` 检查）对并行 agent 失效。
+- **修复**: `local_tasks` key 改为 `${agent_id}:${task_id}` 或嵌套为 `{agent_id: {task_id: info}}`。
+
+### 109. 单一 EventCallback — 多 agent 事件处理互相阻塞
+- **文件**: `plugin/src/ws-manager.ts:16-20,71-74`
+- **问题**: 全局只注册一个 `onEventCallback`。多个 agent 的 WS 消息在同一回调中处理，
+  同步回调内的耗时操作（如 `autoBidEvaluate`）会阻塞其他 agent 的消息分发。
+- **影响**: 高负载下 agent 间消息延迟互相传播；一个 agent 的慢回调拖慢所有 agent。
+- **修复**: 改为 per-agent callback 或 async callback + per-agent event queue。
+
+### 110. `autoBidEvaluate` 中 `activeTasks` 计数跨 agent 污染
+- **文件**: `plugin/index.ts:116-146`
+- **问题**: `activeTasks` 通过 `Object.values(state.local_tasks).filter(...)` 计算，
+  但 `local_tasks` 混入了所有 agent 的任务（#108）。Agent A 的活跃任务被计入 Agent B
+  的 `max_concurrent_tasks` 检查，导致 Agent B 过早停止竞标。
+- **影响**: 多 agent 场景下有效并发度 = max(单 agent 上限)，非 sum。
+- **修复**: 过滤时加入 `agent_id` 匹配（需先修 #108）。
+
+### 111. Server 注册时所有 agent 共享 server_id — 无独立生命周期
+- **文件**: `plugin/server.ts:170-173`
+- **问题**: `for (const agent of state.agents) agent.server_id = sid` 将所有 agent
+  绑定到同一 server。若 server 重连/重注册，所有 agent 批量 re-register；
+  单个 agent 无法独立上下线。
+- **影响**: 一个 agent 故障重连时触发全量 re-register，引发不必要的连接风暴。
+- **修复**: 允许 agent 独立注册/注销，server_id 仅作为 group 标识而非耦合依赖。
+
+### 112. 网络端 `_connections` 单锁瓶颈 — 多 agent 连接风暴
+- **文件**: `eacn/network/api/websocket.py:35`
+- **问题**: 全局唯一 `asyncio.Lock()` 保护 `_connections` 字典。同一 server 下 N 个 agent
+  同时 connect/disconnect 时串行化，高 N 值下延迟线性增长。
+- **影响**: 10+ agent 同时连接时 WebSocket 握手排队，连接超时风险。
+- **修复**: 改为分段锁（per-agent-id hash bucket）或 ConcurrentDict。
+
+### 113. 多 agent 并发竞标同一任务 — 无互斥与策略
+- **文件**: `plugin/index.ts:116-146`, `eacn/network/task_manager.py`
+- **问题**: 同一 server 下的多个 agent 可能同时对同一 task 发出 auto-bid，但无协调策略。
+  server 端无「同一 server 只出一个 bid」的约束；多个 bid 各自冻结 escrow，
+  只有一个能赢，其余 escrow 直到任务结束才释放。
+- **影响**: 资金过度冻结，降低有效流动性。
+- **修复**: Plugin 端增加 per-task bid 协调（选最优 agent 投标）或 server 端限制同源 bid。
+
+### 114. 多 agent 并发 stress 测试完全缺失
+- **文件**: `tests/api/test_persistence.py:294-305`
+- **问题**: 现有多 agent 测试仅验证连通性（顺序 ping/pong）。无测试覆盖：
+  同时连接 → 同时收到广播 → 同时 auto-bid → 同时提交 result 的完整并发流程。
+- **修复**: 添加 asyncio.gather 驱动的多 agent 竞态测试。
+
+---
+
 ### 101. Server 注销级联删除存在 TOCTOU 竞态
 - **文件**: `eacn/network/api/discovery_routes.py:82-93`
 - **问题**: 先查询 server 下的 agent 列表，再逐个注销。期间新 agent 可注册到该 server，
