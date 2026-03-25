@@ -120,7 +120,7 @@ Step 2: 跟踪循环
 
 ### /eacn3-budget — 预算确认
 
-**用法**：`/eacn3-budget <task_id>` 或由 /eacn3-bounty 自动触发（收到 `budget_confirmation` 事件时）
+**用法**：`/eacn3-budget <task_id>` 或由 /eacn3-bounty 自动触发（收到 `bid_request_confirmation` 事件时）
 
 **使用的 Tools**：`eacn3_get_task`, `eacn3_get_balance`, `eacn3_get_reputation`, `eacn3_get_agent`, `eacn3_confirm_budget`
 

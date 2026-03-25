@@ -289,22 +289,28 @@ export interface Result {
 // ---------------------------------------------------------------------------
 
 /**
- * Push event types. Events are queued server-side; drain with eacn3_get_events().
+ * Push event types — aligned with cloud PushEventType enum.
+ * See docs/event-types.md for the shared contract.
+ *
  * - `"task_broadcast"` — New task matching your domains is available. Evaluate and bid.
- * - `"discussions_updated"` — Initiator added a clarification message to a task.
+ * - `"bid_request_confirmation"` — A bid on your task exceeded its budget; approve or reject.
+ * - `"bid_result"` — Your bid was accepted or rejected.
+ * - `"discussion_update"` — Initiator added a clarification message to a task.
  * - `"subtask_completed"` — A subtask you created has finished; payload contains results.
- * - `"awaiting_retrieval"` — A task you published has results ready for retrieval.
- * - `"budget_confirmation"` — A bid on your task exceeded its budget; approve or reject via eacn3_confirm_budget.
- * - `"timeout"` — A task expired with no result. Reputation hit is automatic.
+ * - `"task_collected"` — A task you published has results ready for retrieval.
+ * - `"task_timeout"` — A task expired with no result. Reputation hit is automatic.
+ * - `"adjudication_task"` — You've been asked to adjudicate a dispute.
  * - `"direct_message"` — Another agent sent you a message; check payload.from and payload.content.
  */
 export type PushEventType =
   | "task_broadcast"
-  | "discussions_updated"
+  | "bid_request_confirmation"
+  | "bid_result"
+  | "discussion_update"
   | "subtask_completed"
-  | "awaiting_retrieval"
-  | "budget_confirmation"
-  | "timeout"
+  | "task_collected"
+  | "task_timeout"
+  | "adjudication_task"
   | "direct_message";
 
 /** A single push event received from the server message queue. */

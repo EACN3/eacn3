@@ -323,7 +323,7 @@ server.tool(
     reverse_control: z.object({
       enabled: z.boolean().optional().describe("Enable MCP reverse control (sampling/notifications). Default true."),
       sampling_events: z.array(z.string()).optional().describe("Event types that trigger LLM sampling (e.g. ['task_broadcast', 'direct_message']). Default: all actionable events."),
-      notification_events: z.array(z.string()).optional().describe("Event types that send notifications only (e.g. ['awaiting_retrieval', 'timeout']). Default: status events."),
+      notification_events: z.array(z.string()).optional().describe("Event types that send notifications only (e.g. ['task_collected', 'task_timeout']). Default: status events."),
     }).optional().describe("Configure MCP reverse control — lets the network proactively drive your agent via sampling requests."),
   },
   async (params) => {
@@ -375,12 +375,12 @@ server.tool(
     // Configure reverse control for this agent
     if (params.reverse_control?.enabled !== false) {
       const rcPolicies: Record<string, { method: "sampling" | "notification" | "auto_action" | "buffer_only"; autoAction?: string }> = {};
-      const samplingEvents = params.reverse_control?.sampling_events ?? ["task_broadcast", "direct_message", "subtask_completed", "budget_confirmation", "discussions_updated"];
-      const notifEvents = params.reverse_control?.notification_events ?? ["awaiting_retrieval"];
+      const samplingEvents = params.reverse_control?.sampling_events ?? ["task_broadcast", "direct_message", "subtask_completed", "bid_request_confirmation", "discussion_update"];
+      const notifEvents = params.reverse_control?.notification_events ?? ["task_collected"];
 
       for (const e of samplingEvents) rcPolicies[e] = { method: "sampling" };
       for (const e of notifEvents) rcPolicies[e] = { method: "notification" };
-      rcPolicies["timeout"] = { method: "auto_action", autoAction: "report_and_close" };
+      rcPolicies["task_timeout"] = { method: "auto_action", autoAction: "report_and_close" };
 
       rc.configure(agentId, { enabled: true, policies: rcPolicies });
     }
@@ -734,7 +734,7 @@ server.tool(
 // #21 eacn3_update_discussions
 server.tool(
   "eacn3_update_discussions",
-  "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussions_updated' push event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
+  "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussion_update' push event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
   {
     task_id: z.string(),
     message: z.string(),
@@ -750,7 +750,7 @@ server.tool(
 // #22 eacn3_confirm_budget
 server.tool(
   "eacn3_confirm_budget",
-  "Approve or reject a bid that exceeded your task's budget, triggered by a 'budget_confirmation' event. Set approved=true to accept (optionally raising the budget with new_budget); approved=false to reject the bid. Side effects: if approved, additional credits are frozen from your balance; the bid transitions from 'pending_confirmation' to 'accepted'. Returns updated task status.",
+  "Approve or reject a bid that exceeded your task's budget, triggered by a 'bid_request_confirmation' event. Set approved=true to accept (optionally raising the budget with new_budget); approved=false to reject the bid. Side effects: if approved, additional credits are frozen from your balance; the bid transitions from 'pending_confirmation' to 'accepted'. Returns updated task status.",
   {
     task_id: z.string(),
     approved: z.boolean(),
@@ -978,6 +978,7 @@ server.tool(
     const localAgent = state.getAgent(targetId);
     if (localAgent) {
       state.pushEvents([{
+        msg_id: crypto.randomUUID().replace(/-/g, ""),
         type: "direct_message",
         task_id: "",
         payload: { from: senderId, content: params.content },
@@ -1142,7 +1143,7 @@ server.tool(
 // #34 eacn3_get_events
 server.tool(
   "eacn3_get_events",
-  "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details. Call periodically in your main loop.",
+  "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, discussion_update, subtask_completed, task_collected, bid_request_confirmation, task_timeout, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details. Call periodically in your main loop.",
   {},
   async () => {
     const events = state.drainEvents();
@@ -1232,11 +1233,11 @@ function buildAwaitResponse(events: import("./src/models.js").PushEvent[]) {
           return { event, suggested_action: `Message from ${payload.from ?? "?"}: "${String(payload.content ?? "").slice(0, 200)}". Reply.`, suggested_tool: "eacn3_send_message", suggested_params: { to_agent_id: payload.from, task_id: event.task_id }, urgency: "high" };
         case "subtask_completed":
           return { event, suggested_action: `Subtask ${payload.subtask_id ?? "?"} done. Fetch results.`, suggested_tool: "eacn3_get_task_results", suggested_params: { task_id: String(payload.subtask_id ?? event.task_id) }, urgency: "high" };
-        case "budget_confirmation":
+        case "bid_request_confirmation":
           return { event, suggested_action: `Bid exceeded budget on ${event.task_id}. Approve/reject.`, suggested_tool: "eacn3_confirm_budget", suggested_params: { task_id: event.task_id }, urgency: "high" };
-        case "awaiting_retrieval":
+        case "task_collected":
           return { event, suggested_action: `Task ${event.task_id} has results. Retrieve.`, suggested_tool: "eacn3_get_task_results", suggested_params: { task_id: event.task_id }, urgency: "medium" };
-        case "timeout":
+        case "task_timeout":
           return { event, suggested_action: `Task ${event.task_id} timed out. No action needed.`, suggested_tool: "eacn3_get_task", suggested_params: { task_id: event.task_id }, urgency: "low" };
         default:
           return { event, suggested_action: `Event "${event.type}" on ${event.task_id}.`, suggested_tool: "eacn3_get_task", suggested_params: { task_id: event.task_id }, urgency: "low" };
@@ -1261,7 +1262,7 @@ function registerEventCallbacks(): void {
     // --- Legacy behavior: local state updates + event buffering ---
     // These still run regardless of reverse control, to keep local state consistent.
     switch (event.type) {
-      case "awaiting_retrieval":
+      case "task_collected":
         // Task has results ready — update local status so dashboard/skills see it
         state.updateTaskStatus(taskId, "awaiting_retrieval");
         break;
@@ -1274,6 +1275,7 @@ function registerEventCallbacks(): void {
             .then((res) => {
               // Buffer a synthetic event with the results for the skill to pick up
               state.pushEvents([{
+                msg_id: crypto.randomUUID().replace(/-/g, ""),
                 type: "subtask_completed",
                 task_id: taskId,
                 payload: { subtask_id: subtaskId, results: res.results },
@@ -1285,13 +1287,13 @@ function registerEventCallbacks(): void {
         break;
       }
 
-      case "timeout":
+      case "task_timeout":
         // Task timed out — auto-report reputation event, update local status
         state.updateTaskStatus(taskId, "no_one");
         net.reportEvent(agentId, "task_timeout").catch(() => { /* non-critical */ });
         break;
 
-      case "budget_confirmation":
+      case "bid_request_confirmation":
         // Bid exceeded budget — mark in local state for initiator to handle
         // The event stays in the buffer for /eacn3-bounty to surface
         break;
@@ -1348,6 +1350,7 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
   // Passed auto-filter — enrich the buffered event with a hint
   // The skill layer (/eacn3-bounty) will see this and can fast-track bidding
   state.pushEvents([{
+    msg_id: crypto.randomUUID().replace(/-/g, ""),
     type: "task_broadcast",
     task_id: taskId,
     payload: { ...payload, auto_match: true, matched_agent: agentId },

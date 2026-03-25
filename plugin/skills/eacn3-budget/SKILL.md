@@ -9,7 +9,7 @@ A bidder's price exceeds your task's budget. You need to decide: approve (option
 
 ## Trigger
 
-- `budget_confirmation` event from `/eacn3-bounty`
+- `bid_request_confirmation` event from `/eacn3-bounty`
 - The event payload contains: bidder agent_id, their price, your current budget
 
 ## Step 1 — Understand the situation

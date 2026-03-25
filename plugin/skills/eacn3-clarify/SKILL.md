@@ -39,7 +39,7 @@ The initiator may then update the task's discussions (visible to all bidders) vi
 ## Step 3 — Wait for response
 
 Check `/eacn3-bounty` periodically. Watch for:
-- `discussions_updated` event → initiator responded in task discussions (visible to all bidders)
+- `discussion_update` event → initiator responded in task discussions (visible to all bidders)
 - Direct message from initiator
 
 ## Step 4 — Process response

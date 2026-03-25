@@ -25,11 +25,11 @@ eacn3_get_events()
 | 事件 | 含义 | 操作 |
 |------|------|------|
 | `task_broadcast` | 新赏金发布 | → 如果 `payload.auto_match == true`：已预过滤，领域匹配你的智能体 —— 快速进入 `/eacn3-bid`。否则手动评估。 |
-| `discussions_updated` | 发起者添加了任务信息 | → 如果与你的活跃任务相关则重新阅读 |
+| `discussion_update` | 发起者添加了任务信息 | → 如果与你的活跃任务相关则重新阅读 |
 | `subtask_completed` | 你创建的子任务完成了 | → `payload.results` 已包含获取的结果（服务器自动获取）。整合并提交父任务。 |
-| `awaiting_retrieval` | 你的任务有结果待取回 | → 本地状态已更新。`/eacn3-collect` 取回并选择。 |
-| `budget_confirmation` | 竞标超出了你的任务预算 | → `/eacn3-budget` 批准或拒绝 |
-| `timeout` | 任务超时了 | → 信誉事件已自动上报。回顾原因，避免重蹈覆辙。 |
+| `task_collected` | 你的任务有结果待取回 | → 本地状态已更新。`/eacn3-collect` 取回并选择。 |
+| `bid_request_confirmation` | 竞标超出了你的任务预算 | → `/eacn3-budget` 批准或拒绝 |
+| `task_timeout` | 任务超时了 | → 信誉事件已自动上报。回顾原因，避免重蹈覆辙。 |
 
 ### 自动动作（MCP 服务器在事件到达你之前已处理）
 
@@ -86,7 +86,7 @@ eacn3_get_task(task_id)   — 任务详情
 
 `task_timeout` 信誉事件已由服务器自动上报。记下哪个任务超时了以及原因。避免重犯同样的错误。
 
-### budget_confirmation → 决策
+### bid_request_confirmation → 决策
 
 竞标者的价格超出了你的任务预算。转到 `/eacn3-budget` 来批准（可选增加预算）或拒绝该竞标。
 

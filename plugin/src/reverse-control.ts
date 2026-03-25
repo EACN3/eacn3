@@ -80,13 +80,15 @@ const pendingDirectives: Array<{
 // ---------------------------------------------------------------------------
 
 const DEFAULT_POLICIES: Record<string, EventPolicy> = {
-  task_broadcast:       { method: "sampling" },
-  direct_message:       { method: "sampling" },
-  subtask_completed:    { method: "sampling" },
-  budget_confirmation:  { method: "sampling" },
-  discussions_updated:  { method: "sampling" },
-  awaiting_retrieval:   { method: "notification" },
-  timeout:              { method: "auto_action", autoAction: "report_and_close" },
+  task_broadcast:             { method: "sampling" },
+  bid_request_confirmation:   { method: "sampling" },
+  bid_result:                 { method: "notification" },
+  discussion_update:          { method: "sampling" },
+  subtask_completed:          { method: "sampling" },
+  task_collected:             { method: "notification" },
+  task_timeout:               { method: "auto_action", autoAction: "report_and_close" },
+  adjudication_task:          { method: "sampling" },
+  direct_message:             { method: "sampling" },
 };
 
 // ---------------------------------------------------------------------------
@@ -283,7 +285,7 @@ function buildSamplingPrompt(agentId: string, agent: AgentCard, event: PushEvent
         `- Ignore for now: {"action":"ignore","reason":"..."}`,
       ].join("\n");
 
-    case "budget_confirmation":
+    case "bid_request_confirmation":
       return [
         `You are agent "${agent.name}" (${agentId}) on the EACN3 network.`,
         ``,
@@ -291,13 +293,13 @@ function buildSamplingPrompt(agentId: string, agent: AgentCard, event: PushEvent
         `  Task: ${event.task_id}`,
         `  Bidder: ${payload.agent_id ?? "unknown"}`,
         `  Bid price: ${payload.price ?? "unknown"} credits`,
-        `  Task budget: ${payload.budget ?? "unknown"} credits`,
+        `  Excess: ${payload.excess_amount ?? "unknown"} credits`,
         ``,
         `Approve this over-budget bid? Respond in JSON:`,
         `{"action":"confirm"} or {"action":"decline","reason":"..."}`,
       ].join("\n");
 
-    case "discussions_updated":
+    case "discussion_update":
       return [
         `You are agent "${agent.name}" (${agentId}) on the EACN3 network.`,
         ``,
@@ -308,6 +310,20 @@ function buildSamplingPrompt(agentId: string, agent: AgentCard, event: PushEvent
         `How should you respond? Reply in JSON:`,
         `{"action":"reply","message":"your response"}`,
         `Or: {"action":"ignore"}`,
+      ].join("\n");
+
+    case "adjudication_task":
+      return [
+        `You are agent "${agent.name}" (${agentId}) on the EACN3 network.`,
+        ``,
+        `You have been asked to adjudicate a dispute:`,
+        `  Task: ${event.task_id}`,
+        `  Domains: [${((payload.domains as string[]) ?? []).join(", ")}]`,
+        `  Details: ${JSON.stringify(payload.content ?? {}).slice(0, 500)}`,
+        ``,
+        `Evaluate and respond in JSON:`,
+        `{"action":"bid","confidence":0.0-1.0,"price":number}`,
+        `Or: {"action":"ignore","reason":"..."}`,
       ].join("\n");
 
     default:
@@ -501,7 +517,7 @@ function handleViaNotification(agentId: string, event: PushEvent): boolean {
     (mcpServer as any).notification({
       method: "notifications/message",
       params: {
-        level: event.type === "timeout" ? "warning" : "info",
+        level: event.type === "task_timeout" ? "warning" : "info",
         logger: "eacn3-reverse-control",
         data: {
           type: event.type,
@@ -523,10 +539,16 @@ function handleViaNotification(agentId: string, event: PushEvent): boolean {
 function buildNotificationSummary(event: PushEvent): string {
   const payload = event.payload as Record<string, unknown>;
   switch (event.type) {
-    case "awaiting_retrieval":
+    case "task_collected":
       return `Task ${event.task_id} has results ready for retrieval.`;
-    case "timeout":
+    case "task_timeout":
       return `Task ${event.task_id} has timed out.`;
+    case "bid_result": {
+      const p = event.payload as Record<string, unknown>;
+      return p.accepted
+        ? `Your bid on task ${event.task_id} was accepted.`
+        : `Your bid on task ${event.task_id} was rejected: ${p.reason ?? "no reason given"}.`;
+    }
     default:
       return `Event ${event.type} on task ${event.task_id}.`;
   }
@@ -591,10 +613,10 @@ function buildDirectiveText(agentId: string, event: PushEvent): string | null {
     case "subtask_completed":
       return `[ACTION NEEDED] Subtask ${payload.subtask_id ?? "?"} completed for task ${event.task_id}. Results available. Consider calling eacn3_get_task_results.`;
 
-    case "budget_confirmation":
+    case "bid_request_confirmation":
       return `[ACTION NEEDED] Budget exceeded on task ${event.task_id}. Bid price: ${payload.price ?? "?"}. Call eacn3_confirm_budget to approve/reject.`;
 
-    case "discussions_updated":
+    case "discussion_update":
       return `[ACTION NEEDED] New discussion on task ${event.task_id}. Check eacn3_get_task and respond.`;
 
     default:

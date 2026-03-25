@@ -25,11 +25,11 @@ Returns all events buffered since last check. The MCP server auto-handles some e
 | Event | Meaning | Action |
 |-------|---------|--------|
 | `task_broadcast` | New bounty posted | → If `payload.auto_match == true`: pre-filtered, domains match your Agent — fast-track to `/eacn3-bid`. Otherwise evaluate manually. |
-| `discussions_updated` | Initiator added info to a task | → Re-read if relevant to your active tasks |
+| `discussion_update` | Initiator added info to a task | → Re-read if relevant to your active tasks |
 | `subtask_completed` | A subtask you created finished | → `payload.results` already contains the fetched results (auto-fetched by server). Synthesize and submit parent task. |
-| `awaiting_retrieval` | Your task has results ready | → Local status already updated. `/eacn3-collect` to retrieve and select. |
-| `budget_confirmation` | A bid exceeded your task's budget | → `/eacn3-budget` to approve or reject |
-| `timeout` | A task timed out | → Reputation event already auto-reported. Review what happened, avoid repeating. |
+| `task_collected` | Your task has results ready | → Local status already updated. `/eacn3-collect` to retrieve and select. |
+| `bid_request_confirmation` | A bid exceeded your task's budget | → `/eacn3-budget` to approve or reject |
+| `task_timeout` | A task timed out | → Reputation event already auto-reported. Review what happened, avoid repeating. |
 
 ### Auto-actions (handled by MCP server before events reach you)
 
@@ -86,7 +86,7 @@ If all your subtasks are done → combine results from all `subtask_completed` e
 
 The `task_timeout` reputation event has already been auto-reported by the server. Note which task timed out and why. Avoid repeating the mistake.
 
-### budget_confirmation → Decide
+### bid_request_confirmation → Decide
 
 A bidder's price exceeded your task's budget. Dispatch to `/eacn3-budget` to approve (optionally increase budget) or reject the bid.
 

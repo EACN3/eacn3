@@ -94,7 +94,7 @@ function registerEventCallbacks(): void {
     rc.handleEvent(agentId, event).catch(() => { /* non-critical */ });
 
     switch (event.type) {
-      case "awaiting_retrieval":
+      case "task_collected":
         state.updateTaskStatus(taskId, "awaiting_retrieval");
         break;
 
@@ -104,6 +104,7 @@ function registerEventCallbacks(): void {
           net.getTaskResults(subtaskId, agentId)
             .then((res) => {
               state.pushEvents([{
+                msg_id: crypto.randomUUID().replace(/-/g, ""),
                 type: "subtask_completed",
                 task_id: taskId,
                 payload: { subtask_id: subtaskId, results: res.results },
@@ -115,12 +116,12 @@ function registerEventCallbacks(): void {
         break;
       }
 
-      case "timeout":
+      case "task_timeout":
         state.updateTaskStatus(taskId, "no_one");
         net.reportEvent(agentId, "task_timeout").catch(() => { /* non-critical */ });
         break;
 
-      case "budget_confirmation":
+      case "bid_request_confirmation":
         break;
 
       case "task_broadcast":
@@ -155,6 +156,7 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
   }
 
   state.pushEvents([{
+    msg_id: crypto.randomUUID().replace(/-/g, ""),
     type: "task_broadcast",
     task_id: taskId,
     payload: { ...payload, auto_match: true, matched_agent: agentId },
@@ -244,7 +246,7 @@ function buildAwaitResponse(events: PushEvent[]): {
             urgency: "high" as const,
           };
 
-        case "budget_confirmation":
+        case "bid_request_confirmation":
           return {
             event,
             suggested_action: `A bid on task ${event.task_id} exceeded the budget (bid: ${payload.price ?? "?"}, budget: ${payload.budget ?? "?"}). Approve or reject.`,
@@ -253,7 +255,7 @@ function buildAwaitResponse(events: PushEvent[]): {
             urgency: "high" as const,
           };
 
-        case "awaiting_retrieval":
+        case "task_collected":
           return {
             event,
             suggested_action: `Task ${event.task_id} has results ready. Retrieve and select the best one.`,
@@ -262,7 +264,7 @@ function buildAwaitResponse(events: PushEvent[]): {
             urgency: "medium" as const,
           };
 
-        case "discussions_updated":
+        case "discussion_update":
           return {
             event,
             suggested_action: `New discussion message on task ${event.task_id}. Read and respond.`,
@@ -271,7 +273,7 @@ function buildAwaitResponse(events: PushEvent[]): {
             urgency: "medium" as const,
           };
 
-        case "timeout":
+        case "task_timeout":
           return {
             event,
             suggested_action: `Task ${event.task_id} timed out. Reputation impact was automatic. No action needed.`,
@@ -802,7 +804,7 @@ export default {
   // #21 eacn3_update_discussions
   api.registerTool({
     name: "eacn3_update_discussions",
-    description: "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussions_updated' push event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
+    description: "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussion_update' push event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, message: { type: "string" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "message"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.updateDiscussions(params.task_id, initiatorId, params.message)); },
   });
@@ -810,7 +812,7 @@ export default {
   // #22 eacn3_confirm_budget
   api.registerTool({
     name: "eacn3_confirm_budget",
-    description: "Approve or reject a bid that exceeded your task's budget, triggered by a 'budget_confirmation' event. Set approved=true to accept (optionally raising the budget with new_budget); approved=false to reject the bid. Side effects: if approved, additional credits are frozen from your balance; the bid transitions from 'pending_confirmation' to 'accepted'. Returns updated task status.",
+    description: "Approve or reject a bid that exceeded your task's budget, triggered by a 'bid_request_confirmation' event. Set approved=true to accept (optionally raising the budget with new_budget); approved=false to reject the bid. Side effects: if approved, additional credits are frozen from your balance; the bid transitions from 'pending_confirmation' to 'accepted'. Returns updated task status.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, approved: { type: "boolean" }, new_budget: { type: "number" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "approved"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.confirmBudget(params.task_id, initiatorId, params.approved, params.new_budget)); },
   });
@@ -936,6 +938,7 @@ export default {
       const targetId = params.agent_id;
 
       const message: PushEvent = {
+        msg_id: crypto.randomUUID().replace(/-/g, ""),
         type: "direct_message" as any,
         task_id: "",
         payload: { from: senderId, content: params.content },
@@ -1041,7 +1044,7 @@ export default {
   // #32 eacn3_get_events
   api.registerTool({
     name: "eacn3_get_events",
-    description: "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. Call periodically in your main loop. Events arrive via HTTP polling and accumulate until drained — missing events means missed tasks and messages.",
+    description: "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, discussion_update, subtask_completed, task_collected, bid_request_confirmation, task_timeout, direct_message. Call periodically in your main loop. Events arrive via HTTP polling and accumulate until drained — missing events means missed tasks and messages.",
     parameters: { type: "object", properties: {} },
     async execute() {
       const events = state.drainEvents();

@@ -75,12 +75,14 @@ Event arrives → Server builds form → elicitation/create → User/Agent fills
 | 事件类型 | 反向控制方式 | 行为 |
 |----------|-------------|------|
 | `task_broadcast` | **Sampling** | 问 LLM "是否投标？给出 confidence 和 price" |
-| `direct_message` | **Sampling** | 问 LLM "如何回复这条消息？" |
+| `bid_request_confirmation` | **Sampling** | 问 LLM "投标超预算，是否确认？" |
+| `bid_result` | **Notification** | 通知 "你的竞标被接受/拒绝" |
+| `discussion_update` | **Sampling** | 问 LLM "发起者有新讨论，如何回应？" |
 | `subtask_completed` | **Sampling** | 问 LLM "子任务完成了，下一步？" |
-| `budget_confirmation` | **Sampling** | 问 LLM "投标超预算，是否确认？" |
-| `awaiting_retrieval` | **Notification** | 通知 "任务结果已就绪" |
-| `timeout` | **Notification** | 通知 "任务已超时" |
-| `discussions_updated` | **Sampling** | 问 LLM "发起者有新讨论，如何回应？" |
+| `task_collected` | **Notification** | 通知 "任务结果已就绪" |
+| `task_timeout` | **Auto Action** | 自动 report_and_close |
+| `adjudication_task` | **Sampling** | 问 LLM "是否接受仲裁任务？" |
+| `direct_message` | **Sampling** | 问 LLM "如何回复这条消息？" |
 
 ### 降级策略
 
@@ -217,9 +219,9 @@ eacn3_register_agent({
   reverse_control: {
     enabled: true,               // 默认 true
     sampling_events: ["task_broadcast", "direct_message"],  // 哪些事件触发 sampling
-    notification_events: ["awaiting_retrieval", "timeout"],  // 哪些事件发通知
+    notification_events: ["task_collected", "bid_result"],  // 哪些事件发通知
     auto_actions: {              // 自动执行（不问 LLM）
-      timeout: "report_and_close"
+      task_timeout: "report_and_close"
     }
   }
 })

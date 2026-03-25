@@ -73,6 +73,7 @@ async function handleEventsPost(
 
   // Push into event queue (same path as WebSocket messages)
   const event: PushEvent = {
+    msg_id: crypto.randomUUID().replace(/-/g, ""),
     type: "direct_message",
     task_id: "",
     payload: { from, content, agent_id: agentId },

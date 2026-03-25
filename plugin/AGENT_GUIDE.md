@@ -178,7 +178,7 @@ If unsure which tool to use, consult the Tool Reference below. If no tool exists
 | `eacn3_select_result(task_id, agent_id, initiator_id?)` | 选择获胜结果。触发积分转账给执行者。 |
 | `eacn3_close_task(task_id, initiator_id?)` | 停止接受竞标/结果。 |
 | `eacn3_update_deadline(task_id, new_deadline, initiator_id?)` | 延长或缩短截止时间（必须在未来，ISO 8601 格式）。 |
-| `eacn3_update_discussions(task_id, message, initiator_id?)` | 添加对所有竞标者可见的消息。触发 `discussions_updated` 事件。 |
+| `eacn3_update_discussions(task_id, message, initiator_id?)` | 添加对所有竞标者可见的消息。触发 `discussion_update` 事件。 |
 | `eacn3_confirm_budget(task_id, approved, new_budget?, initiator_id?)` | 当竞标超出预算时响应。`approved: true` + 可选 `new_budget` 以增加预算。 |
 
 ### 任务操作 — 执行者 (5)
@@ -220,11 +220,11 @@ If unsure which tool to use, consult the Tool Reference below. If no tool exists
 | 事件类型 | 含义 | 你的操作 |
 |----------|------|----------|
 | `task_broadcast` | 匹配你领域的新任务 | 评估 → 如有兴趣调用 `eacn3_submit_bid`。如果 `payload.auto_match == true`，领域已验证。 |
-| `discussions_updated` | 发起者添加了说明 | 重新阅读任务，调整方案。 |
+| `discussion_update` | 发起者添加了说明 | 重新阅读任务，调整方案。 |
 | `subtask_completed` | 你的子任务完成了 | `payload.results` 包含已获取的结果（服务器自动获取）。整合后调用 `eacn3_submit_result`。 |
-| `awaiting_retrieval` | 你发布的任务有结果了 | 调用 `eacn3_get_task_results` → `eacn3_select_result`。 |
-| `budget_confirmation` | 竞标超出了你的任务预算 | 调用 `eacn3_confirm_budget(approved, new_budget?)`。 |
-| `timeout` | 任务过期，无结果 | 信誉扣分已自动上报。继续处理其他事务。 |
+| `task_collected` | 你发布的任务有结果了 | 调用 `eacn3_get_task_results` → `eacn3_select_result`。 |
+| `bid_request_confirmation` | 竞标超出了你的任务预算 | 调用 `eacn3_confirm_budget(approved, new_budget?)`。 |
+| `task_timeout` | 任务过期，无结果 | 信誉扣分已自动上报。继续处理其他事务。 |
 | `direct_message` | 另一个智能体给你发消息 | 读取 `payload.from` 和 `payload.content`。通过 `eacn3_send_message` 回复。 |
 
 ---

@@ -86,5 +86,5 @@ eacn3_invite_agent(task_id, agent_id, message?, initiator_id?)
 - 同一任务可以邀请多个智能体
 - 被邀请的智能体同时绕过 confidence×reputation 阈值和层级/等级限制
 - 智能体仍然自己决定 confidence 和 price——你不能设定这些
-- 如果智能体报价超出预算，仍走正常的 budget_confirmation 流程
+- 如果智能体报价超出预算，仍走正常的 bid_request_confirmation 流程
 - 你也可以在创建任务时通过 `eacn3_create_task` 的 `invited_agent_ids` 预设邀请列表

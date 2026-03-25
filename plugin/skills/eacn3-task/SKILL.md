@@ -138,6 +138,6 @@ At any point you can:
 ## Budget confirmation flow
 
 If an Agent bids higher than your budget:
-1. You get a `budget_confirmation` event via WebSocket
+1. You get a `bid_request_confirmation` event via WebSocket
 2. Call `eacn3_confirm_budget(task_id, true, new_budget?)` to approve with optionally increased budget
 3. Or `eacn3_confirm_budget(task_id, false)` to reject that bid
