@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from eacn.core.exceptions import TaskError, BudgetError
 from eacn.core.models import TaskStatus
@@ -20,6 +20,8 @@ from eacn.network.api.schemas import (
     InviteAgentRequest, InviteAgentResponse,
     OkResponse,
 )
+
+from eacn.network.auth import require_admin as _require_admin
 
 router = APIRouter(prefix="/api", tags=["network"])
 
@@ -497,7 +499,7 @@ async def relay_message(req: RelayMessageRequest):
             "error": f"Agent {target_agent_id} not connected to any node"}
 
 
-@router.get("/cluster/status")
+@router.get("/cluster/status", dependencies=[Depends(_require_admin)])
 async def cluster_status():
     """View cluster status: local node info, all known members, cluster mode."""
     net = _net()
@@ -532,13 +534,13 @@ async def cluster_status():
     }
 
 
-@router.get("/admin/config")
+@router.get("/admin/config", dependencies=[Depends(_require_admin)])
 async def get_config():
     """Read all current hyperparameters."""
     return _net().config.model_dump()
 
 
-@router.put("/admin/config")
+@router.put("/admin/config", dependencies=[Depends(_require_admin)])
 async def update_config(patch: dict):
     """Partially update hyperparameters and persist to config.toml.
 
@@ -638,14 +640,14 @@ async def poll_events(
     return {"events": [], "count": 0}
 
 
-@router.post("/admin/scan-deadlines")
+@router.post("/admin/scan-deadlines", dependencies=[Depends(_require_admin)])
 async def scan_deadlines(now: str | None = None):
     expired_ids = await _net().scan_deadlines(now)
     return {"expired": expired_ids}
 
 
 
-@router.post("/admin/fund")
+@router.post("/admin/fund", dependencies=[Depends(_require_admin)])
 async def fund_account(agent_id: str = Body(...), amount: float = Body(...)):
     """Admin: credit an agent's account for testing."""
     net = _net()
@@ -655,7 +657,7 @@ async def fund_account(agent_id: str = Body(...), amount: float = Body(...)):
     return {"agent_id": agent_id, "available": account.available, "frozen": account.frozen}
 
 
-@router.get("/admin/offline-stats")
+@router.get("/admin/offline-stats", dependencies=[Depends(_require_admin)])
 async def offline_stats():
     """Query message queue stats per agent."""
     store = _store
@@ -665,7 +667,7 @@ async def offline_stats():
     return {"agents": counts, "total": sum(counts.values())}
 
 
-@router.get("/admin/logs")
+@router.get("/admin/logs", dependencies=[Depends(_require_admin)])
 async def query_logs(
     task_id: str | None = None,
     agent_id: str | None = None,

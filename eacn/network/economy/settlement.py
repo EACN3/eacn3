@@ -9,6 +9,7 @@ Flow:
 
 from __future__ import annotations
 
+from eacn.core.exceptions import BudgetError
 from eacn.network.economy.escrow import EscrowService
 
 
@@ -23,6 +24,8 @@ class SettlementService:
         self.escrow = escrow
         self.platform_fee_rate = platform_fee_rate
         self.total_fees_collected: float = 0.0
+        # Idempotency: track settled task_ids to prevent double payment (#18)
+        self._settled: set[str] = set()
 
     async def settle(
         self,
@@ -37,6 +40,11 @@ class SettlementService:
         3. Credit executor with bid_price
         4. Refund remainder to initiator
         """
+        # Idempotency guard: prevent double settlement (#18)
+        if task_id in self._settled:
+            raise BudgetError(f"Task {task_id} already settled")
+        self._settled.add(task_id)
+
         platform_fee = bid_price * self.platform_fee_rate
         total_deduction = bid_price + platform_fee
 

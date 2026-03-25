@@ -229,6 +229,12 @@ class Database:
             return json.loads(row[0]) if row else None
 
     async def update_task_status(self, task_id: str, status: str) -> None:
+        """Update task status atomically.
+
+        Uses a single UPDATE that sets both the indexed column and the JSON
+        blob field in one statement, avoiding the race between json_set and
+        a concurrent save_task UPSERT (#61).
+        """
         await self.db.execute(
             "UPDATE tasks SET status = ?, data = json_set(data, '$.status', ?) WHERE id = ?",
             (status, status, task_id),
@@ -675,11 +681,12 @@ class Database:
         await self.db.commit()
 
     async def gossip_add_many(self, agent_id: str, known_ids: set[str]) -> None:
-        for kid in known_ids:
-            await self.db.execute(
-                "INSERT OR IGNORE INTO gossip_known (agent_id, known_agent_id) VALUES (?, ?)",
-                (agent_id, kid),
-            )
+        if not known_ids:
+            return
+        await self.db.executemany(
+            "INSERT OR IGNORE INTO gossip_known (agent_id, known_agent_id) VALUES (?, ?)",
+            [(agent_id, kid) for kid in known_ids],
+        )
         await self.db.commit()
 
     async def gossip_get_known(self, agent_id: str) -> set[str]:
@@ -846,11 +853,12 @@ class Database:
         await self.db.commit()
 
     async def cluster_gossip_add_many(self, node_id: str, known_ids: set[str]) -> None:
-        for kid in known_ids:
-            await self.db.execute(
-                "INSERT OR IGNORE INTO cluster_gossip (node_id, known_node_id) VALUES (?, ?)",
-                (node_id, kid),
-            )
+        if not known_ids:
+            return
+        await self.db.executemany(
+            "INSERT OR IGNORE INTO cluster_gossip (node_id, known_node_id) VALUES (?, ?)",
+            [(node_id, kid) for kid in known_ids],
+        )
         await self.db.commit()
 
     async def cluster_gossip_get_known(self, node_id: str) -> set[str]:
@@ -944,6 +952,20 @@ class Database:
         ) as cursor:
             rows = await cursor.fetchall()
             return {r[0]: r[1] for r in rows}
+
+    async def offline_delete_by_task(self, task_id: str) -> int:
+        """Delete offline messages for a specific task (#80)."""
+        async with self.db.execute(
+            "SELECT COUNT(*) FROM offline_messages WHERE task_id = ?", (task_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            count = row[0] if row else 0
+        if count:
+            await self.db.execute(
+                "DELETE FROM offline_messages WHERE task_id = ?", (task_id,),
+            )
+            await self.db.commit()
+        return count
 
     async def offline_prune_overflow(self, agent_id: str, max_per_agent: int) -> int:
         """Delete oldest messages exceeding the per-agent cap. Returns count deleted."""

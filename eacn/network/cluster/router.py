@@ -42,6 +42,13 @@ class ClusterRouter:
 
     def set_route(self, task_id: str, origin: str) -> None:
         self._routes[task_id] = origin
+        # Persist to DB for crash recovery (#31) — fire-and-forget
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._db.cluster_set_route(task_id, origin))
+        except RuntimeError:
+            pass  # No event loop — test/sync context
 
     def get_route(self, task_id: str) -> str | None:
         return self._routes.get(task_id)

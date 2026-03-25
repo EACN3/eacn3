@@ -358,3 +358,26 @@ class TaskManager:
         while task.parent_id:
             task = self.get(task.parent_id)
         return task
+
+    def purge_terminated(self, max_age_seconds: float = 3600) -> int:
+        """Remove completed/no_one_able tasks older than max_age from memory (#40).
+
+        Returns the number of purged tasks.
+        """
+        now = datetime.now(timezone.utc)
+        to_remove: list[str] = []
+        for task_id, task in self._tasks.items():
+            if task.status not in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+                continue
+            # Use deadline as proxy for age if available
+            if task.deadline:
+                try:
+                    dt = self._parse_datetime(task.deadline)
+                    if (now - dt).total_seconds() > max_age_seconds:
+                        to_remove.append(task_id)
+                except ValueError:
+                    pass
+        for tid in to_remove:
+            self._tasks.pop(tid, None)
+            self._task_locks.pop(tid, None)
+        return len(to_remove)

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from eacn.network.api.schemas import (
     RegisterServerRequest, RegisterServerResponse, ServerCardResponse,
@@ -19,10 +19,20 @@ from eacn.network.api.schemas import (
     DiscoverResponse,
     OkResponse,
 )
+from eacn.network.auth import (
+    register_agent_token, revoke_agent_token,
+    register_server_token, revoke_server_token,
+    extract_agent_token, validate_agent_token,
+    validate_server_token,
+)
 
 discovery_router = APIRouter(prefix="/api/discovery", tags=["discovery"])
 
+import asyncio
+
 _network = None
+# Prevent concurrent server unregistration TOCTOU races (#101)
+_unregister_locks: dict[str, asyncio.Lock] = {}
 
 
 def set_discovery_network(network) -> None:
@@ -50,7 +60,8 @@ async def register_server(req: RegisterServerRequest):
         endpoint=req.endpoint,
         owner=req.owner,
     )
-    return RegisterServerResponse(server_id=server_id, status="online")
+    token = register_server_token(server_id)
+    return RegisterServerResponse(server_id=server_id, status="online", token=token)
 
 
 @discovery_router.get("/servers/{server_id}", response_model=ServerCardResponse)
@@ -75,6 +86,13 @@ async def server_heartbeat(server_id: str):
 @discovery_router.delete("/servers/{server_id}", response_model=OkResponse)
 async def unregister_server(server_id: str):
     """Unregister server — cascade: revoke all its agents from DHT + delete server card."""
+    # Per-server lock to prevent TOCTOU races (#101)
+    if server_id not in _unregister_locks:
+        _unregister_locks[server_id] = asyncio.Lock()
+    async with _unregister_locks[server_id]:
+        return await _unregister_server_inner(server_id)
+
+async def _unregister_server_inner(server_id: str):
     card = await _net().discovery.bootstrap.get_server_card(server_id)
     if not card:
         raise HTTPException(404, f"Server {server_id} not found")
@@ -93,6 +111,10 @@ async def unregister_server(server_id: str):
                     await _net().cluster.revoke_domain(domain)
 
     await _net().discovery.unregister_server(server_id)
+    revoke_server_token(server_id)
+    # Revoke tokens for all agents of this server
+    for aid in server_agent_ids:
+        revoke_agent_token(aid)
     return OkResponse(message=f"Server {server_id} unregistered, agents cascade removed")
 
 
@@ -123,11 +145,22 @@ async def register_agent(req: RegisterAgentRequest):
     }
     seeds = await _net().discovery.register_agent(card)
 
-    # Sync new domains to cluster DHT so peer nodes know we handle them
-    for domain in req.domains:
-        await _net().cluster.announce_domain(domain)
+    # Sync new domains to cluster DHT so peer nodes know we handle them (#76)
+    try:
+        for domain in req.domains:
+            await _net().cluster.announce_domain(domain)
+    except Exception:
+        # Rollback discovery registration on cluster failure
+        import logging
+        logging.getLogger(__name__).warning(
+            "Cluster announce failed for agent %s; rolling back registration",
+            req.agent_id, exc_info=True,
+        )
+        await _net().discovery.unregister_agent(req.agent_id)
+        raise HTTPException(502, "Agent registration failed: cluster announcement error")
 
-    return RegisterAgentResponse(agent_id=req.agent_id, seeds=seeds)
+    token = register_agent_token(req.agent_id)
+    return RegisterAgentResponse(agent_id=req.agent_id, seeds=seeds, token=token)
 
 
 @discovery_router.get("/agents/{agent_id}", response_model=AgentCardResponse)
@@ -173,17 +206,21 @@ async def update_agent(agent_id: str, req: UpdateAgentRequest):
     # Re-announce DHT if domains changed
     new_domains = set(card.get("domains", []))
     if new_domains != old_domains:
-        # Revoke removed domains
+        # Revoke removed domains from both discovery DHT and cluster DHT (#75)
         for d in old_domains - new_domains:
             await _net().discovery.dht.revoke(d, agent_id)
-            # Only revoke from cluster if no other local agent uses this domain
+            # Check if any other agent still uses this domain before cluster revoke
             others = await _net().discovery.bootstrap._db.query_agent_cards_by_domain(d)
             still_used = any(c["agent_id"] != agent_id for c in others)
             if not still_used:
                 await _net().cluster.revoke_domain(d)
-        # Announce new domains
+        # Announce new domains to both discovery and cluster DHT
         for d in new_domains - old_domains:
             await _net().discovery.dht.announce(d, agent_id)
+            await _net().cluster.announce_domain(d)
+        # Also re-check retained domains for cluster consistency (#75)
+        for d in new_domains & old_domains:
+            # Ensure cluster DHT still has this domain
             await _net().cluster.announce_domain(d)
 
     return OkResponse(message="Agent updated")
@@ -203,6 +240,7 @@ async def unregister_agent(agent_id: str):
             await _net().cluster.revoke_domain(domain)
 
     await _net().discovery.unregister_agent(agent_id)
+    revoke_agent_token(agent_id)
     return OkResponse(message=f"Agent {agent_id} unregistered")
 
 

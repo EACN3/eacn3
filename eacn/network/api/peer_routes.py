@@ -7,10 +7,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-peer_router = APIRouter(prefix="/peer", tags=["peer"])
+from eacn.network.auth import require_peer_auth
+
+peer_router = APIRouter(prefix="/peer", tags=["peer"], dependencies=[Depends(require_peer_auth)])
 
 _cluster = None
 _network = None

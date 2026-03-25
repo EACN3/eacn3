@@ -170,6 +170,7 @@ class RegisterServerRequest(BaseModel):
 class RegisterServerResponse(BaseModel):
     server_id: str
     status: str = "online"
+    token: str = ""
 
 
 class ServerCardResponse(BaseModel):
@@ -208,6 +209,7 @@ class RegisterAgentRequest(BaseModel):
 class RegisterAgentResponse(BaseModel):
     agent_id: str
     seeds: list[str] = Field(default_factory=list)
+    token: str = ""
 
 
 class AgentCardResponse(BaseModel):
