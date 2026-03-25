@@ -109,7 +109,7 @@ class PushService:
         """Notify all bidders of discussion update."""
         bidder_ids = [
             b.agent_id for b in task.bids
-            if b.status.value in ("executing", "waiting", "accepted")
+            if b.status.value in ("executing", "waiting", "accepted", "pending")
         ]
         if not bidder_ids:
             bidder_ids = [task.initiator_id]
@@ -194,10 +194,13 @@ class PushService:
         if not self._handler:
             return
 
+        import asyncio
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
                 await self._handler(event)
                 return
+            except asyncio.CancelledError:
+                raise  # Don't swallow cancellation (#83)
             except Exception:
                 _logger.warning(
                     "Push delivery attempt %d/%d failed for %s",

@@ -190,19 +190,21 @@ class TestConcurrentBiddingAndQueue:
 
     @pytest.mark.asyncio
     async def test_submit_result_promotes_waiting(self, client):
-        """Agent submits result → slot opens → waiting agent promoted."""
-        await create_task(client, task_id="submit-promo", budget=500.0, max_concurrent_bidders=1)
+        """Agent submits result → slot opens → waiting agent promoted.
+        Uses max_concurrent_bidders=2 so auto_collect doesn't fire after 1 result."""
+        await create_task(client, task_id="submit-promo", budget=500.0, max_concurrent_bidders=2)
 
         await bid(client, task_id="submit-promo", agent_id="a1", price=80.0)
-        b2 = await bid(client, task_id="submit-promo", agent_id="a2", price=85.0)
-        assert b2["status"] == "waiting"
+        await bid(client, task_id="submit-promo", agent_id="a2", price=85.0)
+        b3 = await bid(client, task_id="submit-promo", agent_id="a3", price=75.0)
+        assert b3["status"] == "waiting"
 
-        # a1 submits → a2 gets promoted
+        # a1 submits → a3 gets promoted
         await submit_result(client, task_id="submit-promo", agent_id="a1", content="done")
 
         task = await get_task(client, "submit-promo")
         bid_map = {b["agent_id"]: b["status"] for b in task["bids"]}
-        assert bid_map["a2"] == "executing"
+        assert bid_map["a3"] == "executing"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -245,6 +247,7 @@ class TestAgentOfflineAndTakeover:
 # Scenario 4: WebSocket connect, disconnect, reconnect
 # ══════════════════════════════════════════════════════════════════════
 
+@pytest.mark.skip(reason="WebSocket removed in queue-only architecture")
 class TestWebSocketReconnect:
     """Agent connects via WS, disconnects, reconnects — verified via ping/pong."""
 

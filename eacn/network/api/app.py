@@ -106,6 +106,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
     )
     # Read from env var if not explicitly provided; fall back to file-based default
     resolved_db_path = db_path or os.environ.get("EACN3_DB_PATH", "eacn3.db")
+    # Validate path has no traversal (#48)
+    if resolved_db_path != ":memory:" and ".." in os.path.normpath(resolved_db_path):
+        raise ValueError(f"DB path must not contain path traversal: {resolved_db_path}")
     app.state.db_path = resolved_db_path
 
     @app.get("/health")

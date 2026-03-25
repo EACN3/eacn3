@@ -101,13 +101,15 @@ class TestSubtaskDepthLimits:
 
     @pytest.mark.asyncio
     async def test_depth_limit_exceeded_fails(self, client):
-        await create_task(client, task_id="t1", budget=500.0, max_depth=1)
+        # max_depth=2: allows depth 1 subtask, rejects depth 2 (#45 off-by-one fix)
+        await create_task(client, task_id="t1", budget=500.0, max_depth=2)
         await bid(client, task_id="t1", agent_id="a1")
         sub1 = (await client.post("/api/tasks/t1/subtask", json={
             "initiator_id": "a1", "content": {}, "domains": ["coding"], "budget": 200.0,
         })).json()
-        # depth=1, max_depth=1, so another subtask should fail
+        # depth=1, max_depth=2: allowed
         await bid(client, task_id=sub1["id"], agent_id="a2", price=50.0)
+        # depth=2, max_depth=2: now rejected (>= check)
         resp = await client.post(f"/api/tasks/{sub1['id']}/subtask", json={
             "initiator_id": "a2", "content": {}, "domains": ["coding"], "budget": 50.0,
         })

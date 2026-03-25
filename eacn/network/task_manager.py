@@ -177,7 +177,7 @@ class TaskManager:
         parent = self.get(parent_task_id)
         new_depth = parent.depth + 1
 
-        if new_depth > parent.max_depth:
+        if new_depth >= parent.max_depth:
             raise TaskError(
                 f"Max depth {parent.max_depth} exceeded (current: {new_depth})"
             )
@@ -252,28 +252,42 @@ class TaskManager:
         task.deadline = deadline
         return task
 
-    def update_discussions(self, task_id: str, message: str) -> Task:
+    def update_discussions(self, task_id: str, message: str, author: str = "") -> Task:
         """Append a discussion message to task content."""
         task = self.get(task_id)
         discussions = task.content.setdefault("discussions", [])
         discussions.append({
             "message": message,
+            "author": author,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         return task
 
     # ── Deadline scanning ────────────────────────────────────────────
 
+    @staticmethod
+    def _parse_datetime(s: str) -> datetime:
+        """Parse ISO 8601 datetime, normalizing Z suffix (#19)."""
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
     def scan_expired(self, now: str | None = None) -> list[Task]:
         """Find tasks whose deadline has passed. Returns list of expired tasks."""
-        if now is None:
-            now = datetime.now(timezone.utc).isoformat()
+        now_dt = (
+            self._parse_datetime(now)
+            if now is not None
+            else datetime.now(timezone.utc)
+        )
         expired = []
         for task in self._tasks.values():
             if task.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
                 continue
-            if task.deadline and task.deadline <= now:
-                expired.append(task)
+            if task.deadline:
+                try:
+                    deadline_dt = self._parse_datetime(task.deadline)
+                    if deadline_dt <= now_dt:
+                        expired.append(task)
+                except ValueError:
+                    continue
         return expired
 
     def handle_expired(self, task_id: str) -> TaskStatus:
@@ -304,12 +318,17 @@ class TaskManager:
 
     # ── Tree operations ──────────────────────────────────────────────
 
-    def get_subtree(self, task_id: str) -> list[Task]:
+    def get_subtree(self, task_id: str, _visited: set[str] | None = None) -> list[Task]:
         """Return all tasks in the subtree rooted at task_id."""
+        if _visited is None:
+            _visited = set()
+        if task_id in _visited:
+            return []  # Cycle detected (#27)
+        _visited.add(task_id)
         task = self.get(task_id)
         subtree = [task]
         for child_id in task.child_ids:
-            subtree.extend(self.get_subtree(child_id))
+            subtree.extend(self.get_subtree(child_id, _visited))
         return subtree
 
     def get_root(self, task_id: str) -> Task:

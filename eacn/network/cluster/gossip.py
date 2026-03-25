@@ -80,8 +80,10 @@ class ClusterGossip:
 
         # Bidirectional gossip knowledge merge:
         # 1) peer tells us about its known nodes → we now know them too
-        peer_brought_ids = {c.node_id for c in known_cards}
+        # Filter out self to prevent self-reference (#38)
+        peer_brought_ids = {c.node_id for c in known_cards} - {self._local_node_id}
         all_new_ids = peer_brought_ids | {from_node.node_id}
+        all_new_ids.discard(self._local_node_id)
 
         # Store that the peer knows about its friends
         for nid in peer_brought_ids:

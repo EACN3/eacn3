@@ -356,6 +356,7 @@ async def create_subtask(task_id: str, req: CreateSubtaskRequest):
                     "domains": req.domains,
                     "budget": req.budget,
                     "deadline": req.deadline,
+                    "level": req.level.value if req.level else None,
                 },
             )
             return TaskResponse(
@@ -420,6 +421,7 @@ async def deposit(req: DepositRequest):
     net = _net()
     account = net.escrow.get_or_create_account(req.agent_id, 0.0)
     account.credit(req.amount)
+    await net.escrow._persist_account(req.agent_id)
     return DepositResponse(
         agent_id=req.agent_id,
         deposited=req.amount,
@@ -635,8 +637,10 @@ async def scan_deadlines(now: str | None = None):
 @router.post("/admin/fund")
 async def fund_account(agent_id: str = Body(...), amount: float = Body(...)):
     """Admin: credit an agent's account for testing."""
-    account = _net().escrow.get_or_create_account(agent_id, 0.0)
+    net = _net()
+    account = net.escrow.get_or_create_account(agent_id, 0.0)
     account.credit(amount)
+    await net.escrow._persist_account(agent_id)
     return {"agent_id": agent_id, "available": account.available, "frozen": account.frozen}
 
 

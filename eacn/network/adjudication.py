@@ -82,9 +82,13 @@ class AdjudicationService:
         for result in parent_task.results:
             if result.agent_id == target_result_agent_id:
                 result.adjudications.append(adjudication)
-                break
+                return adjudication
 
-        return adjudication
+        # Target result not found — report rather than silently skip (#34)
+        from eacn.core.exceptions import TaskError
+        raise TaskError(
+            f"Target result from {target_result_agent_id} not found on task {parent_task.id}"
+        )
 
     def compute_adjudication_summary(
         self, result: Result

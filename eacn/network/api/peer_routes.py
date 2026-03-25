@@ -60,13 +60,13 @@ class HeartbeatRequest(BaseModel):
 
 
 class DHTStoreRequest(BaseModel):
-    domain: str
-    node_id: str
+    domain: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
 
 
 class DHTRevokeRequest(BaseModel):
-    domain: str
-    node_id: str
+    domain: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
 
 
 class GossipExchangeRequest(BaseModel):
@@ -84,6 +84,8 @@ class TaskBroadcastRequest(BaseModel):
     deadline: str | None = None
     content: dict[str, Any] = Field(default_factory=dict)
     max_concurrent_bidders: int = 5
+    level: str | None = None
+    invited_agent_ids: list[str] = Field(default_factory=list)
 
 
 class TaskBidRequest(BaseModel):
@@ -136,7 +138,7 @@ async def peer_join(req: JoinRequest):
         card = NodeCard.from_dict(req.node_card)
         nodes = _cs().handle_join(card)
         return {"nodes": [n.to_dict() for n in nodes]}
-    except ValueError as e:
+    except (ValueError, KeyError, TypeError) as e:
         raise HTTPException(409, str(e))
 
 
@@ -206,11 +208,15 @@ async def peer_task_broadcast(req: TaskBroadcastRequest):
         all_agent_ids.update(await net.discovery.discover(domain))
 
     if all_agent_ids:
-        from eacn.core.models import Task
+        from eacn.core.models import Task, TaskType, TaskLevel
+        task_type = TaskType(req.type) if req.type else TaskType.NORMAL
+        task_level = TaskLevel(req.level) if req.level else TaskLevel.GENERAL
         task = Task(
             id=req.task_id, content=req.content, initiator_id=req.initiator_id,
             domains=req.domains, budget=req.budget, deadline=req.deadline,
             max_concurrent_bidders=req.max_concurrent_bidders,
+            type=task_type, level=task_level,
+            invited_agent_ids=req.invited_agent_ids,
         )
         await net.push.broadcast_task(task, list(all_agent_ids))
     return OkResponse()
@@ -218,6 +224,7 @@ async def peer_task_broadcast(req: TaskBroadcastRequest):
 
 @peer_router.post("/task/bid")
 async def peer_task_bid(req: TaskBidRequest):
+    from eacn.core.exceptions import TaskError, BudgetError
     net, cs = _net(), _cs()
     try:
         bid_status = await net.submit_bid(
@@ -228,32 +235,35 @@ async def peer_task_bid(req: TaskBidRequest):
         cs.router.add_participant(req.task_id, req.from_node)
         return {"status": bid_status.value,
                 "bid": {"agent_id": req.agent_id, "status": bid_status.value}}
-    except Exception as e:
+    except (TaskError, BudgetError) as e:
         raise HTTPException(400, str(e))
 
 
 @peer_router.post("/task/reject", response_model=OkResponse)
 async def peer_task_reject(req: TaskRejectRequest):
+    from eacn.core.exceptions import TaskError
     try:
         await _net().reject_task(task_id=req.task_id, agent_id=req.agent_id)
         return OkResponse()
-    except Exception as e:
+    except TaskError as e:
         raise HTTPException(400, str(e))
 
 
 @peer_router.post("/task/result", response_model=OkResponse)
 async def peer_task_result(req: TaskResultRequest):
+    from eacn.core.exceptions import TaskError
     try:
         await _net().submit_result(
             task_id=req.task_id, agent_id=req.agent_id, content=req.content,
         )
         return OkResponse()
-    except Exception as e:
+    except TaskError as e:
         raise HTTPException(400, str(e))
 
 
 @peer_router.post("/task/subtask")
 async def peer_task_subtask(req: TaskSubtaskRequest):
+    from eacn.core.exceptions import TaskError, BudgetError
     data = req.subtask_data
     try:
         subtask = await _net().create_subtask(
@@ -263,9 +273,10 @@ async def peer_task_subtask(req: TaskSubtaskRequest):
             domains=data.get("domains", []),
             budget=data.get("budget", 0.0),
             deadline=data.get("deadline"),
+            level=data.get("level"),
         )
         return {"subtask_id": subtask.id, "status": subtask.status.value}
-    except Exception as e:
+    except (TaskError, BudgetError) as e:
         raise HTTPException(400, str(e))
 
 

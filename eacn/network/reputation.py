@@ -242,7 +242,7 @@ class GlobalReputation:
             recent[:] = recent[-self.BURST_WINDOW:]
 
         same_type_count = sum(1 for e in recent if e == event_type)
-        return same_type_count > self.BURST_THRESHOLD
+        return same_type_count >= self.BURST_THRESHOLD
 
     # ── Negotiation gain (for Matcher) ───────────────────────────────
 

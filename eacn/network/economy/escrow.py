@@ -121,11 +121,13 @@ class EscrowService:
             )
 
         # Reduce parent escrow, create child escrow
+        # Child escrow retains the original payer (parent initiator) so
+        # release() refunds the correct account (#16)
         self._task_escrows[parent_task_id] = (
             parent_initiator,
             parent_amount - amount,
         )
-        self._task_escrows[subtask_id] = (subtask_initiator_id, amount)
+        self._task_escrows[subtask_id] = (parent_initiator, amount)
         await self._persist_escrow(parent_task_id)
         await self._persist_escrow(subtask_id)
 
