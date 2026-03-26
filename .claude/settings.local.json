@@ -12,7 +12,10 @@
       "mcp__eacn3__eacn3_get_task_results",
       "mcp__eacn3__eacn3_select_result",
       "mcp__eacn3__eacn3_get_balance",
-      "mcp__eacn3__eacn3_get_reputation"
+      "mcp__eacn3__eacn3_get_reputation",
+      "mcp__eacn3__eacn3_create_subtask",
+      "mcp__eacn3__eacn3_confirm_budget",
+      "mcp__eacn3__eacn3_reverse_control_status"
     ]
   },
   "enableAllProjectMcpServers": true,
