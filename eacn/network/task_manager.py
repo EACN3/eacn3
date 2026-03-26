@@ -326,14 +326,26 @@ class TaskManager:
     def check_auto_collect(self, task_id: str) -> bool:
         """Check if task should auto-transition to AWAITING_RETRIEVAL.
 
-        Triggers:
-        - All concurrent slots have submitted results
-        - max_concurrent_bidders results collected
+        Triggers when ALL actively executing bidders have submitted results.
+        This means: every bid with status 'executing' has a corresponding
+        result entry. No need to wait for max_concurrent_bidders — if only
+        1 agent is executing and submits, the task collects immediately.
         """
         task = self.get(task_id)
         if task.status != TaskStatus.BIDDING:
             return False
-        if len(task.results) >= task.max_concurrent_bidders:
+
+        executing_agents = {
+            b.agent_id for b in task.bids
+            if b.status in (BidStatus.EXECUTING, BidStatus.ACCEPTED)
+        }
+        if not executing_agents:
+            return False
+
+        submitted_agents = {r.agent_id for r in task.results}
+
+        # All executing agents have submitted → auto-collect
+        if executing_agents <= submitted_agents:
             task.status = TaskStatus.AWAITING_RETRIEVAL
             return True
         return False
