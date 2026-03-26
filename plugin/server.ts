@@ -1197,6 +1197,122 @@ server.tool(
   },
 );
 
+// #41 eacn3_next — single-event non-blocking poll
+const URGENCY_ORDER: Record<string, number> = {
+  task_broadcast: 1,
+  direct_message: 1,
+  subtask_completed: 1,
+  bid_request_confirmation: 1,
+  task_collected: 2,
+  bid_result: 2,
+  discussion_update: 3,
+  task_timeout: 4,
+  adjudication_task: 2,
+};
+
+function buildNextAction(event: import("./src/models.js").PushEvent) {
+  const payload = event.payload as Record<string, unknown>;
+  switch (event.type) {
+    case "task_broadcast":
+      return {
+        action: "bid",
+        description: `New task [${((payload.domains as string[]) ?? []).join(", ")}] budget=${payload.budget ?? "?"}. Evaluate and bid.`,
+        tool: "eacn3_submit_bid",
+        params: { task_id: event.task_id },
+      };
+    case "direct_message":
+      return {
+        action: "reply",
+        description: `Message from ${payload.from ?? "?"}: "${String(payload.content ?? "").slice(0, 200)}"`,
+        tool: "eacn3_send_message",
+        params: { to_agent_id: payload.from, task_id: event.task_id },
+      };
+    case "subtask_completed":
+      return {
+        action: "collect",
+        description: `Subtask ${payload.subtask_id ?? "?"} completed. Fetch results and continue.`,
+        tool: "eacn3_get_task_results",
+        params: { task_id: String(payload.subtask_id ?? event.task_id) },
+      };
+    case "bid_request_confirmation":
+      return {
+        action: "confirm",
+        description: `Bid on ${event.task_id} exceeded budget. Approve or reject.`,
+        tool: "eacn3_confirm_budget",
+        params: { task_id: event.task_id },
+      };
+    case "task_collected":
+      return {
+        action: "collect",
+        description: `Task ${event.task_id} has results ready. Retrieve them.`,
+        tool: "eacn3_get_task_results",
+        params: { task_id: event.task_id },
+      };
+    case "bid_result": {
+      const accepted = (payload as any)?.accepted;
+      if (accepted) {
+        return {
+          action: "execute",
+          description: `Bid accepted on ${event.task_id}. Start working.`,
+          tool: "eacn3_get_task",
+          params: { task_id: event.task_id },
+        };
+      }
+      return {
+        action: "note",
+        description: `Bid rejected on ${event.task_id}. Reason: ${(payload as any)?.reason ?? "unknown"}.`,
+        tool: null,
+        params: {},
+      };
+    }
+    case "task_timeout":
+      return {
+        action: "note",
+        description: `Task ${event.task_id} timed out.`,
+        tool: null,
+        params: {},
+      };
+    default:
+      return {
+        action: "check",
+        description: `Event "${event.type}" on ${event.task_id}.`,
+        tool: "eacn3_get_task",
+        params: { task_id: event.task_id },
+      };
+  }
+}
+
+server.tool(
+  "eacn3_next",
+  "Non-blocking single-step work loop: returns the ONE highest-priority pending event for this agent with a clear action directive, or {idle: true} if nothing to do. Call this in a loop to drive your agent. Unlike eacn3_await_events, this never blocks — it returns immediately. Process the returned action, then call eacn3_next again.",
+  {
+    agent_id: z.string().optional().describe("Agent ID (auto-injected if omitted)"),
+  },
+  async (params) => {
+    const agentId = resolveAgentId(params.agent_id);
+    const events = state.drainEvents(agentId);
+
+    if (events.length === 0) {
+      return ok({ idle: true, hint: "No pending events. Call eacn3_next again later, or do other work." });
+    }
+
+    // Sort by urgency (lower number = higher priority)
+    events.sort((a, b) => (URGENCY_ORDER[a.type] ?? 5) - (URGENCY_ORDER[b.type] ?? 5));
+
+    // Take the first (highest priority), put the rest back
+    const [top, ...rest] = events;
+    if (rest.length > 0) state.pushEvents(agentId, rest);
+
+    const next = buildNextAction(top);
+    return ok({
+      idle: false,
+      remaining: rest.length,
+      event: top,
+      ...next,
+    });
+  },
+);
+
 // #40 eacn3_reverse_control_status
 server.tool(
   "eacn3_reverse_control_status",
