@@ -6,8 +6,10 @@ are no-ops. Existing single-node behavior is preserved exactly.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
+from collections import OrderedDict
 from typing import Any, Callable, Awaitable, TYPE_CHECKING
 
 import httpx
@@ -56,6 +58,11 @@ class ClusterService:
 
         self._push_handler: LocalPushHandler | None = None
         self._agent_counts: dict[str, int] = {}  # node_id → connected agent count
+        self._agent_counts_lock = asyncio.Lock()  # Protects _agent_counts (#105)
+        # Idempotency: track delivered status notifications (#39)
+        # Bounded to prevent unbounded memory growth
+        self._delivered_status: OrderedDict[str, bool] = OrderedDict()
+        self._max_delivered_status: int = 10_000
         self._standalone = not bool(self.config.seed_nodes)
         self._http: httpx.AsyncClient | None = None
 
@@ -74,6 +81,25 @@ class ClusterService:
         self._http = httpx.AsyncClient(timeout=10.0)
         self.router.set_http_client(self._http)
         self.bootstrap.set_http_client(self._http)
+
+        # Restore routes from DB on startup (#31)
+        try:
+            async with self._db.db.execute(
+                "SELECT task_id, origin_node FROM cluster_task_routes"
+            ) as cursor:
+                for row in await cursor.fetchall():
+                    self.router._routes[row[0]] = row[1]
+            async with self._db.db.execute(
+                "SELECT task_id, node_id FROM cluster_task_participants"
+            ) as cursor:
+                for row in await cursor.fetchall():
+                    self.router._participants.setdefault(row[0], set()).add(row[1])
+            _log.info(
+                "Restored %d routes, %d participant sets from DB",
+                len(self.router._routes), len(self.router._participants),
+            )
+        except Exception:
+            _log.warning("Failed to restore routes from DB", exc_info=True)
 
         if self._standalone:
             _log.info("Cluster starting in standalone mode")
@@ -226,7 +252,15 @@ class ClusterService:
 
         The payload should include 'recipients' (agent IDs to notify).
         Falls back to a no-op if no push handler or no recipients.
+        Idempotent: skip duplicate task_id+status combinations (#39).
         """
+        idem_key = f"{task_id}:{status}"
+        if idem_key in self._delivered_status:
+            _log.debug("Skipping duplicate status notification %s", idem_key)
+            return
+        self._delivered_status[idem_key] = True
+        while len(self._delivered_status) > self._max_delivered_status:
+            self._delivered_status.popitem(last=False)
         recipients = payload.get("recipients", [])
         if not self._push_handler or not recipients:
             return

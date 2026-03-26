@@ -97,9 +97,10 @@ async def live_server(funded_network):
 
     # Wire push handler → queue delivery (same as production app.py)
     async def queue_push_handler(event):
+        import uuid
         for agent_id in event.recipients:
             await offline_store.store(
-                msg_id=event.msg_id,
+                msg_id=uuid.uuid4().hex,
                 agent_id=agent_id,
                 event_type=event.type.value,
                 task_id=event.task_id,
@@ -147,6 +148,8 @@ class McpClient:
 
     def _send(self, msg: dict) -> None:
         """Send a JSON-RPC message (newline-delimited)."""
+        if self.proc.poll() is not None:
+            raise ConnectionError("Plugin process has exited")
         data = json.dumps(msg) + "\n"
         self.proc.stdin.write(data.encode())
         self.proc.stdin.flush()
@@ -299,7 +302,17 @@ async def mcp(live_server):
         )
         yield client
     finally:
+        # Disconnect cleanly to stop event polling before killing process
+        try:
+            await asyncio.wait_for(
+                client.call_tool_parsed("eacn3_disconnect"),
+                timeout=5.0,
+            )
+        except Exception:
+            pass
         client.close()
+        # Small delay to ensure port is released
+        await asyncio.sleep(0.2)
         shutil.rmtree(state_dir, ignore_errors=True)
 
 

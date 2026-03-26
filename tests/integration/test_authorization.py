@@ -12,7 +12,10 @@ async def _create_funded_task(mcp, funded_network):
         "skills": [{"name": "code", "description": "code"}],
         "agent_id": "auth-init",
     })
-    funded_network.escrow.get_or_create_account("auth-init", 10000.0)
+    acct = funded_network.escrow.get_or_create_account("auth-init", 10000.0)
+    # Ensure enough balance even if previous tests consumed some
+    if acct.available < 5000.0:
+        acct.credit(10000.0)
     funded_network.reputation._scores["auth-init"] = 0.8
 
     task = await mcp.call_tool_parsed("eacn3_create_task", {
@@ -104,6 +107,8 @@ class TestSelectResultAuthorization:
     @pytest.mark.asyncio
     async def test_select_nonexistent_result_fails(self, mcp, http, funded_network):
         """Selecting result from agent who never submitted returns error."""
+        import uuid
+        worker_id = f"auth-sel-{uuid.uuid4().hex[:6]}"
         task_id = await _create_funded_task(mcp, funded_network)
 
         await mcp.call_tool_parsed("eacn3_register_agent", {
@@ -111,17 +116,17 @@ class TestSelectResultAuthorization:
             "description": "test",
             "domains": ["coding"],
             "skills": [{"name": "code", "description": "code"}],
-            "agent_id": "auth-worker2",
+            "agent_id": worker_id,
         })
-        funded_network.reputation._scores["auth-worker2"] = 0.8
+        funded_network.reputation._scores[worker_id] = 0.8
 
         # Bid and submit
         await mcp.call_tool_parsed("eacn3_submit_bid", {
-            "task_id": task_id, "agent_id": "auth-worker2",
+            "task_id": task_id, "agent_id": worker_id,
             "confidence": 0.9, "price": 80.0,
         })
         await mcp.call_tool_parsed("eacn3_submit_result", {
-            "task_id": task_id, "agent_id": "auth-worker2",
+            "task_id": task_id, "agent_id": worker_id,
             "content": {"answer": "done"},
         })
         await mcp.call_tool_parsed("eacn3_close_task", {

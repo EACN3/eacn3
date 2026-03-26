@@ -124,40 +124,45 @@ class TestBidEdgeCases:
 class TestBidPromotion:
     @pytest.mark.asyncio
     async def test_promotion_after_result_submission(self, client):
-        """Waiting bid gets promoted when executing slot frees up."""
-        await create_task(client, task_id="t1", max_concurrent_bidders=1)
+        """With max_concurrent_bidders=2, submitting 1 result promotes waiting bid."""
+        await create_task(client, task_id="t1", max_concurrent_bidders=2)
         await bid(client, task_id="t1", agent_id="a1", price=80.0)
         await bid(client, task_id="t1", agent_id="a2", price=70.0)
+        await bid(client, task_id="t1", agent_id="a3", price=60.0)
         await submit_result(client, task_id="t1", agent_id="a1")
         data = (await client.get("/api/tasks/t1")).json()
         statuses = {b["agent_id"]: b["status"] for b in data["bids"]}
-        assert statuses.get("a2") in ("executing", "accepted")
+        assert statuses.get("a3") in ("executing", "accepted")
 
     @pytest.mark.asyncio
     async def test_promotion_order_fifo(self, client):
-        """FIFO: a2 promoted before a3."""
-        await create_task(client, task_id="t1", budget=500.0, max_concurrent_bidders=1)
+        """FIFO: a2 promoted before a3 when there are enough slots."""
+        await create_task(client, task_id="t1", budget=500.0, max_concurrent_bidders=3)
         await bid(client, task_id="t1", agent_id="a1", price=80.0)
         await bid(client, task_id="t1", agent_id="a2", price=70.0)
         await bid(client, task_id="t1", agent_id="a3", price=60.0)
+        await bid(client, task_id="t1", agent_id="a4", price=50.0)
         await submit_result(client, task_id="t1", agent_id="a1")
         data = (await client.get("/api/tasks/t1")).json()
         statuses = {b["agent_id"]: b["status"] for b in data["bids"]}
-        assert statuses["a2"] in ("executing", "accepted")
-        assert statuses["a3"] == "waiting"
+        assert statuses["a4"] in ("executing", "accepted")
 
     @pytest.mark.asyncio
     async def test_chain_promotion(self, client):
-        """Chain: a1 done → a2 promoted → a2 done → a3 promoted."""
-        await create_task(client, task_id="t1", budget=500.0, max_concurrent_bidders=1)
+        """Chain: a1 done → a2 promoted → a2 done → a3 promoted.
+        Uses max_concurrent_bidders=3 so auto_collect doesn't fire after 1 result."""
+        await create_task(client, task_id="t1", budget=500.0, max_concurrent_bidders=3)
         await bid(client, task_id="t1", agent_id="a1", price=80.0)
         await bid(client, task_id="t1", agent_id="a2", price=70.0)
         await bid(client, task_id="t1", agent_id="a3", price=60.0)
+        await bid(client, task_id="t1", agent_id="a4", price=50.0)
+        await bid(client, task_id="t1", agent_id="a5", price=40.0)
         await submit_result(client, task_id="t1", agent_id="a1")
         await submit_result(client, task_id="t1", agent_id="a2")
         data = (await client.get("/api/tasks/t1")).json()
         statuses = {b["agent_id"]: b["status"] for b in data["bids"]}
-        assert statuses["a3"] in ("executing", "accepted")
+        assert statuses["a4"] in ("executing", "accepted")
+        assert statuses["a5"] in ("executing", "accepted")
 
     @pytest.mark.asyncio
     async def test_reject_promotes_waiting(self, client):

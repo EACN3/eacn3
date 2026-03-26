@@ -6,7 +6,7 @@ import uuid
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PushEventType(str, Enum):
@@ -30,4 +30,12 @@ class PushEvent(BaseModel):
     type: PushEventType
     task_id: str
     recipients: list[str] = Field(min_length=1)
+
+    @field_validator("recipients")
+    @classmethod
+    def _recipients_no_empty(cls, v: list[str]) -> list[str]:
+        if any(not r.strip() for r in v):
+            raise ValueError("Recipient IDs must be non-empty strings")
+        return v
+
     payload: dict[str, Any] = Field(default_factory=dict)

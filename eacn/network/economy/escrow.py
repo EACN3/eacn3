@@ -54,7 +54,15 @@ class EscrowService:
             return
         acct = self._accounts.get(agent_id)
         if acct:
-            await self._db.upsert_account(agent_id, acct.available, acct.frozen)
+            try:
+                await self._db.upsert_account(agent_id, acct.available, acct.frozen)
+            except Exception:
+                _log.error(
+                    "Failed to persist account %s (available=%s, frozen=%s)",
+                    agent_id, acct.available, acct.frozen,
+                    exc_info=True,
+                )
+                raise
 
     async def _persist_escrow(self, task_id: str) -> None:
         if not self._db:
@@ -121,11 +129,13 @@ class EscrowService:
             )
 
         # Reduce parent escrow, create child escrow
+        # Child escrow retains the original payer (parent initiator) so
+        # release() refunds the correct account (#16)
         self._task_escrows[parent_task_id] = (
             parent_initiator,
             parent_amount - amount,
         )
-        self._task_escrows[subtask_id] = (subtask_initiator_id, amount)
+        self._task_escrows[subtask_id] = (parent_initiator, amount)
         await self._persist_escrow(parent_task_id)
         await self._persist_escrow(subtask_id)
 
@@ -159,8 +169,9 @@ class EscrowService:
             return 0.0
 
         initiator_id, amount = entry
-        account = self._accounts.get(initiator_id)
-        if account and amount > 0:
+        if amount > 0:
+            # Use get_or_create to handle missing account edge case
+            account = self.get_or_create_account(initiator_id)
             account.unfreeze(amount)
             await self._persist_account(initiator_id)
         await self._persist_escrow(task_id)  # deletes from DB
@@ -180,10 +191,10 @@ class EscrowService:
                 f"Settlement {amount} exceeds escrow {escrowed}"
             )
 
-        account = self._accounts.get(initiator_id)
-        if account:
-            account.deduct_frozen(amount)
-            await self._persist_account(initiator_id)
+        # Use get_or_create to handle missing account edge case
+        account = self.get_or_create_account(initiator_id)
+        account.deduct_frozen(amount)
+        await self._persist_account(initiator_id)
 
         self._task_escrows[task_id] = (initiator_id, escrowed - amount)
         await self._persist_escrow(task_id)

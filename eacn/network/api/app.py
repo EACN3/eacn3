@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from eacn.network.app import Network
@@ -28,7 +28,13 @@ async def lifespan(app: FastAPI):
     await db.connect()
 
     network = Network(db=db)
-    await network.start()
+    try:
+        await network.start()
+    except Exception:
+        # Clean up resources on startup failure (#41)
+        await network.cluster.stop()
+        await db.close()
+        raise
 
     # ── Message queue (per-agent) ─────────────────────────────────────
     push_cfg = network.config.push
@@ -44,10 +50,12 @@ async def lifespan(app: FastAPI):
     # Agents drain it via HTTP GET /api/events/{agent_id}.
     # No WebSocket — just a queue.
     async def queue_push_handler(event):
-        """Enqueue for all recipients."""
+        """Enqueue for all recipients with unique msg_id per recipient (#69)."""
+        import uuid
         for agent_id in event.recipients:
+            per_agent_msg_id = uuid.uuid4().hex
             await offline_store.store(
-                msg_id=event.msg_id,
+                msg_id=per_agent_msg_id,
                 agent_id=agent_id,
                 event_type=event.type.value,
                 task_id=event.task_id,
@@ -70,9 +78,11 @@ async def lifespan(app: FastAPI):
 
     # Cluster handler: remote node forwarded an event — enqueue locally.
     async def cluster_push_handler(event):
+        import uuid
         for agent_id in event.recipients:
+            per_agent_msg_id = uuid.uuid4().hex
             await offline_store.store(
-                msg_id=event.msg_id,
+                msg_id=per_agent_msg_id,
                 agent_id=agent_id,
                 event_type=event.type.value,
                 task_id=event.task_id,
@@ -84,6 +94,7 @@ async def lifespan(app: FastAPI):
     app.state.db = db
     app.state.network = network
     app.state.offline_store = offline_store
+    app.state.startup_complete = True  # Gate for #42
     set_network(network)
     set_offline_store(offline_store)
     set_discovery_network(network)
@@ -104,8 +115,21 @@ def create_app(db_path: str | None = None) -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    app.state.startup_complete = False
+
+    @app.middleware("http")
+    async def startup_gate(request: Request, call_next):
+        """Return 503 until startup is complete (#42)."""
+        if not getattr(request.app.state, "startup_complete", False):
+            if request.url.path != "/health":
+                return JSONResponse({"detail": "Server starting up"}, status_code=503)
+        return await call_next(request)
+
     # Read from env var if not explicitly provided; fall back to file-based default
     resolved_db_path = db_path or os.environ.get("EACN3_DB_PATH", "eacn3.db")
+    # Validate path has no traversal (#48)
+    if resolved_db_path != ":memory:" and ".." in os.path.normpath(resolved_db_path):
+        raise ValueError(f"DB path must not contain path traversal: {resolved_db_path}")
     app.state.db_path = resolved_db_path
 
     @app.get("/health")

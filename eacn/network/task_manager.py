@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -23,6 +24,14 @@ class TaskManager:
 
     def __init__(self) -> None:
         self._tasks: dict[str, Task] = {}
+        # Per-task locks for concurrent mutation safety (#21, #29)
+        self._task_locks: dict[str, asyncio.Lock] = {}
+
+    def get_lock(self, task_id: str) -> asyncio.Lock:
+        """Get or create a per-task asyncio.Lock."""
+        if task_id not in self._task_locks:
+            self._task_locks[task_id] = asyncio.Lock()
+        return self._task_locks[task_id]
 
     # ── CRUD ─────────────────────────────────────────────────────────
 
@@ -140,6 +149,15 @@ class TaskManager:
         task = self.get(task_id)
         if task.status not in (TaskStatus.BIDDING, TaskStatus.AWAITING_RETRIEVAL):
             raise TaskError(f"Cannot submit result in status {task.status}")
+        # Verify submitter has an active bid (#26)
+        active_bidders = {
+            b.agent_id for b in task.bids
+            if b.status in (BidStatus.EXECUTING, BidStatus.ACCEPTED, BidStatus.WAITING)
+        }
+        if result.agent_id not in active_bidders:
+            raise TaskError(
+                f"Agent {result.agent_id} is not an active bidder on task {task_id}"
+            )
         task.results.append(result)
 
     def select_result(self, task_id: str, agent_id: str) -> Result:
@@ -159,6 +177,9 @@ class TaskManager:
                 bid.status = BidStatus.ACCEPTED
             elif bid.status in (BidStatus.EXECUTING, BidStatus.WAITING):
                 bid.status = BidStatus.REJECTED
+        # Transition task to COMPLETED (#28)
+        if task.status in (TaskStatus.BIDDING, TaskStatus.AWAITING_RETRIEVAL):
+            task.status = TaskStatus.COMPLETED
         return selected
 
     # ── Subtask creation ─────────────────────────────────────────────
@@ -177,12 +198,13 @@ class TaskManager:
         parent = self.get(parent_task_id)
         new_depth = parent.depth + 1
 
-        if new_depth > parent.max_depth:
+        if new_depth >= parent.max_depth:
             raise TaskError(
                 f"Max depth {parent.max_depth} exceeded (current: {new_depth})"
             )
 
-        if parent.remaining_budget is not None and budget > parent.remaining_budget:
+        # Use small epsilon for float comparison to avoid precision issues
+        if parent.remaining_budget is not None and budget > parent.remaining_budget + 1e-9:
             raise BudgetError(
                 f"Subtask budget {budget} exceeds parent remaining {parent.remaining_budget}"
             )
@@ -252,28 +274,42 @@ class TaskManager:
         task.deadline = deadline
         return task
 
-    def update_discussions(self, task_id: str, message: str) -> Task:
+    def update_discussions(self, task_id: str, message: str, author: str = "") -> Task:
         """Append a discussion message to task content."""
         task = self.get(task_id)
         discussions = task.content.setdefault("discussions", [])
         discussions.append({
             "message": message,
+            "author": author,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         return task
 
     # ── Deadline scanning ────────────────────────────────────────────
 
+    @staticmethod
+    def _parse_datetime(s: str) -> datetime:
+        """Parse ISO 8601 datetime, normalizing Z suffix (#19)."""
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
     def scan_expired(self, now: str | None = None) -> list[Task]:
         """Find tasks whose deadline has passed. Returns list of expired tasks."""
-        if now is None:
-            now = datetime.now(timezone.utc).isoformat()
+        now_dt = (
+            self._parse_datetime(now)
+            if now is not None
+            else datetime.now(timezone.utc)
+        )
         expired = []
         for task in self._tasks.values():
             if task.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
                 continue
-            if task.deadline and task.deadline <= now:
-                expired.append(task)
+            if task.deadline:
+                try:
+                    deadline_dt = self._parse_datetime(task.deadline)
+                    if deadline_dt <= now_dt:
+                        expired.append(task)
+                except ValueError:
+                    continue
         return expired
 
     def handle_expired(self, task_id: str) -> TaskStatus:
@@ -304,12 +340,17 @@ class TaskManager:
 
     # ── Tree operations ──────────────────────────────────────────────
 
-    def get_subtree(self, task_id: str) -> list[Task]:
+    def get_subtree(self, task_id: str, _visited: set[str] | None = None) -> list[Task]:
         """Return all tasks in the subtree rooted at task_id."""
+        if _visited is None:
+            _visited = set()
+        if task_id in _visited:
+            return []  # Cycle detected (#27)
+        _visited.add(task_id)
         task = self.get(task_id)
         subtree = [task]
         for child_id in task.child_ids:
-            subtree.extend(self.get_subtree(child_id))
+            subtree.extend(self.get_subtree(child_id, _visited))
         return subtree
 
     def get_root(self, task_id: str) -> Task:
@@ -318,3 +359,26 @@ class TaskManager:
         while task.parent_id:
             task = self.get(task.parent_id)
         return task
+
+    def purge_terminated(self, max_age_seconds: float = 3600) -> int:
+        """Remove completed/no_one_able tasks older than max_age from memory (#40).
+
+        Returns the number of purged tasks.
+        """
+        now = datetime.now(timezone.utc)
+        to_remove: list[str] = []
+        for task_id, task in self._tasks.items():
+            if task.status not in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+                continue
+            # Use deadline as proxy for age if available
+            if task.deadline:
+                try:
+                    dt = self._parse_datetime(task.deadline)
+                    if (now - dt).total_seconds() > max_age_seconds:
+                        to_remove.append(task_id)
+                except ValueError:
+                    pass
+        for tid in to_remove:
+            self._tasks.pop(tid, None)
+            self._task_locks.pop(tid, None)
+        return len(to_remove)

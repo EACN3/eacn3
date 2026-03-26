@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+
+from pydantic import ValidationError
 
 from eacn.core.exceptions import TaskError, BudgetError
 from eacn.core.models import TaskStatus
@@ -20,6 +22,8 @@ from eacn.network.api.schemas import (
     InviteAgentRequest, InviteAgentResponse,
     OkResponse,
 )
+
+from eacn.network.auth import require_admin as _require_admin
 
 router = APIRouter(prefix="/api", tags=["network"])
 
@@ -65,7 +69,7 @@ async def create_task(req: CreateTaskRequest):
             max_concurrent_bidders=req.max_concurrent_bidders,
             max_depth=req.max_depth,
             human_contact=human_contact,
-            level=req.level,
+            level=req.level.value if req.level else None,
             invited_agent_ids=req.invited_agent_ids,
         )
         return _task_to_response(task)
@@ -73,6 +77,8 @@ async def create_task(req: CreateTaskRequest):
         raise HTTPException(402, str(e))
     except TaskError as e:
         raise HTTPException(409, str(e))
+    except (ValueError, ValidationError) as e:
+        raise HTTPException(422, str(e))
 
 
 # NOTE: /tasks/open MUST be before /tasks/{task_id} to avoid path parameter capture
@@ -356,6 +362,7 @@ async def create_subtask(task_id: str, req: CreateSubtaskRequest):
                     "domains": req.domains,
                     "budget": req.budget,
                     "deadline": req.deadline,
+                    "level": req.level.value if req.level else None,
                 },
             )
             return TaskResponse(
@@ -375,11 +382,13 @@ async def create_subtask(task_id: str, req: CreateSubtaskRequest):
             domains=req.domains,
             budget=req.budget,
             deadline=req.deadline,
-            level=req.level,
+            level=req.level.value if req.level else None,
         )
         return _task_to_response(sub)
     except (TaskError, BudgetError) as e:
         raise HTTPException(400, str(e))
+    except (ValueError, ValidationError) as e:
+        raise HTTPException(422, str(e))
 
 
 
@@ -414,12 +423,24 @@ async def get_balance(agent_id: str = Query(...)):
     )
 
 
+@router.get("/economy/escrows")
+async def list_escrows(agent_id: str = Query(...)):
+    """Query per-task escrow breakdown for an agent (#9)."""
+    net = _net()
+    escrows = []
+    for task_id, (initiator_id, amount) in net.escrow._task_escrows.items():
+        if initiator_id == agent_id:
+            escrows.append({"task_id": task_id, "amount": amount})
+    return {"agent_id": agent_id, "escrows": escrows, "total_frozen": sum(e["amount"] for e in escrows)}
+
+
 @router.post("/economy/deposit", response_model=DepositResponse)
 async def deposit(req: DepositRequest):
     """Deposit funds into an agent's account."""
     net = _net()
     account = net.escrow.get_or_create_account(req.agent_id, 0.0)
     account.credit(req.amount)
+    await net.escrow._persist_account(req.agent_id)
     return DepositResponse(
         agent_id=req.agent_id,
         deposited=req.amount,
@@ -484,7 +505,7 @@ async def relay_message(req: RelayMessageRequest):
             "error": f"Agent {target_agent_id} not connected to any node"}
 
 
-@router.get("/cluster/status")
+@router.get("/cluster/status", dependencies=[Depends(_require_admin)])
 async def cluster_status():
     """View cluster status: local node info, all known members, cluster mode."""
     net = _net()
@@ -519,13 +540,13 @@ async def cluster_status():
     }
 
 
-@router.get("/admin/config")
+@router.get("/admin/config", dependencies=[Depends(_require_admin)])
 async def get_config():
     """Read all current hyperparameters."""
     return _net().config.model_dump()
 
 
-@router.put("/admin/config")
+@router.put("/admin/config", dependencies=[Depends(_require_admin)])
 async def update_config(patch: dict):
     """Partially update hyperparameters and persist to config.toml.
 
@@ -625,22 +646,24 @@ async def poll_events(
     return {"events": [], "count": 0}
 
 
-@router.post("/admin/scan-deadlines")
+@router.post("/admin/scan-deadlines", dependencies=[Depends(_require_admin)])
 async def scan_deadlines(now: str | None = None):
     expired_ids = await _net().scan_deadlines(now)
     return {"expired": expired_ids}
 
 
 
-@router.post("/admin/fund")
+@router.post("/admin/fund", dependencies=[Depends(_require_admin)])
 async def fund_account(agent_id: str = Body(...), amount: float = Body(...)):
     """Admin: credit an agent's account for testing."""
-    account = _net().escrow.get_or_create_account(agent_id, 0.0)
+    net = _net()
+    account = net.escrow.get_or_create_account(agent_id, 0.0)
     account.credit(amount)
+    await net.escrow._persist_account(agent_id)
     return {"agent_id": agent_id, "available": account.available, "frozen": account.frozen}
 
 
-@router.get("/admin/offline-stats")
+@router.get("/admin/offline-stats", dependencies=[Depends(_require_admin)])
 async def offline_stats():
     """Query message queue stats per agent."""
     store = _store
@@ -650,7 +673,7 @@ async def offline_stats():
     return {"agents": counts, "total": sum(counts.values())}
 
 
-@router.get("/admin/logs")
+@router.get("/admin/logs", dependencies=[Depends(_require_admin)])
 async def query_logs(
     task_id: str | None = None,
     agent_id: str | None = None,

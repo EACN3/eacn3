@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from eacn.core.models.task import TaskLevel
 
 
 # ── Task ─────────────────────────────────────────────────────────────
@@ -23,10 +25,10 @@ class CreateTaskRequest(BaseModel):
     domains: list[str] = Field(min_length=1)
     budget: float = Field(ge=0.0)
     deadline: str | None = None
-    max_concurrent_bidders: int | None = None
-    max_depth: int | None = None
+    max_concurrent_bidders: int | None = Field(default=None, ge=1)
+    max_depth: int | None = Field(default=None, ge=0)
     human_contact: HumanContactSchema | None = None
-    level: str | None = None
+    level: TaskLevel | None = None
     invited_agent_ids: list[str] = Field(default_factory=list)
 
 
@@ -95,7 +97,7 @@ class CreateSubtaskRequest(BaseModel):
     domains: list[str] = Field(min_length=1)
     budget: float = Field(ge=0.0)
     deadline: str | None = None
-    level: str | None = None
+    level: TaskLevel | None = None
 
 
 # ── Budget ───────────────────────────────────────────────────────────
@@ -157,10 +159,19 @@ class RegisterServerRequest(BaseModel):
     endpoint: str
     owner: str
 
+    @field_validator("endpoint")
+    @classmethod
+    def _validate_endpoint_url(cls, v: str) -> str:
+        # Block dangerous protocols; allow http/https/plugin
+        if v.startswith(("javascript:", "file:", "data:")):
+            raise ValueError("Endpoint uses a forbidden protocol")
+        return v
+
 
 class RegisterServerResponse(BaseModel):
     server_id: str
     status: str = "online"
+    token: str = ""
 
 
 class ServerCardResponse(BaseModel):
@@ -199,6 +210,7 @@ class RegisterAgentRequest(BaseModel):
 class RegisterAgentResponse(BaseModel):
     agent_id: str
     seeds: list[str] = Field(default_factory=list)
+    token: str = ""
 
 
 class AgentCardResponse(BaseModel):

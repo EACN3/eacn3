@@ -39,6 +39,7 @@ class PushService:
         self.MAX_RETRIES: int = cfg.max_retries
         self._handler = handler
         self._history: list[PushEvent] = []
+        self._max_history: int = 1000  # Prevent unbounded memory growth
 
     def set_handler(self, handler: PushHandler) -> None:
         self._handler = handler
@@ -109,7 +110,7 @@ class PushService:
         """Notify all bidders of discussion update."""
         bidder_ids = [
             b.agent_id for b in task.bids
-            if b.status.value in ("executing", "waiting", "accepted")
+            if b.status.value in ("executing", "waiting", "accepted", "pending")
         ]
         if not bidder_ids:
             bidder_ids = [task.initiator_id]
@@ -190,14 +191,20 @@ class PushService:
     async def _deliver(self, event: PushEvent) -> None:
         """Best-effort delivery with limited retries."""
         self._history.append(event)
+        # Trim history to prevent unbounded memory growth
+        if len(self._history) > self._max_history:
+            self._history = self._history[-self._max_history:]
 
         if not self._handler:
             return
 
+        import asyncio
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
                 await self._handler(event)
                 return
+            except asyncio.CancelledError:
+                raise  # Don't swallow cancellation (#83)
             except Exception:
                 _logger.warning(
                     "Push delivery attempt %d/%d failed for %s",

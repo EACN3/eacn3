@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class TaskLevel(str, Enum):
@@ -83,15 +83,23 @@ class Task(BaseModel):
     initiator_id: str
     server_id: str = ""
     domains: list[str] = Field(min_length=1)
+
+    @field_validator("domains")
+    @classmethod
+    def _domains_no_empty(cls, v: list[str]) -> list[str]:
+        if any(not d.strip() for d in v):
+            raise ValueError("Domain elements must be non-empty strings")
+        return v
+
     status: TaskStatus = TaskStatus.UNCLAIMED
     parent_id: str | None = None
     child_ids: list[str] = Field(default_factory=list)
-    depth: int = 0
-    max_depth: int = 10
+    depth: int = Field(default=0, ge=0)
+    max_depth: int = Field(default=10, ge=0)
     budget: float = Field(ge=0.0)
     remaining_budget: float | None = None  # tracked by economy; None = full budget
     deadline: str | None = None  # ISO 8601
-    max_concurrent_bidders: int = 5
+    max_concurrent_bidders: int = Field(default=5, ge=1)
     bids: list[Bid] = Field(default_factory=list)
     results: list[Result] = Field(default_factory=list)
     budget_locked: bool = False  # True when concurrent slots full

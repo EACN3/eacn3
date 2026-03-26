@@ -18,7 +18,7 @@ import { getState, pushEvents } from "./state.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export type EventCallback = (agentId: string, event: PushEvent) => void;
+export type EventCallback = (agentId: string, event: PushEvent) => void | Promise<void>;
 
 export type TransportMode = "polling" | "disconnected";
 
@@ -56,6 +56,8 @@ const DEDUP_WINDOW = 500;
 
 const pollers = new Map<string, AgentPoller>();
 let eventCallback: EventCallback | null = null;
+// Per-agent callbacks for multi-agent isolation (#109)
+const agentCallbacks = new Map<string, EventCallback>();
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -63,6 +65,18 @@ let eventCallback: EventCallback | null = null;
 
 export function setEventCallback(cb: EventCallback): void {
   eventCallback = cb;
+}
+
+/**
+ * Register a per-agent event callback (#109).
+ * If set, this callback is used instead of the global one for this agent.
+ */
+export function setAgentEventCallback(agentId: string, cb: EventCallback): void {
+  agentCallbacks.set(agentId, cb);
+}
+
+export function removeAgentEventCallback(agentId: string): void {
+  agentCallbacks.delete(agentId);
 }
 
 export function connect(agentId: string): void {
@@ -201,7 +215,9 @@ function deliverEvent(p: AgentPoller, raw: any): void {
 
   pushEvents([pushEvent]);
 
-  if (eventCallback) {
-    try { eventCallback(p.agentId, pushEvent); } catch { }
+  // Use per-agent callback if registered, otherwise global (#109)
+  const cb = agentCallbacks.get(p.agentId) ?? eventCallback;
+  if (cb) {
+    try { Promise.resolve(cb(p.agentId, pushEvent)).catch(() => {}); } catch { }
   }
 }

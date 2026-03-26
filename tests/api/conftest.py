@@ -78,6 +78,7 @@ async def funded_network(network):
 async def api(network):
     """Unfunded httpx client → Network API."""
     app = _make_network_app(network)
+    set_offline_store(None)  # Reset to avoid stale DB references
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -87,6 +88,7 @@ async def api(network):
 async def client(funded_network):
     """Funded httpx client → Network API (most tests use this)."""
     app = _make_network_app(funded_network)
+    set_offline_store(None)  # Reset to avoid stale DB references
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c

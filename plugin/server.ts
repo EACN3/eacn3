@@ -653,6 +653,7 @@ server.tool(
     // Track locally
     state.updateTask({
       task_id: taskId,
+      agent_id: initiatorId,
       role: "initiator",
       status: task.status,
       domains: params.domains ?? [],
@@ -859,6 +860,7 @@ server.tool(
     if (res.status && res.status !== "rejected") {
       state.updateTask({
         task_id: params.task_id,
+        agent_id: agentId,
         role: "executor",
         status: "bidding",
         domains: [],

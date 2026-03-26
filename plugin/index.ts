@@ -149,8 +149,9 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
   if (!isInvited && !isTierEligible(agentTier, taskLevel)) return;
 
   if (agent.capabilities?.max_concurrent_tasks) {
+    // Filter by this agent's tasks only (#110)
     const activeTasks = Object.values(state.getState().local_tasks).filter(
-      (t) => t.role === "executor" && t.status !== "completed" && t.status !== "no_one",
+      (t) => t.agent_id === agentId && t.role === "executor" && t.status !== "completed" && t.status !== "no_one",
     );
     if (activeTasks.length >= agent.capabilities.max_concurrent_tasks) return;
   }
@@ -764,7 +765,7 @@ export default {
         level: params.level ?? "general",
         invited_agent_ids: params.invited_agent_ids,
       });
-      state.updateTask({ task_id: taskId, role: "initiator", status: task.status, domains: params.domains ?? [], description_summary: params.description.slice(0, 100), created_at: new Date().toISOString() });
+      state.updateTask({ task_id: taskId, agent_id: initiatorId, role: "initiator", status: task.status, domains: params.domains ?? [], description_summary: params.description.slice(0, 100), created_at: new Date().toISOString() });
       return ok({ task_id: taskId, status: task.status, budget: params.budget, local_matches: matchedLocal.map((a: AgentCard) => a.agent_id) });
     },
   });
@@ -873,7 +874,7 @@ export default {
       // Tier/level filtering and invite bypass are handled server-side in matcher.check_bid().
       const res = await net.submitBid(params.task_id, agentId, params.confidence, params.price);
       if (res.status && res.status !== "rejected") {
-        state.updateTask({ task_id: params.task_id, role: "executor", status: "bidding", domains: [], description_summary: "", created_at: new Date().toISOString() });
+        state.updateTask({ task_id: params.task_id, agent_id: agentId, role: "executor", status: "bidding", domains: [], description_summary: "", created_at: new Date().toISOString() });
       }
       return ok(res);
     }),

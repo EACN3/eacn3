@@ -435,6 +435,7 @@ async function executeDecision(
         await net.submitBid(taskId, agentId, confidence, price);
         state.updateTask({
           task_id: taskId,
+          agent_id: agentId,
           role: "executor",
           status: "bidding",
           domains: (payload.domains as string[]) ?? [],

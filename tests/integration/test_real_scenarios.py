@@ -1361,9 +1361,9 @@ class TestMaxDepthGuard:
         root_id = await _task(mcp, "root-17", "Deep chain task",
                               budget=10000, domains=["chain"])
 
-        # Override max_depth to 3 for this test
+        # Override max_depth to 4 for this test (depth 0,1,2,3 allowed; 4 blocked)
         root_task = fn.task_manager.get(root_id)
-        root_task.max_depth = 3
+        root_task.max_depth = 4
 
         # Level 0 → bid
         await _bid(mcp, root_id, "chain-0", conf=0.9, price=100)
@@ -1457,7 +1457,7 @@ class TestFiftyLevelDeepChain:
         root_id = await _task(mcp, "pub-50", "50-level deep chain test",
                               budget=100_000, domains=["deep"])
         root_task = fn.task_manager.get(root_id)
-        root_task.max_depth = 60  # allow 50 levels
+        root_task.max_depth = 51  # allow 50 levels (depth 1..50, >= blocks at 51)
 
         # Build chain: each level creates a subtask for the next
         parent_id = root_id
