@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from eacn.core.models import Task, TaskStatus, TaskType, TaskLevel, Bid, BidStatus, Result
 from eacn.core.exceptions import TaskError, BudgetError
+
+if TYPE_CHECKING:
+    from eacn.network.db.database import Database
+
+_log = logging.getLogger(__name__)
 
 
 class TaskManager:
@@ -20,12 +26,47 @@ class TaskManager:
     - Concurrent bidder slots + wait queue + auto-promotion
     - Subtask creation with depth guard
     - Deadline-based scanning
+    - Persistence to SQLite (if db provided)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, db: "Database | None" = None) -> None:
         self._tasks: dict[str, Task] = {}
         # Per-task locks for concurrent mutation safety (#21, #29)
         self._task_locks: dict[str, asyncio.Lock] = {}
+        self._db = db
+
+    def _persist(self, task: Task) -> None:
+        """Schedule async DB write for a task (fire-and-forget)."""
+        if not self._db:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._do_persist(task))
+
+    async def _do_persist(self, task: Task) -> None:
+        try:
+            data = task.model_dump(mode="json")
+            await self._db.save_task(task.id, data)
+        except Exception as e:
+            _log.warning("Failed to persist task %s: %s", task.id, e)
+
+    async def load_from_db(self) -> int:
+        """Load all non-terminal tasks from DB into memory. Returns count."""
+        if not self._db:
+            return 0
+        rows = await self._db.list_tasks(limit=10000)
+        loaded = 0
+        for data in rows:
+            try:
+                task = Task.model_validate(data)
+                self._tasks[task.id] = task
+                loaded += 1
+            except Exception as e:
+                _log.warning("Failed to restore task %s: %s", data.get("id"), e)
+        _log.info("Restored %d tasks from database", loaded)
+        return loaded
 
     def get_lock(self, task_id: str) -> asyncio.Lock:
         """Get or create a per-task asyncio.Lock."""
@@ -43,6 +84,8 @@ class TaskManager:
         self._tasks[task.id] = task
         if task.parent_id and task.parent_id in self._tasks:
             self._tasks[task.parent_id].child_ids.append(task.id)
+            self._persist(self._tasks[task.parent_id])
+        self._persist(task)
         return task
 
     def get(self, task_id: str) -> Task:
@@ -65,6 +108,7 @@ class TaskManager:
                 f"Invalid transition: {task.status} → {new_status}"
             )
         task.status = new_status
+        self._persist(task)
         return task
 
     @staticmethod
@@ -110,6 +154,7 @@ class TaskManager:
         if task.concurrent_slots_full:
             task.budget_locked = True
 
+        self._persist(task)
         return bid.status
 
     def promote_from_queue(self, task_id: str) -> str | None:
@@ -121,6 +166,7 @@ class TaskManager:
                 # Unlock budget if we have room again
                 if not task.concurrent_slots_full:
                     task.budget_locked = False
+                self._persist(task)
                 return bid.agent_id
         return None
 
@@ -130,6 +176,7 @@ class TaskManager:
         for bid in task.bids:
             if bid.agent_id == agent_id:
                 bid.status = BidStatus.REJECTED
+                self._persist(task)
                 return
         raise TaskError(f"Bid from {agent_id} not found on task {task_id}")
 
@@ -139,6 +186,7 @@ class TaskManager:
         for bid in task.bids:
             if bid.agent_id == agent_id:
                 bid.status = BidStatus.ACCEPTED
+                self._persist(task)
                 return
         raise TaskError(f"Bid from {agent_id} not found on task {task_id}")
 
@@ -159,6 +207,7 @@ class TaskManager:
                 f"Agent {result.agent_id} is not an active bidder on task {task_id}"
             )
         task.results.append(result)
+        self._persist(task)
 
     def select_result(self, task_id: str, agent_id: str) -> Result:
         """Select a result. Marks it as selected and transitions task."""
@@ -180,6 +229,7 @@ class TaskManager:
         # Transition task to COMPLETED (#28)
         if task.status in (TaskStatus.BIDDING, TaskStatus.AWAITING_RETRIEVAL):
             task.status = TaskStatus.COMPLETED
+        self._persist(task)
         return selected
 
     # ── Subtask creation ─────────────────────────────────────────────
@@ -228,6 +278,7 @@ class TaskManager:
         # Deduct from parent remaining budget
         if parent.remaining_budget is not None:
             parent.remaining_budget -= budget
+            self._persist(parent)
 
         return self.create(subtask)
 
@@ -247,6 +298,7 @@ class TaskManager:
             task.status = TaskStatus.AWAITING_RETRIEVAL
         else:
             task.status = TaskStatus.NO_ONE_ABLE
+        self._persist(task)
         return task
 
     def collect_results(self, task_id: str) -> list[Result]:
@@ -262,6 +314,7 @@ class TaskManager:
             )
         if task.status == TaskStatus.AWAITING_RETRIEVAL:
             task.status = TaskStatus.COMPLETED
+            self._persist(task)
         return list(task.results)
 
     def update_deadline(self, task_id: str, deadline: str) -> Task:
@@ -272,6 +325,7 @@ class TaskManager:
         ):
             raise TaskError(f"Cannot update deadline in status {task.status}")
         task.deadline = deadline
+        self._persist(task)
         return task
 
     def update_discussions(self, task_id: str, message: str, author: str = "") -> Task:
@@ -283,6 +337,7 @@ class TaskManager:
             "author": author,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
+        self._persist(task)
         return task
 
     # ── Deadline scanning ────────────────────────────────────────────
@@ -319,6 +374,7 @@ class TaskManager:
             task.status = TaskStatus.AWAITING_RETRIEVAL
         else:
             task.status = TaskStatus.NO_ONE_ABLE
+        self._persist(task)
         return task.status
 
     # ── Auto-collection check ────────────────────────────────────────
@@ -347,6 +403,7 @@ class TaskManager:
         # All executing agents have submitted → auto-collect
         if executing_agents <= submitted_agents:
             task.status = TaskStatus.AWAITING_RETRIEVAL
+            self._persist(task)
             return True
         return False
 

@@ -42,7 +42,7 @@ class Network:
         self.dht = self.discovery.dht
         self.gossip = self.discovery.gossip
         self.bootstrap = self.discovery.bootstrap
-        self.task_manager = TaskManager()
+        self.task_manager = TaskManager(db=self.db)
         self.push = PushService(config=self.config.push)
         self.adjudication = AdjudicationService()
         self.matcher = GlobalMatcher(config=self.config.matcher)
@@ -63,6 +63,7 @@ class Network:
         _log.info("EACN Network starting...")
         await self.escrow.load_from_db()
         await self.reputation.load_from_db()
+        await self.task_manager.load_from_db()
         await self.cluster.start()
 
     async def create_task(
