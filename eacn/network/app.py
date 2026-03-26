@@ -163,8 +163,13 @@ class Network:
                     raise
                 # Parent not found is OK (cross-node scenario)
 
-        if any(b.agent_id == agent_id for b in task.bids):
-            raise TaskError(f"Agent {agent_id} already bid on task {task_id}")
+        existing = [b for b in task.bids if b.agent_id == agent_id]
+        if existing:
+            if existing[0].status == BidStatus.REJECTED:
+                # Allow re-bid after rejection — remove the old rejected bid
+                task.bids = [b for b in task.bids if b.agent_id != agent_id]
+            else:
+                raise TaskError(f"Agent {agent_id} already bid on task {task_id}")
 
         scores = self.reputation.get_scores([agent_id])
         negotiation_gain = self.reputation.negotiation_gain(agent_id)
