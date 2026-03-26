@@ -41,25 +41,30 @@ class SettlementService:
     ) -> "SettlementResult":
         """Full settlement flow for a task.
 
-        1. Calculate platform fee
-        2. Deduct (bid_price + fee) from escrow
-        3. Credit executor with bid_price
+        1. Deduct bid_price from escrow (always ≤ budget, so always fits)
+        2. Platform fee is taken FROM bid_price (not on top)
+        3. Credit executor with bid_price - fee
         4. Refund remainder to initiator
         """
         # Idempotency guard: prevent double settlement
         if task_id in self._settled:  # O(1) lookup in OrderedDict
             raise BudgetError(f"Task {task_id} already settled")
 
-        platform_fee = bid_price * self.platform_fee_rate
-        total_deduction = bid_price + platform_fee
+        # When the executor created subtasks, their budgets were carved
+        # out of this task's escrow.  Cap settlement at what remains.
+        escrowed = self.escrow.get_escrowed_amount(task_id)
+        effective_price = min(bid_price, escrowed)
 
-        # Deduct from escrow
-        initiator_id = await self.escrow.deduct_for_settlement(task_id, total_deduction)
+        platform_fee = effective_price * self.platform_fee_rate
+        executor_payout = effective_price - platform_fee
+
+        # Deduct from escrow (fee is taken from within the price)
+        initiator_id = await self.escrow.deduct_for_settlement(task_id, effective_price)
 
         # Credit executor — wrap in try to rollback on failure
         try:
             executor_account = self.escrow.get_or_create_account(executor_id)
-            executor_account.credit(bid_price)
+            executor_account.credit(executor_payout)
             await self.escrow._persist_account(executor_id)
 
             # Refund remainder
@@ -67,7 +72,7 @@ class SettlementService:
         except Exception:
             # Rollback executor credit if release or persist failed
             if executor_account:
-                executor_account.available -= bid_price
+                executor_account.available -= executor_payout
             raise
 
         # Track platform fees and mark as settled AFTER all mutations succeed

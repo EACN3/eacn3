@@ -139,6 +139,42 @@ class EscrowService:
         await self._persist_escrow(parent_task_id)
         await self._persist_escrow(subtask_id)
 
+    async def reclaim_to_parent(
+        self, child_task_id: str, parent_task_id: str
+    ) -> float:
+        """Return remaining child escrow back to the parent escrow.
+
+        Used when a parent task terminates and needs to reclaim budget
+        that was allocated to child tasks via allocate_subtask_budget.
+        Returns the amount reclaimed.
+        """
+        child_entry = self._task_escrows.pop(child_task_id, None)
+        if not child_entry:
+            return 0.0
+
+        _, child_amount = child_entry
+        if child_amount <= 0:
+            await self._persist_escrow(child_task_id)  # delete from DB
+            return 0.0
+
+        parent_entry = self._task_escrows.get(parent_task_id)
+        if parent_entry:
+            parent_initiator, parent_amount = parent_entry
+            self._task_escrows[parent_task_id] = (
+                parent_initiator,
+                parent_amount + child_amount,
+            )
+        else:
+            # Parent escrow missing — fall back to release to initiator account
+            initiator_id = child_entry[0]
+            account = self.get_or_create_account(initiator_id)
+            account.unfreeze(child_amount)
+            await self._persist_account(initiator_id)
+
+        await self._persist_escrow(child_task_id)   # delete child
+        await self._persist_escrow(parent_task_id)   # update parent
+        return child_amount
+
     # ── Budget confirmation (initiator approves over-budget bid) ─────
 
     async def confirm_budget_increase(

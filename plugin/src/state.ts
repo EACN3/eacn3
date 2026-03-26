@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, renam
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { type EacnState, type AgentCard, type LocalTaskInfo, type PushEvent, type DirectMessage, type SessionKey, MAX_MESSAGES_PER_SESSION, createDefaultState } from "./models.js";
+import { type EacnState, type AgentCard, type LocalTaskInfo, type PushEvent, type DirectMessage, type SessionKey, type TeamInfo, MAX_MESSAGES_PER_SESSION, createDefaultState } from "./models.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -234,4 +234,76 @@ export function listSessions(localAgentId: string): string[] {
   return Object.keys(s.active_sessions)
     .filter((k) => k.startsWith(prefix))
     .map((k) => k.slice(prefix.length));
+}
+
+// ---------------------------------------------------------------------------
+// Team coordination
+// ---------------------------------------------------------------------------
+
+function ensureTeams(): Record<string, TeamInfo> {
+  const s = getState();
+  if (!s.teams) s.teams = {};
+  return s.teams;
+}
+
+export function addTeam(team: TeamInfo): void {
+  ensureTeams()[`${team.team_id}:${team.my_agent_id}`] = team;
+  save();
+}
+
+export function getTeam(teamId: string): TeamInfo | undefined {
+  // Try exact key first, then fallback to team_id prefix match
+  const teams = ensureTeams();
+  if (teams[teamId]) return teams[teamId];
+  return Object.values(teams).find((t) => t.team_id === teamId);
+}
+
+export function getTeamsForAgent(agentId: string): TeamInfo[] {
+  return Object.values(ensureTeams()).filter(
+    (t) => t.my_agent_id === agentId,
+  );
+}
+
+export function updateTeamPeerBranch(
+  teamId: string,
+  peerId: string,
+  branch: string,
+): void {
+  // Find all team entries with this team_id (one per local agent)
+  const teams = ensureTeams();
+  const entries = Object.values(teams).filter((t) => t.team_id === teamId);
+  for (const team of entries) {
+    team.peer_branches[peerId] = branch;
+    // Check if all peers have completed handshake
+    const peers = team.agent_ids.filter((id) => id !== team.my_agent_id);
+    if (peers.every((id) => id in team.peer_branches)) {
+      team.status = "ready";
+    }
+    save();
+  }
+}
+
+export function setTeamBranch(teamId: string, branch: string): void {
+  // Update my_branch for all entries of this team (all local agents)
+  const teams = ensureTeams();
+  let saved = false;
+  for (const team of Object.values(teams)) {
+    if (team.team_id === teamId) {
+      team.my_branch = branch;
+      saved = true;
+    }
+  }
+  if (saved) save();
+}
+
+export function findTeamByHandshakeTask(taskId: string): { team: TeamInfo; direction: "in" | "out"; peerId: string } | undefined {
+  for (const team of Object.values(ensureTeams())) {
+    for (const [peerId, tid] of Object.entries(team.handshake_out)) {
+      if (tid === taskId) return { team, direction: "out", peerId };
+    }
+    for (const [peerId, tid] of Object.entries(team.handshake_in)) {
+      if (tid === taskId) return { team, direction: "in", peerId };
+    }
+  }
+  return undefined;
 }

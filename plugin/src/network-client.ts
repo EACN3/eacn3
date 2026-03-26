@@ -260,7 +260,7 @@ export async function getOpenTasks(opts?: {
 }): Promise<Task[]> {
   const query: Record<string, string> = {};
   if (opts?.domains) query.domains = opts.domains;
-  if (opts?.limit !== undefined) query.limit = String(opts.limit);
+  query.limit = String(opts?.limit ?? 10);
   if (opts?.offset !== undefined) query.offset = String(opts.offset);
   return request<Task[]>("GET", "/api/tasks/open", undefined, query);
 }
@@ -287,7 +287,7 @@ export async function listTasks(opts?: {
   const query: Record<string, string> = {};
   if (opts?.status) query.status = opts.status;
   if (opts?.initiator_id) query.initiator_id = opts.initiator_id;
-  if (opts?.limit !== undefined) query.limit = String(opts.limit);
+  query.limit = String(opts?.limit ?? 10);
   if (opts?.offset !== undefined) query.offset = String(opts.offset);
   return request<Task[]>("GET", "/api/tasks", undefined, query);
 }

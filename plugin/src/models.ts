@@ -523,6 +523,44 @@ export type SessionKey = string;
 /** Maximum messages per session to prevent unbounded growth. */
 export const MAX_MESSAGES_PER_SESSION = 100;
 
+// ---------------------------------------------------------------------------
+// Team Coordination
+// ---------------------------------------------------------------------------
+
+/** Tracks a team formed by human via eacn3_team_setup. */
+export interface TeamInfo {
+  /** Unique team identifier (e.g. "team-abc123"). */
+  team_id: string;
+  /** Git repo URL for recording operations. */
+  git_repo: string;
+  /** All agent IDs in this team. */
+  agent_ids: string[];
+  /** The local agent participating in this team. */
+  my_agent_id: string;
+  /** This agent's operation branch (set after creation). */
+  my_branch?: string;
+  /** Peer agent branches learned through handshakes. agent_id → branch name. */
+  peer_branches: Record<string, string>;
+  /** Outgoing handshake task IDs. target_agent_id → task_id. */
+  handshake_out: Record<string, string>;
+  /** Incoming handshake task IDs. source_agent_id → task_id. */
+  handshake_in: Record<string, string>;
+  /** "forming" until all handshakes complete, then "ready". */
+  status: "forming" | "ready";
+}
+
+/**
+ * Content marker for handshake tasks. Presence of `_handshake: true`
+ * distinguishes team handshakes from normal tasks.
+ */
+export interface HandshakeContent {
+  _handshake: true;
+  team_id: string;
+  git_repo: string;
+  from_agent: string;
+  team_members: string[];
+}
+
 /** Plugin-local state. Holds all in-memory data for the current session; reset on disconnect. */
 export interface EacnState {
   /** Server identity; null before eacn3_connect is called. */
@@ -539,6 +577,8 @@ export interface EacnState {
   pending_events: Record<string, PushEvent[]>;
   /** Active message sessions keyed by "local_agent_id:peer_agent_id". */
   active_sessions: Record<SessionKey, DirectMessage[]>;
+  /** Active teams keyed by team_id. */
+  teams?: Record<string, TeamInfo>;
 }
 
 /**

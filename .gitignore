@@ -11,3 +11,5 @@ eacn3.db
 eacn3.db-shm
 eacn3.db-wal
 data/
+node_modules/
+package-lock.json

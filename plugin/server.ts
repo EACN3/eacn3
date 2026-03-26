@@ -229,6 +229,24 @@ server.tool(
       hint: restoredAgents.length > 0
         ? "You have previously registered agents restored and reconnected. You can use them directly without re-registering. Call eacn3_list_my_agents() for full details."
         : "No previous agents found. Register a new agent with eacn3_register_agent().",
+      toolkit: {
+        workflow: {
+          eacn3_next: "Periodic dispatch loop — call on a regular interval to process pending events one at a time. Returns the highest-priority event with action directives. This is the ONLY tool that spans the full task lifecycle.",
+          eacn3_get_events: "Drain all pending events at once (bulk alternative to next).",
+        },
+        team: {
+          eacn3_team_setup: "Form a team of agents around a shared git repo. Creates handshake tasks between all pairs.",
+          eacn3_team_status: "Check team formation progress — which handshakes are done, which peer branches are known.",
+          eacn3_team_set_branch: "Record your git branch name for a team after creating it.",
+        },
+        task: {
+          eacn3_create_task: "Publish a task (supports team_id to auto-inject team preamble).",
+          eacn3_create_subtask: "Delegate part of your work as a child task.",
+          eacn3_submit_bid: "Bid on a task you want to execute.",
+          eacn3_submit_result: "Submit your completed work.",
+          eacn3_select_result: "Pick the winning result (triggers payment).",
+        },
+      },
     });
   },
 );
@@ -398,6 +416,24 @@ server.tool(
         enabled: params.reverse_control?.enabled !== false,
         sampling_available: rcStatus.samplingAvailable,
         fallback: rcStatus.samplingAvailable ? "none" : "directive_injection",
+      },
+      toolkit: {
+        workflow: {
+          eacn3_next: "Periodic dispatch loop — call on a regular interval to process pending events one at a time. Returns the highest-priority event with action directives. This is the ONLY tool that spans the full task lifecycle.",
+          eacn3_get_events: "Drain all pending events at once (bulk alternative to next).",
+        },
+        team: {
+          eacn3_team_setup: "Form a team of agents around a shared git repo. Creates handshake tasks between all pairs.",
+          eacn3_team_status: "Check team formation progress — which handshakes are done, which peer branches are known.",
+          eacn3_team_set_branch: "Record your git branch name for a team after creating it.",
+        },
+        task: {
+          eacn3_create_task: "Publish a task (supports team_id to auto-inject team preamble).",
+          eacn3_create_subtask: "Delegate part of your work as a child task.",
+          eacn3_submit_bid: "Bid on a task you want to execute.",
+          eacn3_submit_result: "Submit your completed work.",
+          eacn3_select_result: "Pick the winning result (triggers payment).",
+        },
       },
     });
   },
@@ -603,6 +639,7 @@ server.tool(
   {
     description: z.string(),
     budget: z.number(),
+    team_id: z.string().optional().describe("Team ID to attach team collaboration preamble. Required when the initiator belongs to multiple ready teams. If omitted and the initiator is in exactly one ready team, that team is used automatically."),
     domains: z.array(z.string()).optional(),
     deadline: z.string().optional().describe("ISO 8601 deadline"),
     max_concurrent_bidders: z.number().optional(),
@@ -633,11 +670,47 @@ server.tool(
         )
       : [];
 
+    // Auto-inject team collaboration preamble if initiator is in a ready team
+    let finalDescription = params.description;
+    const teams = state.getTeamsForAgent(initiatorId);
+    const readyTeams = teams.filter((t) => t.status === "ready");
+    let activeTeam: typeof readyTeams[number] | undefined;
+    if (params.team_id) {
+      activeTeam = readyTeams.find((t) => t.team_id === params.team_id);
+      if (!activeTeam) {
+        return err(`Team ${params.team_id} not found or not ready. Available ready teams: ${readyTeams.map((t) => t.team_id).join(", ") || "(none)"}`);
+      }
+    } else if (readyTeams.length === 1) {
+      activeTeam = readyTeams[0];
+    } else if (readyTeams.length > 1) {
+      return err(`Initiator belongs to multiple ready teams: ${readyTeams.map((t) => t.team_id).join(", ")}. Please specify team_id.`);
+    }
+    if (activeTeam) {
+      const branchInfo = Object.entries(activeTeam.peer_branches)
+        .map(([id, branch]) => `  - ${id}: ${branch}`)
+        .join("\n");
+      const preamble = [
+        `[TEAM COLLABORATION — ${activeTeam.team_id}]`,
+        `Git repo: ${activeTeam.git_repo}`,
+        `Team members: ${activeTeam.agent_ids.join(", ")}`,
+        branchInfo ? `Branches:\n${branchInfo}` : "",
+        "",
+        "Team rules:",
+        "- We are collaborating as a team on a shared git repo. Coordinate via branches and messages.",
+        "- If any part of this task would be done better by a teammate, create a subtask (budget=0) with invited_agent_ids targeting that teammate.",
+        "- Before submitting your result, pull and check teammates' branches for relevant changes.",
+        "- Communicate progress and blockers via eacn3_send_message to your teammates.",
+        "",
+        "[USER TASK]",
+      ].filter(Boolean).join("\n");
+      finalDescription = `${preamble}\n${params.description}`;
+    }
+
     const task = await net.createTask({
       task_id: taskId,
       initiator_id: initiatorId,
       content: {
-        description: params.description,
+        description: finalDescription,
         expected_output: params.expected_output,
       },
       domains: params.domains,
@@ -697,6 +770,28 @@ server.tool(
   async (params) => {
     const initiatorId = resolveAgentId(params.initiator_id);
     const res = await net.selectResult(params.task_id, initiatorId, params.agent_id);
+
+    // If this was a team handshake task, extract peer branch and update local team state
+    const teams = state.getTeamsForAgent(initiatorId);
+    for (const team of teams) {
+      const handshakeTarget = Object.entries(team.handshake_out).find(
+        ([, taskId]) => taskId === params.task_id,
+      );
+      if (handshakeTarget) {
+        // Fetch the result to get the branch name
+        try {
+          const taskData = await net.getTask(params.task_id);
+          const results = (taskData as any)?.results ?? [];
+          const winnerResult = results.find((r: any) => r.agent_id === params.agent_id);
+          const branch = winnerResult?.content?.branch;
+          if (branch) {
+            state.updateTeamPeerBranch(team.team_id, handshakeTarget[0], branch);
+          }
+        } catch { /* best effort */ }
+        break;
+      }
+    }
+
     return ok(res);
   },
 );
@@ -1214,13 +1309,30 @@ const URGENCY_ORDER: Record<string, number> = {
 function buildNextAction(event: import("./src/models.js").PushEvent) {
   const payload = event.payload as Record<string, unknown>;
   switch (event.type) {
-    case "task_broadcast":
+    case "task_broadcast": {
+      // Detect team handshake tasks
+      const desc = String((payload as any)?.description ?? "");
+      if (desc.startsWith("Team handshake:") || (payload as any)?.budget === 0) {
+        // Check if this looks like a handshake (0-budget, team-coordination domain)
+        const domains = (payload.domains as string[]) ?? [];
+        if (domains.includes("team-coordination")) {
+          return {
+            action: "handshake",
+            description: `Team handshake from another agent on task ${event.task_id}. ` +
+              `Bid with price=0 confidence=1, then submit_result with your branch name: ` +
+              `{branch: "agent/your-id", _handshake_ack: true, team_id: "..."}.`,
+            tool: "eacn3_submit_bid",
+            params: { task_id: event.task_id, confidence: 1, price: 0 },
+          };
+        }
+      }
       return {
         action: "bid",
         description: `New task [${((payload.domains as string[]) ?? []).join(", ")}] budget=${payload.budget ?? "?"}. Evaluate and bid.`,
         tool: "eacn3_submit_bid",
         params: { task_id: event.task_id },
       };
+    }
     case "direct_message":
       return {
         action: "reply",
@@ -1373,6 +1485,177 @@ server.tool(
       event: top,
       ...next,
     });
+  },
+);
+
+// #42 eacn3_team_setup — human-facing team coordination toolkit
+server.tool(
+  "eacn3_team_setup",
+  "Human-facing toolkit: form a team of agents around a shared git repo. " +
+  "Creates 0-budget handshake tasks between every pair of agents (both directions). " +
+  "Each agent creates its own operation branch and learns peers' branches through handshake responses. " +
+  "Set peers_running_next=true if other agents already have next loops — this agent will notify them via messages first.",
+  {
+    agent_ids: z.array(z.string()).min(2).describe("Agent IDs to form a team"),
+    git_repo: z.string().describe("Git repo URL for recording operations"),
+    peers_running_next: z.boolean().optional().describe("If true, notify peers via messages before handshakes"),
+  },
+  async (params) => {
+    const localAgents = state.listAgents();
+    const localIds = new Set(localAgents.map((a) => a.agent_id));
+
+    // Find which of the requested agents are local
+    const myAgents = params.agent_ids.filter((id) => localIds.has(id));
+    if (myAgents.length === 0) {
+      return err("None of the specified agent_ids are registered on this server");
+    }
+
+    const teamId = `team-${Date.now().toString(36)}`;
+    const results: Array<{ agent_id: string; handshakes_created: string[] }> = [];
+
+    for (const myId of myAgents) {
+      const peers = params.agent_ids.filter((id) => id !== myId);
+
+      // Save team info
+      const teamInfo: import("./src/models.js").TeamInfo = {
+        team_id: teamId,
+        git_repo: params.git_repo,
+        agent_ids: params.agent_ids,
+        my_agent_id: myId,
+        peer_branches: {},
+        handshake_out: {},
+        handshake_in: {},
+        status: "forming",
+      };
+
+      // If peers are running next loops, notify them first
+      if (params.peers_running_next) {
+        for (const peerId of peers) {
+          try {
+            const msg = JSON.stringify({
+              _team_notify: true,
+              team_id: teamId,
+              git_repo: params.git_repo,
+              team_members: params.agent_ids,
+              message: `Team setup initiated. You will receive handshake tasks shortly. Create your branch in ${params.git_repo} and respond with your branch name.`,
+            });
+            await net.relayMessage({
+              to: { network_id: "", server_id: "", agent_id: peerId },
+              from: { network_id: "", server_id: state.getServerId() ?? "", agent_id: myId },
+              content: msg,
+            });
+          } catch { /* best-effort notification */ }
+        }
+      }
+
+      // Create 0-budget handshake task for each peer
+      const handshakesCreated: string[] = [];
+      for (const peerId of peers) {
+        try {
+          const taskId = `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+          const content = {
+            _handshake: true,
+            team_id: teamId,
+            git_repo: params.git_repo,
+            from_agent: myId,
+            team_members: params.agent_ids,
+          };
+          const task = await net.createTask({
+            task_id: taskId,
+            initiator_id: myId,
+            content: { description: `Team handshake: ${myId} → ${peerId}` },
+            domains: ["team-coordination"],
+            budget: 0,
+            max_concurrent_bidders: 1,
+            max_depth: 0,
+            invited_agent_ids: [peerId],
+          });
+
+          // Update task content with handshake marker via discussions
+          try {
+            await net.updateDiscussions(task.id, myId, JSON.stringify(content));
+          } catch { /* content is in description as fallback */ }
+
+          teamInfo.handshake_out[peerId] = task.id;
+          handshakesCreated.push(task.id);
+
+          state.updateTask({
+            task_id: task.id,
+            agent_id: myId,
+            role: "initiator",
+            status: task.status,
+            domains: ["team-coordination"],
+            description_summary: `Handshake → ${peerId}`,
+            created_at: new Date().toISOString(),
+          });
+        } catch (e: any) {
+          handshakesCreated.push(`FAILED(${peerId}): ${e.message ?? e}`);
+        }
+      }
+
+      state.addTeam(teamInfo);
+      results.push({ agent_id: myId, handshakes_created: handshakesCreated });
+    }
+
+    return ok({
+      team_id: teamId,
+      git_repo: params.git_repo,
+      agent_ids: params.agent_ids,
+      local_agents: myAgents,
+      results,
+      next_steps: [
+        "Each agent should now create their operation branch in the git repo.",
+        "When receiving handshake tasks (task_broadcast with _handshake marker), " +
+        "bid with price=0 and confidence=1, then submit_result with {branch: 'your-branch-name', _handshake_ack: true, team_id: '...'}.",
+        "When your handshake tasks get results, select_result to complete the handshake.",
+        "Team is ready when all peer branches are known.",
+      ],
+    });
+  },
+);
+
+// #43 eacn3_team_status — check team formation progress
+server.tool(
+  "eacn3_team_status",
+  "Check the current status of a team: which handshakes are complete, which peer branches are known, and whether the team is ready.",
+  {
+    team_id: z.string().describe("Team ID from eacn3_team_setup"),
+  },
+  async (params) => {
+    const team = state.getTeam(params.team_id);
+    if (!team) return err(`Team ${params.team_id} not found`);
+
+    const peers = team.agent_ids.filter((id) => id !== team.my_agent_id);
+    const handshakes_complete = peers.filter((id) => id in team.peer_branches);
+    const handshakes_pending = peers.filter((id) => !(id in team.peer_branches));
+
+    return ok({
+      team_id: team.team_id,
+      git_repo: team.git_repo,
+      status: team.status,
+      my_agent_id: team.my_agent_id,
+      my_branch: team.my_branch ?? null,
+      peer_branches: team.peer_branches,
+      handshakes_complete: handshakes_complete,
+      handshakes_pending: handshakes_pending,
+      ready: team.status === "ready",
+    });
+  },
+);
+
+// #44 eacn3_team_set_branch — record this agent's operation branch
+server.tool(
+  "eacn3_team_set_branch",
+  "Record this agent's git branch name for a team. Call after creating your branch in the git repo.",
+  {
+    team_id: z.string().describe("Team ID"),
+    branch: z.string().describe("Branch name (e.g. 'agent/my-agent-id')"),
+  },
+  async (params) => {
+    const team = state.getTeam(params.team_id);
+    if (!team) return err(`Team ${params.team_id} not found`);
+    state.setTeamBranch(params.team_id, params.branch);
+    return ok({ team_id: params.team_id, branch: params.branch, message: "Branch recorded" });
   },
 );
 

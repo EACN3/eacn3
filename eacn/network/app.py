@@ -832,18 +832,29 @@ class Network:
 
             try:
                 child = self.task_manager.close_task(child_id)
-                # Only refund if no results (no_one_able). Children with results
-                # go to awaiting_retrieval — their escrow should stay for potential settlement.
-                if child.status == TaskStatus.NO_ONE_ABLE:
-                    await self.settlement.refund_no_one_capable(child_id)
-                _log.info(
-                    "Cascade-closed child task %s → %s (parent %s terminated)",
-                    child_id, child.status.value, task.id,
-                )
             except TaskError:
                 continue
-            # Recurse into grandchildren
+
+            # Recurse into grandchildren FIRST so their escrow flows back
+            # into this child before we reclaim this child into the parent.
             await self._terminate_children(child)
+
+            # Now reclaim child escrow back to parent so parent settlement
+            # has sufficient funds (#65).
+            try:
+                # Reclaim remaining escrow back to parent regardless of
+                # child outcome.  This ensures parent has enough funds for
+                # its own settlement after subtask budget was carved out.
+                await self.escrow.reclaim_to_parent(child_id, task.id)
+            except Exception:
+                _log.warning(
+                    "Failed to reclaim escrow for child %s → parent %s",
+                    child_id, task.id, exc_info=True,
+                )
+            _log.info(
+                "Cascade-closed child task %s → %s (parent %s terminated)",
+                child_id, child.status.value, task.id,
+            )
 
     async def _broadcast_to_candidates(self, task: Task) -> None:
         """Discover agents, match, and push task broadcast."""
