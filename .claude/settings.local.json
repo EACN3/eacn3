@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__eacn3__*"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "eacn3"
+  ]
+}

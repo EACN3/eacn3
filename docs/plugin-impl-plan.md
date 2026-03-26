@@ -124,7 +124,7 @@ export default function(api: any) {
 
 ### server.ts — MCP stdio
 ```ts
-const server = new McpServer({ name: "eacn3", version: "0.3.0" });
+const server = new McpServer({ name: "eacn3", version: "0.5.0" });
 server.tool("eacn3_connect", "Connect to EACN3 network", { ... }, async (params) => { ... });
 // ... 34 tools
 async function main() {
