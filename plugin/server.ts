@@ -979,7 +979,7 @@ server.tool(
     // 1. Local agent — direct push to event buffer
     const localAgent = state.getAgent(targetId);
     if (localAgent) {
-      state.pushEvents([{
+      state.pushEvents(targetId, [{
         msg_id: crypto.randomUUID().replace(/-/g, ""),
         type: "direct_message",
         task_id: "",
@@ -1145,10 +1145,13 @@ server.tool(
 // #34 eacn3_get_events
 server.tool(
   "eacn3_get_events",
-  "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details. Call periodically in your main loop.",
-  {},
-  async () => {
-    const events = state.drainEvents();
+  "Drain the in-memory event buffer for a specific agent, returning its pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details. Call periodically in your main loop.",
+  {
+    agent_id: z.string().optional().describe("Agent ID to drain events for (auto-injected if omitted)"),
+  },
+  async (params) => {
+    const agentId = resolveAgentId(params.agent_id);
+    const events = state.drainEvents(agentId);
     return ok({
       count: events.length,
       events,
@@ -1162,15 +1165,17 @@ server.tool(
   "eacn3_await_events",
   "Block until a network event arrives or timeout expires, then return with the event AND a suggested action. This is the reverse-control mechanism when MCP sampling is unavailable (e.g. OpenClaw). Instead of polling eacn3_get_events in a loop, call this — it waits for the network to push something, then tells you exactly what to do. Returns {event, suggested_action, suggested_tool, suggested_params, urgency} per event, or {timeout: true}. Prefer this over eacn3_get_events for reactive agent loops.",
   {
+    agent_id: z.string().optional().describe("Agent ID to await events for (auto-injected if omitted)"),
     timeout_seconds: z.number().optional().describe("Max seconds to wait (1-120). Default 30."),
     event_types: z.array(z.string()).optional().describe("Only return for these event types. Default: all."),
   },
   async (params) => {
+    const agentId = resolveAgentId(params.agent_id);
     const timeoutSec = Math.min(Math.max(params.timeout_seconds ?? 30, 1), 120);
     const filterTypes = params.event_types;
 
     // Check immediate buffered events
-    const immediate = drainMatchingEvents(filterTypes);
+    const immediate = drainMatchingEvents(agentId, filterTypes);
     if (immediate.length > 0) {
       return ok(buildAwaitResponse(immediate));
     }
@@ -1179,7 +1184,7 @@ server.tool(
     const result = await new Promise<import("./src/models.js").PushEvent[]>((resolve) => {
       const deadline = setTimeout(() => { cleanup(); resolve([]); }, timeoutSec * 1000);
       const poll = setInterval(() => {
-        const events = drainMatchingEvents(filterTypes);
+        const events = drainMatchingEvents(agentId, filterTypes);
         if (events.length > 0) { cleanup(); resolve(events); }
       }, 500);
       function cleanup() { clearTimeout(deadline); clearInterval(poll); }
@@ -1189,6 +1194,185 @@ server.tool(
       return ok({ timeout: true, waited_seconds: timeoutSec, hint: "No events arrived. Call again to keep waiting, or proceed with other work." });
     }
     return ok(buildAwaitResponse(result));
+  },
+);
+
+// #41 eacn3_next — single-event non-blocking poll
+const URGENCY_ORDER: Record<string, number> = {
+  task_broadcast: 1,
+  direct_message: 1,
+  subtask_completed: 1,
+  bid_request_confirmation: 1,
+  result_submitted: 1,
+  task_collected: 2,
+  bid_result: 2,
+  discussion_update: 3,
+  task_timeout: 4,
+  adjudication_task: 2,
+};
+
+function buildNextAction(event: import("./src/models.js").PushEvent) {
+  const payload = event.payload as Record<string, unknown>;
+  switch (event.type) {
+    case "task_broadcast":
+      return {
+        action: "bid",
+        description: `New task [${((payload.domains as string[]) ?? []).join(", ")}] budget=${payload.budget ?? "?"}. Evaluate and bid.`,
+        tool: "eacn3_submit_bid",
+        params: { task_id: event.task_id },
+      };
+    case "direct_message":
+      return {
+        action: "reply",
+        description: `Message from ${payload.from ?? "?"}: "${String(payload.content ?? "").slice(0, 200)}"`,
+        tool: "eacn3_send_message",
+        params: { to_agent_id: payload.from, task_id: event.task_id },
+      };
+    case "subtask_completed":
+      return {
+        action: "collect",
+        description: `Subtask ${payload.subtask_id ?? "?"} completed. Fetch results and continue.`,
+        tool: "eacn3_get_task_results",
+        params: { task_id: String(payload.subtask_id ?? event.task_id) },
+      };
+    case "bid_request_confirmation":
+      return {
+        action: "confirm",
+        description: `Bid on ${event.task_id} exceeded budget. Approve or reject.`,
+        tool: "eacn3_confirm_budget",
+        params: { task_id: event.task_id },
+      };
+    case "result_submitted":
+      return {
+        action: "review",
+        description: `Agent ${payload.agent_id ?? "?"} submitted a result for task ${event.task_id} (${payload.results_count ?? "?"}/${payload.executing_count ?? "?"} results in). Call eacn3_get_task_results to retrieve, then eacn3_select_result to accept${payload.all_submitted ? " — all executors have submitted" : ""}.`,
+        tool: "eacn3_get_task_results",
+        params: { task_id: event.task_id },
+      };
+    case "task_collected":
+      return {
+        action: "collect",
+        description: `Task ${event.task_id}: all executors have submitted. Retrieve and select.`,
+        tool: "eacn3_get_task_results",
+        params: { task_id: event.task_id },
+      };
+    case "bid_result": {
+      const accepted = (payload as any)?.accepted;
+      if (accepted) {
+        return {
+          action: "execute",
+          description: `Bid accepted on ${event.task_id}. Start working.`,
+          tool: "eacn3_get_task",
+          params: { task_id: event.task_id },
+        };
+      }
+      return {
+        action: "note",
+        description: `Bid rejected on ${event.task_id}. Reason: ${(payload as any)?.reason ?? "unknown"}.`,
+        tool: null,
+        params: {},
+      };
+    }
+    case "task_timeout":
+      return {
+        action: "note",
+        description: `Task ${event.task_id} timed out.`,
+        tool: null,
+        params: {},
+      };
+    default:
+      return {
+        action: "check",
+        description: `Event "${event.type}" on ${event.task_id}.`,
+        tool: "eacn3_get_task",
+        params: { task_id: event.task_id },
+      };
+  }
+}
+
+server.tool(
+  "eacn3_next",
+  "Non-blocking single-step work dispatcher: returns the ONE highest-priority pending event for this agent with a clear action directive. When you get a task back, process it, then call eacn3_next again. When idle is returned, there are no NEW network events — but check the returned 'prompts' array for context-aware guidance: unfinished tasks, delegated work to review, reflection questions, and delegation suggestions. Act on those prompts instead of waiting. Never sleep or poll — always keep making progress.",
+  {
+    agent_id: z.string().optional().describe("Agent ID (auto-injected if omitted)"),
+  },
+  async (params) => {
+    const agentId = resolveAgentId(params.agent_id);
+    const events = state.drainEvents(agentId);
+
+    if (events.length === 0) {
+      // Build context-aware prompts based on agent's current task state
+      const tasks = Object.values(state.getState().local_tasks).filter(
+        (t) => t.agent_id === agentId,
+      );
+      const inProgress = tasks.filter((t) => t.role === "executor" && (t.status === "bidding" || t.status === "unclaimed"));
+      const delegated = tasks.filter((t) => t.role === "initiator" && t.status !== "completed" && t.status !== "no_one");
+      const completed = tasks.filter((t) => t.status === "completed" || t.status === "awaiting_retrieval");
+
+      const prompts: string[] = [];
+
+      if (inProgress.length > 0) {
+        prompts.push(`You have ${inProgress.length} task(s) still in progress (${inProgress.map(t => t.task_id).join(", ")}). Have you actually finished them? Are the results thorough and correct?`);
+      }
+      if (delegated.length > 0) {
+        prompts.push(`You delegated ${delegated.length} task(s) to other agents (${delegated.map(t => t.task_id).join(", ")}). Have you checked their results? Do the results meet your expectations?`);
+      }
+      if (completed.length > 0) {
+        prompts.push(`You have ${completed.length} completed task(s). Have you reviewed all the results? Have you reflected on the overall outcome based on everything you've gathered so far?`);
+      }
+      // Check message sessions — any conversations with recent incoming messages?
+      const sessions = state.listSessions(agentId);
+      const unanswered: string[] = [];
+      for (const peerId of sessions) {
+        const msgs = state.getMessages(agentId, peerId);
+        if (msgs.length > 0 && msgs[msgs.length - 1].direction === "in") {
+          unanswered.push(peerId);
+        }
+      }
+
+      if (unanswered.length > 0) {
+        prompts.push(`You have unanswered messages from ${unanswered.length} agent(s) (${unanswered.join(", ")}). Have you replied? Is there information they need from you?`);
+      }
+      if (sessions.length > 0 && unanswered.length === 0) {
+        prompts.push(`You have ${sessions.length} active conversation(s). Are you waiting for replies? Should you follow up?`);
+      }
+
+      if (inProgress.length === 0 && delegated.length === 0 && completed.length === 0 && sessions.length === 0) {
+        prompts.push("No active tasks or conversations. Continue with your current work.");
+      }
+
+      // Always-applicable reflective prompts
+      prompts.push(
+        "Are there parts of your current work that another agent with different expertise could handle better? Consider delegating via eacn3_create_task.",
+        "If you're stuck on something, have you considered alternative approaches?",
+        "If you have long-running subtasks, have you broken them into smaller pieces that can run in parallel?",
+      );
+
+      return ok({
+        idle: true,
+        active_tasks: inProgress.map(t => t.task_id),
+        delegated_tasks: delegated.map(t => t.task_id),
+        completed_tasks: completed.map(t => t.task_id),
+        active_conversations: sessions.length,
+        unanswered_from: unanswered,
+        prompts,
+      });
+    }
+
+    // Sort by urgency (lower number = higher priority)
+    events.sort((a, b) => (URGENCY_ORDER[a.type] ?? 5) - (URGENCY_ORDER[b.type] ?? 5));
+
+    // Take the first (highest priority), put the rest back
+    const [top, ...rest] = events;
+    if (rest.length > 0) state.pushEvents(agentId, rest);
+
+    const next = buildNextAction(top);
+    return ok({
+      idle: false,
+      remaining: rest.length,
+      event: top,
+      ...next,
+    });
   },
 );
 
@@ -1206,8 +1390,8 @@ server.tool(
 // Long-polling helpers
 // ---------------------------------------------------------------------------
 
-function drainMatchingEvents(filterTypes?: string[]): import("./src/models.js").PushEvent[] {
-  const all = state.drainEvents();
+function drainMatchingEvents(agentId: string, filterTypes?: string[]): import("./src/models.js").PushEvent[] {
+  const all = state.drainEvents(agentId);
   if (!filterTypes || filterTypes.length === 0) return all;
 
   const matching: import("./src/models.js").PushEvent[] = [];
@@ -1219,7 +1403,7 @@ function drainMatchingEvents(filterTypes?: string[]): import("./src/models.js").
       remaining.push(e);
     }
   }
-  if (remaining.length > 0) state.pushEvents(remaining);
+  if (remaining.length > 0) state.pushEvents(agentId, remaining);
   return matching;
 }
 
@@ -1237,8 +1421,10 @@ function buildAwaitResponse(events: import("./src/models.js").PushEvent[]) {
           return { event, suggested_action: `Subtask ${payload.subtask_id ?? "?"} done. Fetch results.`, suggested_tool: "eacn3_get_task_results", suggested_params: { task_id: String(payload.subtask_id ?? event.task_id) }, urgency: "high" };
         case "bid_request_confirmation":
           return { event, suggested_action: `Bid exceeded budget on ${event.task_id}. Approve/reject.`, suggested_tool: "eacn3_confirm_budget", suggested_params: { task_id: event.task_id }, urgency: "high" };
+        case "result_submitted":
+          return { event, suggested_action: `Agent ${payload.agent_id ?? "?"} submitted result for ${event.task_id}. Review and decide: select with eacn3_select_result or wait for more.`, suggested_tool: "eacn3_get_task", suggested_params: { task_id: event.task_id }, urgency: "high" };
         case "task_collected":
-          return { event, suggested_action: `Task ${event.task_id} has results. Retrieve.`, suggested_tool: "eacn3_get_task_results", suggested_params: { task_id: event.task_id }, urgency: "medium" };
+          return { event, suggested_action: `Task ${event.task_id}: all executors done. Retrieve and select.`, suggested_tool: "eacn3_get_task_results", suggested_params: { task_id: event.task_id }, urgency: "medium" };
         case "task_timeout":
           return { event, suggested_action: `Task ${event.task_id} timed out. No action needed.`, suggested_tool: "eacn3_get_task", suggested_params: { task_id: event.task_id }, urgency: "low" };
         default:
@@ -1276,7 +1462,7 @@ function registerEventCallbacks(): void {
           net.getTaskResults(subtaskId, agentId)
             .then((res) => {
               // Buffer a synthetic event with the results for the skill to pick up
-              state.pushEvents([{
+              state.pushEvents(agentId, [{
                 msg_id: crypto.randomUUID().replace(/-/g, ""),
                 type: "subtask_completed",
                 task_id: taskId,
@@ -1351,7 +1537,7 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
 
   // Passed auto-filter — enrich the buffered event with a hint
   // The skill layer (/eacn3-bounty) will see this and can fast-track bidding
-  state.pushEvents([{
+  state.pushEvents(agentId, [{
     msg_id: crypto.randomUUID().replace(/-/g, ""),
     type: "task_broadcast",
     task_id: taskId,

@@ -213,7 +213,7 @@ function deliverEvent(p: AgentPoller, raw: any): void {
     received_at: Date.now(),
   } as PushEvent;
 
-  pushEvents([pushEvent]);
+  pushEvents(p.agentId, [pushEvent]);
 
   // Use per-agent callback if registered, otherwise global (#109)
   const cb = agentCallbacks.get(p.agentId) ?? eventCallback;
