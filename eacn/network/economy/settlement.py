@@ -51,15 +51,17 @@ class SettlementService:
             raise BudgetError(f"Task {task_id} already settled")
 
         platform_fee = bid_price * self.platform_fee_rate
-        total_deduction = bid_price + platform_fee
+        executor_payout = bid_price - platform_fee
 
-        # Deduct from escrow
-        initiator_id = await self.escrow.deduct_for_settlement(task_id, total_deduction)
+        # Deduct bid_price (not bid_price + fee) from escrow — the platform fee
+        # is taken from the bid price, not charged on top of it.  This ensures
+        # the deduction never exceeds the escrowed budget.
+        initiator_id = await self.escrow.deduct_for_settlement(task_id, bid_price)
 
-        # Credit executor — wrap in try to rollback on failure
+        # Credit executor (minus platform fee) — wrap in try to rollback on failure
         try:
             executor_account = self.escrow.get_or_create_account(executor_id)
-            executor_account.credit(bid_price)
+            executor_account.credit(executor_payout)
             await self.escrow._persist_account(executor_id)
 
             # Refund remainder
@@ -67,7 +69,7 @@ class SettlementService:
         except Exception:
             # Rollback executor credit if release or persist failed
             if executor_account:
-                executor_account.available -= bid_price
+                executor_account.available -= executor_payout
             raise
 
         # Track platform fees and mark as settled AFTER all mutations succeed
