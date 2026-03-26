@@ -120,7 +120,7 @@ function detectCapabilities(): void {
   } catch {
     samplingAvailable = false;
   }
-  console.error(`[ReverseControl] sampling available: ${samplingAvailable}`);
+  // Silent — stderr output during startup can prevent MCP clients from loading the server.
 }
 
 /**
