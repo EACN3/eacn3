@@ -203,7 +203,8 @@ class TaskManager:
                 f"Max depth {parent.max_depth} exceeded (current: {new_depth})"
             )
 
-        if parent.remaining_budget is not None and budget > parent.remaining_budget:
+        # Use small epsilon for float comparison to avoid precision issues
+        if parent.remaining_budget is not None and budget > parent.remaining_budget + 1e-9:
             raise BudgetError(
                 f"Subtask budget {budget} exceeds parent remaining {parent.remaining_budget}"
             )

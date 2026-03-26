@@ -771,12 +771,14 @@ class Network:
         participant_nodes = self.cluster.router.get_participants(task.id)
         if not participant_nodes:
             return
-        # Gather agents involved in the task
+        # Gather agents involved in the task (filter empty IDs)
         recipients = list({
             *[b.agent_id for b in task.bids
-              if b.status.value in ("executing", "waiting", "accepted")],
-            task.initiator_id,
+              if b.status.value in ("executing", "waiting", "accepted") and b.agent_id],
+            *([] if not task.initiator_id else [task.initiator_id]),
         })
+        if not recipients:
+            return
         await self.cluster.router.notify_status(
             task.id, status, participant_nodes,
             payload={"status": status, "recipients": recipients},
@@ -797,14 +799,21 @@ class Network:
             if child.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
                 continue
 
-            # Reject all active bids and notify affected agents
+            # Reject all active bids and notify affected agents (Bug 3: don't let
+            # one notification failure block the rest)
             for bid in child.bids:
                 if bid.status in (BidStatus.EXECUTING, BidStatus.WAITING, BidStatus.PENDING):
                     bid.status = BidStatus.REJECTED
-                    await self.push.notify_bid_result(
-                        child_id, bid.agent_id, accepted=False,
-                        reason="Parent task terminated",
-                    )
+                    try:
+                        await self.push.notify_bid_result(
+                            child_id, bid.agent_id, accepted=False,
+                            reason="Parent task terminated",
+                        )
+                    except Exception:
+                        _log.warning(
+                            "Failed to notify %s about child %s termination",
+                            bid.agent_id, child_id, exc_info=True,
+                        )
 
             try:
                 child = self.task_manager.close_task(child_id)
