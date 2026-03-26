@@ -162,8 +162,9 @@ class RegisterServerRequest(BaseModel):
     @field_validator("endpoint")
     @classmethod
     def _validate_endpoint_url(cls, v: str) -> str:
-        if not v.startswith(("http://", "https://")):
-            raise ValueError("Endpoint must use http:// or https:// protocol")
+        # Block dangerous protocols; allow http/https/plugin
+        if v.startswith(("javascript:", "file:", "data:")):
+            raise ValueError("Endpoint uses a forbidden protocol")
         return v
 
 

@@ -148,6 +148,8 @@ class McpClient:
 
     def _send(self, msg: dict) -> None:
         """Send a JSON-RPC message (newline-delimited)."""
+        if self.proc.poll() is not None:
+            raise ConnectionError("Plugin process has exited")
         data = json.dumps(msg) + "\n"
         self.proc.stdin.write(data.encode())
         self.proc.stdin.flush()
@@ -300,6 +302,11 @@ async def mcp(live_server):
         )
         yield client
     finally:
+        # Disconnect cleanly to stop event polling before killing process
+        try:
+            await client.call_tool_parsed("eacn3_disconnect")
+        except Exception:
+            pass
         client.close()
         shutil.rmtree(state_dir, ignore_errors=True)
 

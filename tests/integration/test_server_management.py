@@ -5,8 +5,8 @@ import pytest
 
 class TestDisconnect:
     @pytest.mark.asyncio
-    async def test_disconnect_removes_server(self, mcp, http):
-        """After disconnect, server returns 404 on network."""
+    async def test_disconnect_preserves_server(self, mcp, http):
+        """After disconnect, server is still registered (offline mode, not deleted)."""
         info = await mcp.call_tool_parsed("eacn3_server_info")
         sid = info["server_card"]["server_id"]
 
@@ -15,13 +15,13 @@ class TestDisconnect:
         assert resp.status_code == 200
         assert resp.json()["status"] == "online"
 
-        # Disconnect
+        # Disconnect — goes offline, does NOT unregister
         result = await mcp.call_tool_parsed("eacn3_disconnect")
         assert result["disconnected"] is True
 
-        # Server should be gone
+        # Server should still exist (preserved for reconnection)
         resp = await http.get(f"/api/discovery/servers/{sid}")
-        assert resp.status_code == 404
+        assert resp.status_code == 200
 
 
 class TestServerInfo:
@@ -42,8 +42,8 @@ class TestServerInfo:
 
 class TestDisconnectCascade:
     @pytest.mark.asyncio
-    async def test_disconnect_cascades_to_agents(self, mcp, http):
-        """Disconnecting a server removes all its agents from network."""
+    async def test_disconnect_preserves_agents(self, mcp, http):
+        """Disconnecting preserves agents (offline mode, reconnectable)."""
         # Register agent
         reg = await mcp.call_tool_parsed("eacn3_register_agent", {
             "name": "Cascade Test",
@@ -57,12 +57,11 @@ class TestDisconnectCascade:
         # Verify agent exists on network
         resp = await http.get("/api/discovery/agents/cascade-agent")
         assert resp.status_code == 200
-        assert resp.json()["name"] == "Cascade Test"
 
-        # Disconnect server
+        # Disconnect server — does NOT unregister
         result = await mcp.call_tool_parsed("eacn3_disconnect")
         assert result["disconnected"] is True
 
-        # Agent should be cascade-deleted
+        # Agent should still exist (preserved for reconnection)
         resp = await http.get("/api/discovery/agents/cascade-agent")
-        assert resp.status_code == 404
+        assert resp.status_code == 200
