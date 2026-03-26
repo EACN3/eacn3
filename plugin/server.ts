@@ -1245,8 +1245,8 @@ function buildNextAction(event: import("./src/models.js").PushEvent) {
     case "result_submitted":
       return {
         action: "review",
-        description: `Agent ${payload.agent_id ?? "?"} submitted a result for task ${event.task_id} (${payload.results_count ?? "?"}/${payload.executing_count ?? "?"} results in). Review it and decide: select it with eacn3_select_result, or wait for more.`,
-        tool: "eacn3_get_task",
+        description: `Agent ${payload.agent_id ?? "?"} submitted a result for task ${event.task_id} (${payload.results_count ?? "?"}/${payload.executing_count ?? "?"} results in). Call eacn3_get_task_results to retrieve, then eacn3_select_result to accept${payload.all_submitted ? " — all executors have submitted" : ""}.`,
+        tool: "eacn3_get_task_results",
         params: { task_id: event.task_id },
       };
     case "task_collected":

@@ -395,8 +395,7 @@ class Network:
         self._log_event("submit_result", task_id=task_id, agent_id=agent_id)
 
         # Notify initiator immediately that a result has been submitted
-        content_summary = str(content)[:200] if content else ""
-        await self.push.notify_result_submitted(task, agent_id, content_summary)
+        await self.push.notify_result_submitted(task, agent_id)
 
         #    collect result directly into parent task's result adjudications
         if task.type == TaskType.ADJUDICATION and task.parent_id:
