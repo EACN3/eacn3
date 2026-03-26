@@ -484,7 +484,7 @@ async function executeDecision(
       case "custom": {
         // Custom actions are logged but not auto-executed for safety.
         // They're pushed as enhanced events for the agent to pick up.
-        state.pushEvents([{
+        state.pushEvents(agentId, [{
           ...event,
           payload: { ...payload, _rc_decision: decision.params },
           received_at: Date.now(),
@@ -500,7 +500,7 @@ async function executeDecision(
   } catch (e) {
     console.error(`[ReverseControl] action execution failed:`, (e as Error).message);
     // On failure, ensure the event is still buffered so agent can handle manually
-    state.pushEvents([event]);
+    state.pushEvents(agentId, [event]);
   }
 }
 

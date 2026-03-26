@@ -141,17 +141,31 @@ export function getTask(taskId: string): import("./models.js").LocalTaskInfo | u
   return getState().local_tasks[taskId];
 }
 
-export function pushEvents(events: PushEvent[]): void {
-  getState().pending_events.push(...events);
+export function pushEvents(agentId: string, events: PushEvent[]): void {
+  const s = getState();
+  if (!s.pending_events[agentId]) s.pending_events[agentId] = [];
+  s.pending_events[agentId].push(...events);
   save();
 }
 
-export function drainEvents(): PushEvent[] {
+export function drainEvents(agentId: string): PushEvent[] {
   const s = getState();
-  const events = s.pending_events;
-  s.pending_events = [];
+  const events = s.pending_events[agentId] ?? [];
+  s.pending_events[agentId] = [];
   save();
   return events;
+}
+
+/** Drain events for ALL agents at once (used by legacy callers). */
+export function drainAllEvents(): PushEvent[] {
+  const s = getState();
+  const all: PushEvent[] = [];
+  for (const events of Object.values(s.pending_events)) {
+    all.push(...events);
+  }
+  s.pending_events = {};
+  save();
+  return all;
 }
 
 export function updateReputationCache(agentId: string, score: number): void {

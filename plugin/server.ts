@@ -979,7 +979,7 @@ server.tool(
     // 1. Local agent — direct push to event buffer
     const localAgent = state.getAgent(targetId);
     if (localAgent) {
-      state.pushEvents([{
+      state.pushEvents(targetId, [{
         msg_id: crypto.randomUUID().replace(/-/g, ""),
         type: "direct_message",
         task_id: "",
@@ -1145,10 +1145,13 @@ server.tool(
 // #34 eacn3_get_events
 server.tool(
   "eacn3_get_events",
-  "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details. Call periodically in your main loop.",
-  {},
-  async () => {
-    const events = state.drainEvents();
+  "Drain the in-memory event buffer for a specific agent, returning its pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details. Call periodically in your main loop.",
+  {
+    agent_id: z.string().optional().describe("Agent ID to drain events for (auto-injected if omitted)"),
+  },
+  async (params) => {
+    const agentId = resolveAgentId(params.agent_id);
+    const events = state.drainEvents(agentId);
     return ok({
       count: events.length,
       events,
@@ -1162,15 +1165,17 @@ server.tool(
   "eacn3_await_events",
   "Block until a network event arrives or timeout expires, then return with the event AND a suggested action. This is the reverse-control mechanism when MCP sampling is unavailable (e.g. OpenClaw). Instead of polling eacn3_get_events in a loop, call this — it waits for the network to push something, then tells you exactly what to do. Returns {event, suggested_action, suggested_tool, suggested_params, urgency} per event, or {timeout: true}. Prefer this over eacn3_get_events for reactive agent loops.",
   {
+    agent_id: z.string().optional().describe("Agent ID to await events for (auto-injected if omitted)"),
     timeout_seconds: z.number().optional().describe("Max seconds to wait (1-120). Default 30."),
     event_types: z.array(z.string()).optional().describe("Only return for these event types. Default: all."),
   },
   async (params) => {
+    const agentId = resolveAgentId(params.agent_id);
     const timeoutSec = Math.min(Math.max(params.timeout_seconds ?? 30, 1), 120);
     const filterTypes = params.event_types;
 
     // Check immediate buffered events
-    const immediate = drainMatchingEvents(filterTypes);
+    const immediate = drainMatchingEvents(agentId, filterTypes);
     if (immediate.length > 0) {
       return ok(buildAwaitResponse(immediate));
     }
@@ -1179,7 +1184,7 @@ server.tool(
     const result = await new Promise<import("./src/models.js").PushEvent[]>((resolve) => {
       const deadline = setTimeout(() => { cleanup(); resolve([]); }, timeoutSec * 1000);
       const poll = setInterval(() => {
-        const events = drainMatchingEvents(filterTypes);
+        const events = drainMatchingEvents(agentId, filterTypes);
         if (events.length > 0) { cleanup(); resolve(events); }
       }, 500);
       function cleanup() { clearTimeout(deadline); clearInterval(poll); }
@@ -1206,8 +1211,8 @@ server.tool(
 // Long-polling helpers
 // ---------------------------------------------------------------------------
 
-function drainMatchingEvents(filterTypes?: string[]): import("./src/models.js").PushEvent[] {
-  const all = state.drainEvents();
+function drainMatchingEvents(agentId: string, filterTypes?: string[]): import("./src/models.js").PushEvent[] {
+  const all = state.drainEvents(agentId);
   if (!filterTypes || filterTypes.length === 0) return all;
 
   const matching: import("./src/models.js").PushEvent[] = [];
@@ -1219,7 +1224,7 @@ function drainMatchingEvents(filterTypes?: string[]): import("./src/models.js").
       remaining.push(e);
     }
   }
-  if (remaining.length > 0) state.pushEvents(remaining);
+  if (remaining.length > 0) state.pushEvents(agentId, remaining);
   return matching;
 }
 
@@ -1276,7 +1281,7 @@ function registerEventCallbacks(): void {
           net.getTaskResults(subtaskId, agentId)
             .then((res) => {
               // Buffer a synthetic event with the results for the skill to pick up
-              state.pushEvents([{
+              state.pushEvents(agentId, [{
                 msg_id: crypto.randomUUID().replace(/-/g, ""),
                 type: "subtask_completed",
                 task_id: taskId,
@@ -1351,7 +1356,7 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
 
   // Passed auto-filter — enrich the buffered event with a hint
   // The skill layer (/eacn3-bounty) will see this and can fast-track bidding
-  state.pushEvents([{
+  state.pushEvents(agentId, [{
     msg_id: crypto.randomUUID().replace(/-/g, ""),
     type: "task_broadcast",
     task_id: taskId,
