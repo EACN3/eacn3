@@ -1284,7 +1284,7 @@ function buildNextAction(event: import("./src/models.js").PushEvent) {
 
 server.tool(
   "eacn3_next",
-  "Non-blocking single-step work loop: returns the ONE highest-priority pending event for this agent with a clear action directive, or {idle: true} if nothing to do. Call this in a loop to drive your agent. Unlike eacn3_await_events, this never blocks — it returns immediately. Process the returned action, then call eacn3_next again.",
+  "Non-blocking single-step work dispatcher: returns the ONE highest-priority pending event for this agent with a clear action directive, or {idle: true} if nothing to do. When you get a task back, process it, then call eacn3_next again to get the next item. When idle is returned, STOP — do not loop, sleep, or retry. Report to the user that all pending work is done.",
   {
     agent_id: z.string().optional().describe("Agent ID (auto-injected if omitted)"),
   },
@@ -1293,7 +1293,7 @@ server.tool(
     const events = state.drainEvents(agentId);
 
     if (events.length === 0) {
-      return ok({ idle: true, hint: "No pending events. Call eacn3_next again later, or do other work." });
+      return ok({ idle: true, hint: "No pending work. All caught up — stop here." });
     }
 
     // Sort by urgency (lower number = higher priority)
