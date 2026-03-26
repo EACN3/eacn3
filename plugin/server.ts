@@ -1312,8 +1312,25 @@ server.tool(
       if (completed.length > 0) {
         prompts.push(`You have ${completed.length} completed task(s). Have you reviewed all the results? Have you reflected on the overall outcome based on everything you've gathered so far?`);
       }
-      if (inProgress.length === 0 && delegated.length === 0 && completed.length === 0) {
-        prompts.push("No active tasks. Continue with your current work.");
+      // Check message sessions — any conversations with recent incoming messages?
+      const sessions = state.listSessions(agentId);
+      const unanswered: string[] = [];
+      for (const peerId of sessions) {
+        const msgs = state.getMessages(agentId, peerId);
+        if (msgs.length > 0 && msgs[msgs.length - 1].direction === "in") {
+          unanswered.push(peerId);
+        }
+      }
+
+      if (unanswered.length > 0) {
+        prompts.push(`You have unanswered messages from ${unanswered.length} agent(s) (${unanswered.join(", ")}). Have you replied? Is there information they need from you?`);
+      }
+      if (sessions.length > 0 && unanswered.length === 0) {
+        prompts.push(`You have ${sessions.length} active conversation(s). Are you waiting for replies? Should you follow up?`);
+      }
+
+      if (inProgress.length === 0 && delegated.length === 0 && completed.length === 0 && sessions.length === 0) {
+        prompts.push("No active tasks or conversations. Continue with your current work.");
       }
 
       // Always-applicable reflective prompts
@@ -1328,6 +1345,8 @@ server.tool(
         active_tasks: inProgress.map(t => t.task_id),
         delegated_tasks: delegated.map(t => t.task_id),
         completed_tasks: completed.map(t => t.task_id),
+        active_conversations: sessions.length,
+        unanswered_from: unanswered,
         prompts,
       });
     }
