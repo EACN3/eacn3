@@ -169,8 +169,9 @@ class EscrowService:
             return 0.0
 
         initiator_id, amount = entry
-        account = self._accounts.get(initiator_id)
-        if account and amount > 0:
+        if amount > 0:
+            # Use get_or_create to handle missing account edge case
+            account = self.get_or_create_account(initiator_id)
             account.unfreeze(amount)
             await self._persist_account(initiator_id)
         await self._persist_escrow(task_id)  # deletes from DB
@@ -190,10 +191,10 @@ class EscrowService:
                 f"Settlement {amount} exceeds escrow {escrowed}"
             )
 
-        account = self._accounts.get(initiator_id)
-        if account:
-            account.deduct_frozen(amount)
-            await self._persist_account(initiator_id)
+        # Use get_or_create to handle missing account edge case
+        account = self.get_or_create_account(initiator_id)
+        account.deduct_frozen(amount)
+        await self._persist_account(initiator_id)
 
         self._task_escrows[task_id] = (initiator_id, escrowed - amount)
         await self._persist_escrow(task_id)

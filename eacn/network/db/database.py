@@ -925,36 +925,41 @@ class Database:
             return {r[0]: r[1] for r in rows}
 
     async def offline_delete_by_task(self, task_id: str) -> int:
-        """Delete offline messages for a specific task (#80)."""
-        async with self.db.execute(
-            "SELECT COUNT(*) FROM offline_messages WHERE task_id = ?", (task_id,),
-        ) as cursor:
-            row = await cursor.fetchone()
-            count = row[0] if row else 0
-        if count:
-            await self._exec_write(
-                "DELETE FROM offline_messages WHERE task_id = ?", (task_id,),
-            )
-
-        return count
+        """Delete offline messages for a specific task (#80). Atomic."""
+        async with self._write_lock:
+            async with self.db.execute(
+                "SELECT COUNT(*) FROM offline_messages WHERE task_id = ?", (task_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                count = row[0] if row else 0
+            if count:
+                await self.db.execute(
+                    "DELETE FROM offline_messages WHERE task_id = ?", (task_id,),
+                )
+                await self.db.commit()
+            return count
 
     async def offline_prune_overflow(self, agent_id: str, max_per_agent: int) -> int:
-        """Delete oldest messages exceeding the per-agent cap. Returns count deleted."""
-        async with self.db.execute(
-            "SELECT COUNT(*) FROM offline_messages WHERE agent_id = ?",
-            (agent_id,),
-        ) as cursor:
-            row = await cursor.fetchone()
-            total = row[0] if row else 0
-        if total <= max_per_agent:
-            return 0
-        overflow = total - max_per_agent
-        await self._exec_write(
-            """DELETE FROM offline_messages WHERE id IN (
-                SELECT id FROM offline_messages
-                WHERE agent_id = ? ORDER BY id ASC LIMIT ?
-            )""",
-            (agent_id, overflow),
-        )
+        """Delete oldest messages exceeding the per-agent cap. Returns count deleted.
 
-        return overflow
+        Atomic: count + delete under the same lock to prevent race with concurrent stores.
+        """
+        async with self._write_lock:
+            async with self.db.execute(
+                "SELECT COUNT(*) FROM offline_messages WHERE agent_id = ?",
+                (agent_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                total = row[0] if row else 0
+            if total <= max_per_agent:
+                return 0
+            overflow = total - max_per_agent
+            await self.db.execute(
+                """DELETE FROM offline_messages WHERE id IN (
+                    SELECT id FROM offline_messages
+                    WHERE agent_id = ? ORDER BY id ASC LIMIT ?
+                )""",
+                (agent_id, overflow),
+            )
+            await self.db.commit()
+            return overflow
