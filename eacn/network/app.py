@@ -42,7 +42,7 @@ class Network:
         self.dht = self.discovery.dht
         self.gossip = self.discovery.gossip
         self.bootstrap = self.discovery.bootstrap
-        self.task_manager = TaskManager()
+        self.task_manager = TaskManager(db=self.db)
         self.push = PushService(config=self.config.push)
         self.adjudication = AdjudicationService()
         self.matcher = GlobalMatcher(config=self.config.matcher)
@@ -63,6 +63,7 @@ class Network:
         _log.info("EACN Network starting...")
         await self.escrow.load_from_db()
         await self.reputation.load_from_db()
+        await self.task_manager.load_from_db()
         await self.cluster.start()
 
     async def create_task(
@@ -163,8 +164,13 @@ class Network:
                     raise
                 # Parent not found is OK (cross-node scenario)
 
-        if any(b.agent_id == agent_id for b in task.bids):
-            raise TaskError(f"Agent {agent_id} already bid on task {task_id}")
+        existing = [b for b in task.bids if b.agent_id == agent_id]
+        if existing:
+            if existing[0].status == BidStatus.REJECTED:
+                # Allow re-bid after rejection — remove the old rejected bid
+                task.bids = [b for b in task.bids if b.agent_id != agent_id]
+            else:
+                raise TaskError(f"Agent {agent_id} already bid on task {task_id}")
 
         scores = self.reputation.get_scores([agent_id])
         negotiation_gain = self.reputation.negotiation_gain(agent_id)
@@ -289,6 +295,12 @@ class Network:
         if agent_id not in task.invited_agent_ids:
             task.invited_agent_ids.append(agent_id)
 
+        # Clear previous rejected bid so the invited agent can re-bid cleanly
+        task.bids = [
+            b for b in task.bids
+            if not (b.agent_id == agent_id and b.status == BidStatus.REJECTED)
+        ]
+
     async def reject_task(
         self,
         task_id: str,
@@ -382,6 +394,9 @@ class Network:
         self.task_manager.add_result(task_id, result)
 
         self._log_event("submit_result", task_id=task_id, agent_id=agent_id)
+
+        # Notify initiator immediately that a result has been submitted
+        await self.push.notify_result_submitted(task, agent_id)
 
         #    collect result directly into parent task's result adjudications
         if task.type == TaskType.ADJUDICATION and task.parent_id:

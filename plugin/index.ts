@@ -103,7 +103,7 @@ function registerEventCallbacks(): void {
         if (subtaskId) {
           net.getTaskResults(subtaskId, agentId)
             .then((res) => {
-              state.pushEvents([{
+              state.pushEvents(agentId, [{
                 msg_id: crypto.randomUUID().replace(/-/g, ""),
                 type: "subtask_completed",
                 task_id: taskId,
@@ -156,7 +156,7 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
     if (activeTasks.length >= agent.capabilities.max_concurrent_tasks) return;
   }
 
-  state.pushEvents([{
+  state.pushEvents(agentId, [{
     msg_id: crypto.randomUUID().replace(/-/g, ""),
     type: "task_broadcast",
     task_id: taskId,
@@ -173,8 +173,8 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
  * Drain events from the buffer, optionally filtering by type.
  * Unlike state.drainEvents(), only removes matching events and leaves the rest.
  */
-function drainMatchingEvents(filterTypes?: string[]): PushEvent[] {
-  const all = state.drainEvents();
+function drainMatchingEvents(agentId: string, filterTypes?: string[]): PushEvent[] {
+  const all = state.drainEvents(agentId);
   if (!filterTypes || filterTypes.length === 0) return all;
 
   const matching: PushEvent[] = [];
@@ -187,7 +187,7 @@ function drainMatchingEvents(filterTypes?: string[]): PushEvent[] {
     }
   }
   // Put non-matching events back
-  if (remaining.length > 0) state.pushEvents(remaining);
+  if (remaining.length > 0) state.pushEvents(agentId, remaining);
   return matching;
 }
 
@@ -949,7 +949,7 @@ export default {
       // Local agent — direct push to event buffer
       const localAgent = state.getAgent(targetId);
       if (localAgent) {
-        state.pushEvents([message]);
+        state.pushEvents(targetId, [message]);
         return ok({ sent: true, to: targetId, from: senderId, local: true });
       }
 
@@ -1045,10 +1045,11 @@ export default {
   // #32 eacn3_get_events
   api.registerTool({
     name: "eacn3_get_events",
-    description: "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. Call periodically in your main loop. Events arrive via HTTP polling and accumulate until drained — missing events means missed tasks and messages.",
-    parameters: { type: "object", properties: {} },
-    async execute() {
-      const events = state.drainEvents();
+    description: "Drain the in-memory event buffer for a specific agent, returning its pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. Call periodically in your main loop. Events arrive via HTTP polling and accumulate until drained — missing events means missed tasks and messages.",
+    parameters: { type: "object", properties: { agent_id: { type: "string", description: "Agent ID to drain events for (auto-injected if omitted)" } } },
+    async execute(_id: string, params: any) {
+      const agentId = resolveAgentId(params.agent_id);
+      const events = state.drainEvents(agentId);
       return ok({ count: events.length, events, reverse_control: rc.getStatus() });
     },
   });
@@ -1060,16 +1061,18 @@ export default {
     parameters: {
       type: "object",
       properties: {
+        agent_id: { type: "string", description: "Agent ID to await events for (auto-injected if omitted)" },
         timeout_seconds: { type: "number", description: "Max seconds to wait. Default 30, max 120." },
         event_types: { type: "array", items: { type: "string" }, description: "Only return for these event types. Default: all types." },
       },
     },
     async execute(_id: string, params: any) {
+      const agentId = resolveAgentId(params.agent_id);
       const timeoutSec = Math.min(Math.max(params.timeout_seconds ?? 30, 1), 120);
       const filterTypes = params.event_types as string[] | undefined;
 
       // Check if there are already buffered events
-      const immediate = drainMatchingEvents(filterTypes);
+      const immediate = drainMatchingEvents(agentId, filterTypes);
       if (immediate.length > 0) {
         return ok(buildAwaitResponse(immediate));
       }
@@ -1084,7 +1087,7 @@ export default {
 
         // Check periodically (every 500ms) if new events have been buffered
         const poll = setInterval(() => {
-          const events = drainMatchingEvents(filterTypes);
+          const events = drainMatchingEvents(agentId, filterTypes);
           if (events.length > 0) {
             cleanup();
             resolve(events);

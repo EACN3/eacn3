@@ -79,7 +79,7 @@ async function handleEventsPost(
     payload: { from, content, agent_id: agentId },
     received_at: Date.now(),
   };
-  pushEvents([event]);
+  pushEvents(agentId, [event]);
 
   respond(res, 200, { ok: true, agent_id: agentId });
 }

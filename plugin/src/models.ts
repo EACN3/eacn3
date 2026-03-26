@@ -309,6 +309,7 @@ export type PushEventType =
   | "discussion_update"
   | "subtask_completed"
   | "task_collected"
+  | "result_submitted"
   | "task_timeout"
   | "adjudication_task"
   | "direct_message";
@@ -534,8 +535,8 @@ export interface EacnState {
   local_tasks: Record<string, LocalTaskInfo>;
   /** Cached reputation scores keyed by agent_id; may be stale. Values are 0.0-1.0. */
   reputation_cache: Record<string, number>;
-  /** Buffered push events not yet consumed. Drained by eacn3_get_events(). */
-  pending_events: PushEvent[];
+  /** Buffered push events per agent, keyed by agent_id. Drained by eacn3_get_events(). */
+  pending_events: Record<string, PushEvent[]>;
   /** Active message sessions keyed by "local_agent_id:peer_agent_id". */
   active_sessions: Record<SessionKey, DirectMessage[]>;
 }
@@ -553,7 +554,7 @@ export function createDefaultState(networkEndpoint?: string): EacnState {
     agents: {},
     local_tasks: {},
     reputation_cache: {},
-    pending_events: [],
+    pending_events: {},
     active_sessions: {},
   };
 }

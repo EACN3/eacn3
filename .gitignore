@@ -6,3 +6,8 @@ build/
 .pytest_cache/
 eacn/network/config.toml
 eacn3
+.venv/
+eacn3.db
+eacn3.db-shm
+eacn3.db-wal
+data/
