@@ -9,8 +9,13 @@ Flow:
 
 from __future__ import annotations
 
+from collections import OrderedDict
+
 from eacn.core.exceptions import BudgetError
 from eacn.network.economy.escrow import EscrowService
+
+# Max settled task IDs to remember for idempotency
+_MAX_SETTLED = 10_000
 
 
 class SettlementService:
@@ -25,7 +30,8 @@ class SettlementService:
         self.platform_fee_rate = platform_fee_rate
         self.total_fees_collected: float = 0.0
         # Idempotency: track settled task_ids to prevent double payment (#18)
-        self._settled: set[str] = set()
+        # Uses OrderedDict as bounded LRU to prevent unbounded memory growth
+        self._settled: OrderedDict[str, bool] = OrderedDict()
 
     async def settle(
         self,
@@ -41,7 +47,7 @@ class SettlementService:
         4. Refund remainder to initiator
         """
         # Idempotency guard: prevent double settlement
-        if task_id in self._settled:
+        if task_id in self._settled:  # O(1) lookup in OrderedDict
             raise BudgetError(f"Task {task_id} already settled")
 
         platform_fee = bid_price * self.platform_fee_rate
@@ -66,7 +72,10 @@ class SettlementService:
 
         # Track platform fees and mark as settled AFTER all mutations succeed
         self.total_fees_collected += platform_fee
-        self._settled.add(task_id)
+        self._settled[task_id] = True
+        # Evict oldest entries to prevent unbounded growth
+        while len(self._settled) > _MAX_SETTLED:
+            self._settled.popitem(last=False)
 
         return SettlementResult(
             task_id=task_id,

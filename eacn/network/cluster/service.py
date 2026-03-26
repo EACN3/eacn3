@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections import OrderedDict
 from typing import Any, Callable, Awaitable, TYPE_CHECKING
 
 import httpx
@@ -59,7 +60,9 @@ class ClusterService:
         self._agent_counts: dict[str, int] = {}  # node_id → connected agent count
         self._agent_counts_lock = asyncio.Lock()  # Protects _agent_counts (#105)
         # Idempotency: track delivered status notifications (#39)
-        self._delivered_status: set[str] = set()
+        # Bounded to prevent unbounded memory growth
+        self._delivered_status: OrderedDict[str, bool] = OrderedDict()
+        self._max_delivered_status: int = 10_000
         self._standalone = not bool(self.config.seed_nodes)
         self._http: httpx.AsyncClient | None = None
 
@@ -255,7 +258,9 @@ class ClusterService:
         if idem_key in self._delivered_status:
             _log.debug("Skipping duplicate status notification %s", idem_key)
             return
-        self._delivered_status.add(idem_key)
+        self._delivered_status[idem_key] = True
+        while len(self._delivered_status) > self._max_delivered_status:
+            self._delivered_status.popitem(last=False)
         recipients = payload.get("recipients", [])
         if not self._push_handler or not recipients:
             return

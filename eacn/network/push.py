@@ -39,6 +39,7 @@ class PushService:
         self.MAX_RETRIES: int = cfg.max_retries
         self._handler = handler
         self._history: list[PushEvent] = []
+        self._max_history: int = 1000  # Prevent unbounded memory growth
 
     def set_handler(self, handler: PushHandler) -> None:
         self._handler = handler
@@ -190,6 +191,9 @@ class PushService:
     async def _deliver(self, event: PushEvent) -> None:
         """Best-effort delivery with limited retries."""
         self._history.append(event)
+        # Trim history to prevent unbounded memory growth
+        if len(self._history) > self._max_history:
+            self._history = self._history[-self._max_history:]
 
         if not self._handler:
             return
