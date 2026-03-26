@@ -143,6 +143,29 @@ class PushService:
         await self._deliver(event)
         return event
 
+    async def notify_result_submitted(
+        self, task: Task, agent_id: str, content_summary: str = ""
+    ) -> PushEvent:
+        """Notify initiator that an agent has submitted a result."""
+        results_count = len(task.results)
+        executing_count = len([
+            b for b in task.bids
+            if b.status in ("executing", "accepted")
+        ])
+        event = PushEvent(
+            type=PushEventType.RESULT_SUBMITTED,
+            task_id=task.id,
+            recipients=[task.initiator_id],
+            payload={
+                "agent_id": agent_id,
+                "results_count": results_count,
+                "executing_count": executing_count,
+                "summary": content_summary[:200] if content_summary else "",
+            },
+        )
+        await self._deliver(event)
+        return event
+
     async def notify_task_collected(
         self, task: Task
     ) -> PushEvent:

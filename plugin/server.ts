@@ -1203,6 +1203,7 @@ const URGENCY_ORDER: Record<string, number> = {
   direct_message: 1,
   subtask_completed: 1,
   bid_request_confirmation: 1,
+  result_submitted: 1,
   task_collected: 2,
   bid_result: 2,
   discussion_update: 3,
@@ -1241,10 +1242,17 @@ function buildNextAction(event: import("./src/models.js").PushEvent) {
         tool: "eacn3_confirm_budget",
         params: { task_id: event.task_id },
       };
+    case "result_submitted":
+      return {
+        action: "review",
+        description: `Agent ${payload.agent_id ?? "?"} submitted a result for task ${event.task_id} (${payload.results_count ?? "?"}/${payload.executing_count ?? "?"} results in). Review it and decide: select it with eacn3_select_result, or wait for more.`,
+        tool: "eacn3_get_task",
+        params: { task_id: event.task_id },
+      };
     case "task_collected":
       return {
         action: "collect",
-        description: `Task ${event.task_id} has results ready. Retrieve them.`,
+        description: `Task ${event.task_id}: all executors have submitted. Retrieve and select.`,
         tool: "eacn3_get_task_results",
         params: { task_id: event.task_id },
       };
@@ -1413,8 +1421,10 @@ function buildAwaitResponse(events: import("./src/models.js").PushEvent[]) {
           return { event, suggested_action: `Subtask ${payload.subtask_id ?? "?"} done. Fetch results.`, suggested_tool: "eacn3_get_task_results", suggested_params: { task_id: String(payload.subtask_id ?? event.task_id) }, urgency: "high" };
         case "bid_request_confirmation":
           return { event, suggested_action: `Bid exceeded budget on ${event.task_id}. Approve/reject.`, suggested_tool: "eacn3_confirm_budget", suggested_params: { task_id: event.task_id }, urgency: "high" };
+        case "result_submitted":
+          return { event, suggested_action: `Agent ${payload.agent_id ?? "?"} submitted result for ${event.task_id}. Review and decide: select with eacn3_select_result or wait for more.`, suggested_tool: "eacn3_get_task", suggested_params: { task_id: event.task_id }, urgency: "high" };
         case "task_collected":
-          return { event, suggested_action: `Task ${event.task_id} has results. Retrieve.`, suggested_tool: "eacn3_get_task_results", suggested_params: { task_id: event.task_id }, urgency: "medium" };
+          return { event, suggested_action: `Task ${event.task_id}: all executors done. Retrieve and select.`, suggested_tool: "eacn3_get_task_results", suggested_params: { task_id: event.task_id }, urgency: "medium" };
         case "task_timeout":
           return { event, suggested_action: `Task ${event.task_id} timed out. No action needed.`, suggested_tool: "eacn3_get_task", suggested_params: { task_id: event.task_id }, urgency: "low" };
         default:

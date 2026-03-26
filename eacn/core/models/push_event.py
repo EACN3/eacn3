@@ -16,6 +16,7 @@ class PushEventType(str, Enum):
     DISCUSSION_UPDATE = "discussion_update"
     SUBTASK_COMPLETED = "subtask_completed"
     TASK_COLLECTED = "task_collected"
+    RESULT_SUBMITTED = "result_submitted"
     TASK_TIMEOUT = "task_timeout"
     ADJUDICATION_TASK = "adjudication_task"
     DIRECT_MESSAGE = "direct_message"

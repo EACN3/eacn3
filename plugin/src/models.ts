@@ -309,6 +309,7 @@ export type PushEventType =
   | "discussion_update"
   | "subtask_completed"
   | "task_collected"
+  | "result_submitted"
   | "task_timeout"
   | "adjudication_task"
   | "direct_message";
