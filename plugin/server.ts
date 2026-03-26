@@ -1284,7 +1284,7 @@ function buildNextAction(event: import("./src/models.js").PushEvent) {
 
 server.tool(
   "eacn3_next",
-  "Non-blocking single-step work dispatcher: returns the ONE highest-priority pending event for this agent with a clear action directive, or {idle: true} if nothing to do. When you get a task back, process it, then call eacn3_next again to get the next item. When idle is returned, STOP — do not loop, sleep, or retry. Report to the user that all pending work is done.",
+  "Non-blocking single-step work dispatcher: returns the ONE highest-priority pending event for this agent with a clear action directive. When you get a task back, process it, then call eacn3_next again. When idle is returned, there are no NEW network events — but check the returned 'prompts' array for context-aware guidance: unfinished tasks, delegated work to review, reflection questions, and delegation suggestions. Act on those prompts instead of waiting. Never sleep or poll — always keep making progress.",
   {
     agent_id: z.string().optional().describe("Agent ID (auto-injected if omitted)"),
   },
@@ -1293,7 +1293,43 @@ server.tool(
     const events = state.drainEvents(agentId);
 
     if (events.length === 0) {
-      return ok({ idle: true, hint: "No pending work. All caught up — stop here." });
+      // Build context-aware prompts based on agent's current task state
+      const tasks = Object.values(state.getState().local_tasks).filter(
+        (t) => t.agent_id === agentId,
+      );
+      const inProgress = tasks.filter((t) => t.role === "executor" && (t.status === "bidding" || t.status === "unclaimed"));
+      const delegated = tasks.filter((t) => t.role === "initiator" && t.status !== "completed" && t.status !== "no_one");
+      const completed = tasks.filter((t) => t.status === "completed" || t.status === "awaiting_retrieval");
+
+      const prompts: string[] = [];
+
+      if (inProgress.length > 0) {
+        prompts.push(`You have ${inProgress.length} task(s) still in progress (${inProgress.map(t => t.task_id).join(", ")}). Have you actually finished them? Are the results thorough and correct?`);
+      }
+      if (delegated.length > 0) {
+        prompts.push(`You delegated ${delegated.length} task(s) to other agents (${delegated.map(t => t.task_id).join(", ")}). Have you checked their results? Do the results meet your expectations?`);
+      }
+      if (completed.length > 0) {
+        prompts.push(`You have ${completed.length} completed task(s). Have you reviewed all the results? Have you reflected on the overall outcome based on everything you've gathered so far?`);
+      }
+      if (inProgress.length === 0 && delegated.length === 0 && completed.length === 0) {
+        prompts.push("No active tasks. Continue with your current work.");
+      }
+
+      // Always-applicable reflective prompts
+      prompts.push(
+        "Are there parts of your current work that another agent with different expertise could handle better? Consider delegating via eacn3_create_task.",
+        "If you're stuck on something, have you considered alternative approaches?",
+        "If you have long-running subtasks, have you broken them into smaller pieces that can run in parallel?",
+      );
+
+      return ok({
+        idle: true,
+        active_tasks: inProgress.map(t => t.task_id),
+        delegated_tasks: delegated.map(t => t.task_id),
+        completed_tasks: completed.map(t => t.task_id),
+        prompts,
+      });
     }
 
     // Sort by urgency (lower number = higher priority)
