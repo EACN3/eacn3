@@ -42,7 +42,7 @@ class Network:
         self.dht = self.discovery.dht
         self.gossip = self.discovery.gossip
         self.bootstrap = self.discovery.bootstrap
-        self.task_manager = TaskManager()
+        self.task_manager = TaskManager(db=self.db)
         self.push = PushService(config=self.config.push)
         self.adjudication = AdjudicationService()
         self.matcher = GlobalMatcher(config=self.config.matcher)
@@ -63,6 +63,7 @@ class Network:
         _log.info("EACN Network starting...")
         await self.escrow.load_from_db()
         await self.reputation.load_from_db()
+        await self.task_manager.load_from_db()
         await self.cluster.start()
 
     async def create_task(
@@ -81,23 +82,33 @@ class Network:
     ) -> Task:
         """Publish a new task: freeze budget → create → discover → broadcast."""
         await self.escrow.freeze_budget(initiator_id, task_id, budget)
-        task = Task(
-            id=task_id,
-            content=content,
-            initiator_id=initiator_id,
-            domains=domains,
-            budget=budget,
-            deadline=deadline,
-            max_concurrent_bidders=max_concurrent_bidders or self.config.task.default_max_concurrent_bidders,
-            max_depth=max_depth or self.config.task.default_max_depth,
-            human_contact=human_contact,
-            level=TaskLevel(level) if level else TaskLevel.GENERAL,
-            invited_agent_ids=invited_agent_ids or [],
-        )
-        task = self.task_manager.create(task)
+        try:
+            task = Task(
+                id=task_id,
+                content=content,
+                initiator_id=initiator_id,
+                domains=domains,
+                budget=budget,
+                deadline=deadline,
+                max_concurrent_bidders=max_concurrent_bidders or self.config.task.default_max_concurrent_bidders,
+                max_depth=max_depth or self.config.task.default_max_depth,
+                human_contact=human_contact,
+                level=TaskLevel(level) if level else TaskLevel.GENERAL,
+                invited_agent_ids=invited_agent_ids or [],
+            )
+            task = self.task_manager.create(task)
+        except Exception:
+            # Release frozen budget if task creation fails (#1)
+            await self.escrow.release(task_id)
+            raise
         self._log_event("create_task", task_id=task_id, agent_id=initiator_id)
-        await self._broadcast_to_candidates(task)
-        await self.cluster.broadcast_task({
+        # Broadcast is best-effort — failure should not lose the task or escrow
+        try:
+            await self._broadcast_to_candidates(task)
+        except Exception:
+            _log.warning("Failed to broadcast task %s to candidates", task_id, exc_info=True)
+        try:
+            await self.cluster.broadcast_task({
             "task_id": task.id,
             "initiator_id": initiator_id,
             "domains": domains,
@@ -109,6 +120,8 @@ class Network:
             "level": task.level.value,
             "invited_agent_ids": task.invited_agent_ids,
         })
+        except Exception:
+            _log.warning("Failed to broadcast task %s to cluster", task_id, exc_info=True)
 
         return task
 
@@ -122,6 +135,19 @@ class Network:
         server_id: str | None = None,
     ) -> BidStatus:
         """Agent bids on a task: validate → add bid → push result."""
+        async with self.task_manager.get_lock(task_id):
+            return await self._submit_bid_inner(
+                task_id, agent_id, confidence, price, server_id,
+            )
+
+    async def _submit_bid_inner(
+        self,
+        task_id: str,
+        agent_id: str,
+        confidence: float,
+        price: float,
+        server_id: str | None = None,
+    ) -> BidStatus:
         task = self.task_manager.get(task_id)
 
         # Guard: reject bids if parent task has already terminated
@@ -138,8 +164,13 @@ class Network:
                     raise
                 # Parent not found is OK (cross-node scenario)
 
-        if any(b.agent_id == agent_id for b in task.bids):
-            raise TaskError(f"Agent {agent_id} already bid on task {task_id}")
+        existing = [b for b in task.bids if b.agent_id == agent_id]
+        if existing:
+            if existing[0].status == BidStatus.REJECTED:
+                # Allow re-bid after rejection — remove the old rejected bid
+                task.bids = [b for b in task.bids if b.agent_id != agent_id]
+            else:
+                raise TaskError(f"Agent {agent_id} already bid on task {task_id}")
 
         scores = self.reputation.get_scores([agent_id])
         negotiation_gain = self.reputation.negotiation_gain(agent_id)
@@ -245,7 +276,7 @@ class Network:
         task = self.task_manager.get(task_id)
         if task.initiator_id != initiator_id:
             raise TaskError("Only the task initiator can invite agents")
-        if task.status.value not in ("unclaimed", "bidding"):
+        if task.status not in (TaskStatus.UNCLAIMED, TaskStatus.BIDDING):
             raise TaskError("Can only invite agents while task is open")
 
         # Guard: reject invites if parent task has already terminated
@@ -263,6 +294,12 @@ class Network:
 
         if agent_id not in task.invited_agent_ids:
             task.invited_agent_ids.append(agent_id)
+
+        # Clear previous rejected bid so the invited agent can re-bid cleanly
+        task.bids = [
+            b for b in task.bids
+            if not (b.agent_id == agent_id and b.status == BidStatus.REJECTED)
+        ]
 
     async def reject_task(
         self,
@@ -311,6 +348,15 @@ class Network:
         content: Any,
     ) -> None:
         """Agent submits result: validate → store → adjudicate → promote."""
+        async with self.task_manager.get_lock(task_id):
+            await self._submit_result_inner(task_id, agent_id, content)
+
+    async def _submit_result_inner(
+        self,
+        task_id: str,
+        agent_id: str,
+        content: Any,
+    ) -> None:
         task = self.task_manager.get(task_id)
 
         # Guard: reject results if parent task has already terminated
@@ -337,11 +383,20 @@ class Network:
                 f"Agent {agent_id} is not an active bidder on task {task_id}"
             )
 
+        # Prevent duplicate result submissions from same agent (#33)
+        if any(r.agent_id == agent_id for r in task.results):
+            raise TaskError(
+                f"Agent {agent_id} already submitted a result for task {task_id}"
+            )
+
         result = Result(agent_id=agent_id, content=content)
 
         self.task_manager.add_result(task_id, result)
 
         self._log_event("submit_result", task_id=task_id, agent_id=agent_id)
+
+        # Notify initiator immediately that a result has been submitted
+        await self.push.notify_result_submitted(task, agent_id)
 
         #    collect result directly into parent task's result adjudications
         if task.type == TaskType.ADJUDICATION and task.parent_id:
@@ -351,7 +406,11 @@ class Network:
                 # Extract verdict/score from content
                 if isinstance(content, dict):
                     verdict = content.get("verdict", str(content))
-                    score = float(content.get("score", 1.0))
+                    try:
+                        score = float(content.get("score", 1.0))
+                    except (ValueError, TypeError):
+                        score = 1.0
+                    score = max(0.0, min(score, 1.0))
                 else:
                     verdict = str(content)
                     score = 1.0
@@ -362,8 +421,12 @@ class Network:
                     verdict=verdict,
                     score=score,
                 )
-            except TaskError:
-                _log.debug("Adjudication parent task not found, skipping")
+            except TaskError as e:
+                if "not found" in str(e):
+                    _log.debug("Adjudication parent task not found, skipping")
+                else:
+                    _log.warning("Adjudication collection failed: %s", e)
+                    raise
 
         if self.adjudication.should_create_adjudication(task):
             await self._create_adjudication(task, agent_id)
@@ -371,6 +434,7 @@ class Network:
         if self.task_manager.check_auto_collect(task_id):
             await self.push.notify_task_collected(task)
             await self._notify_status_cross_node(task, "awaiting_retrieval")
+            return  # Task collected; skip promotion (#64)
 
         promoted = self.task_manager.promote_from_queue(task_id)
         if promoted:
@@ -399,6 +463,18 @@ class Network:
         When close_task=True, allows selection during BIDDING status —
         the task is closed first, then the result is selected.
         """
+        async with self.task_manager.get_lock(task_id):
+            await self._select_result_inner(
+                task_id, agent_id, initiator_id, close_task,
+            )
+
+    async def _select_result_inner(
+        self,
+        task_id: str,
+        agent_id: str,
+        initiator_id: str,
+        close_task: bool = False,
+    ) -> None:
         task = self.task_manager.get(task_id)
 
         if task.initiator_id != initiator_id:
@@ -420,6 +496,10 @@ class Network:
                     "(use close_task=true to close during bidding)"
                 )
 
+        # Save pre-select state for rollback
+        pre_select_status = task.status
+        pre_bid_statuses = {b.agent_id: b.status for b in task.bids}
+
         selected = self.task_manager.select_result(task_id, agent_id)
 
         bid_price = 0.0
@@ -429,7 +509,18 @@ class Network:
                 break
 
         if task.type != TaskType.ADJUDICATION and bid_price > 0:
-            await self.settlement.settle(task_id, agent_id, bid_price)
+            # Terminate children first to reclaim sub-escrow before settlement (#65)
+            await self._terminate_children(task)
+            try:
+                await self.settlement.settle(task_id, agent_id, bid_price)
+            except Exception:
+                # Full rollback: task status, bid statuses, result selection
+                task.status = pre_select_status
+                for bid in task.bids:
+                    if bid.agent_id in pre_bid_statuses:
+                        bid.status = pre_bid_statuses[bid.agent_id]
+                selected.selected = False
+                raise
 
         await self.reputation.propagate_selection(task.initiator_id, agent_id)
 
@@ -437,8 +528,7 @@ class Network:
 
         self._log_event("select_result", task_id=task_id, agent_id=agent_id)
 
-        # Cascade-close child tasks (adjudication tasks etc.)
-        await self._terminate_children(task)
+        # Children already terminated before settlement (#65)
 
 
     async def close_task(self, task_id: str, initiator_id: str) -> Task:
@@ -490,10 +580,10 @@ class Network:
         if task.initiator_id != initiator_id:
             raise TaskError("Only the task initiator can update discussions")
 
-        if task.status != TaskStatus.BIDDING:
+        if task.status not in (TaskStatus.BIDDING, TaskStatus.AWAITING_RETRIEVAL):
             raise TaskError(
                 f"Cannot update discussions in status {task.status.value}; "
-                "task must be in bidding"
+                "task must be in bidding or awaiting_retrieval"
             )
 
         # Guard: reject if parent task has already terminated
@@ -509,7 +599,7 @@ class Network:
                 if "already terminated" in str(e):
                     raise
 
-        task = self.task_manager.update_discussions(task_id, message)
+        task = self.task_manager.update_discussions(task_id, message, author=initiator_id)
         self._log_event("update_discussions", task_id=task_id)
         await self.push.notify_discussion_update(task)
         return task
@@ -546,9 +636,15 @@ class Network:
         if new_budget is not None and new_budget > task.budget:
             additional = new_budget - task.budget
             await self.escrow.confirm_budget_increase(initiator_id, task_id, additional)
-            task.budget = new_budget
-            if task.remaining_budget is not None:
-                task.remaining_budget += additional
+            try:
+                task.budget = new_budget
+                if task.remaining_budget is not None:
+                    task.remaining_budget += additional
+            except Exception:
+                # Escrow already increased — this shouldn't fail for simple
+                # attribute assignment, but guard against unexpected errors (#4)
+                _log.error("Failed to update task budget after escrow increase")
+                raise
 
         # Re-evaluate pending bids
         for bid in task.bids:
@@ -612,10 +708,20 @@ class Network:
             level=level,
         )
 
-        # Transfer escrow
-        await self.escrow.allocate_subtask_budget(
-            parent_task_id, subtask.id, initiator_id, budget,
-        )
+        # Transfer escrow; rollback task_manager state on failure (#2)
+        try:
+            await self.escrow.allocate_subtask_budget(
+                parent_task_id, subtask.id, initiator_id, budget,
+            )
+        except Exception:
+            # Rollback: restore parent remaining_budget and remove subtask
+            parent = self.task_manager.get(parent_task_id)
+            if parent.remaining_budget is not None:
+                parent.remaining_budget += budget
+            if subtask.id in parent.child_ids:
+                parent.child_ids.remove(subtask.id)
+            self.task_manager._tasks.pop(subtask.id, None)
+            raise
 
         self._log_event(
             "create_subtask", task_id=subtask.id, agent_id=initiator_id,
@@ -642,6 +748,9 @@ class Network:
                 await self.push.notify_task_collected(task)
             elif new_status == TaskStatus.NO_ONE_ABLE:
                 await self.settlement.refund_no_one_capable(task.id)
+
+            # Cascade-close child tasks on deadline expiry (#20)
+            await self._terminate_children(task)
 
             await self._notify_status_cross_node(task, "timeout")
 
@@ -677,12 +786,14 @@ class Network:
         participant_nodes = self.cluster.router.get_participants(task.id)
         if not participant_nodes:
             return
-        # Gather agents involved in the task
+        # Gather agents involved in the task (filter empty IDs)
         recipients = list({
             *[b.agent_id for b in task.bids
-              if b.status.value in ("executing", "waiting", "accepted")],
-            task.initiator_id,
+              if b.status.value in ("executing", "waiting", "accepted") and b.agent_id],
+            *([] if not task.initiator_id else [task.initiator_id]),
         })
+        if not recipients:
+            return
         await self.cluster.router.notify_status(
             task.id, status, participant_nodes,
             payload={"status": status, "recipients": recipients},
@@ -703,20 +814,31 @@ class Network:
             if child.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
                 continue
 
-            # Reject all active bids and notify affected agents
+            # Reject all active bids and notify affected agents (Bug 3: don't let
+            # one notification failure block the rest)
             for bid in child.bids:
                 if bid.status in (BidStatus.EXECUTING, BidStatus.WAITING, BidStatus.PENDING):
                     bid.status = BidStatus.REJECTED
-                    await self.push.notify_bid_result(
-                        child_id, bid.agent_id, accepted=False,
-                        reason="Parent task terminated",
-                    )
+                    try:
+                        await self.push.notify_bid_result(
+                            child_id, bid.agent_id, accepted=False,
+                            reason="Parent task terminated",
+                        )
+                    except Exception:
+                        _log.warning(
+                            "Failed to notify %s about child %s termination",
+                            bid.agent_id, child_id, exc_info=True,
+                        )
 
             try:
                 child = self.task_manager.close_task(child_id)
+                # Only refund if no results (no_one_able). Children with results
+                # go to awaiting_retrieval — their escrow should stay for potential settlement.
+                if child.status == TaskStatus.NO_ONE_ABLE:
+                    await self.settlement.refund_no_one_capable(child_id)
                 _log.info(
-                    "Cascade-closed child task %s (parent %s terminated)",
-                    child_id, task.id,
+                    "Cascade-closed child task %s → %s (parent %s terminated)",
+                    child_id, child.status.value, task.id,
                 )
             except TaskError:
                 continue
@@ -741,6 +863,9 @@ class Network:
         self, parent_task: Task, result_agent_id: str
     ) -> None:
         """Create and broadcast an adjudication task (non-blocking)."""
+        # Don't create adjudication for terminated parents (#66)
+        if parent_task.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+            return
         adj_task = self.adjudication.create_adjudication_task(
             parent_task, result_agent_id,
         )

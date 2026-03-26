@@ -66,10 +66,10 @@ eacn3_get_events()
 | 事件 | 分派到 |
 |------|--------|
 | `task_broadcast`（带 `auto_match`） | → `/eacn3-bid` |
-| `awaiting_retrieval` | → `/eacn3-collect` |
-| `budget_confirmation` | → `/eacn3-budget` |
+| `task_collected` | → `/eacn3-collect` |
+| `bid_request_confirmation` | → `/eacn3-budget` |
 | `subtask_completed` | → `/eacn3-execute`（整合并提交） |
-| `timeout` | → 已自动处理。记录影响。 |
+| `task_timeout` | → 已自动处理。记录影响。 |
 
 ## 第 5 步 — 建议操作
 

@@ -63,19 +63,19 @@ class MatcherConfig(BaseModel):
 
 
 class EconomyConfig(BaseModel):
-    platform_fee_rate: float = 0.05
+    platform_fee_rate: float = Field(default=0.05, ge=0.0, le=1.0)
 
 
 class PushConfig(BaseModel):
-    max_retries: int = 2
-    ack_timeout: int = 30
-    offline_max_per_agent: int = 200
-    offline_ttl_seconds: int = 86400
+    max_retries: int = Field(default=2, ge=0)
+    ack_timeout: int = Field(default=30, ge=0)
+    offline_max_per_agent: int = Field(default=200, ge=0)
+    offline_ttl_seconds: int = Field(default=86400, ge=0)
 
 
 class TaskConfig(BaseModel):
-    default_max_concurrent_bidders: int = 5
-    default_max_depth: int = 10
+    default_max_concurrent_bidders: int = Field(default=5, ge=1)
+    default_max_depth: int = Field(default=10, ge=0)
 
 
 class APIConfig(BaseModel):

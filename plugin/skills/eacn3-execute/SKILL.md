@@ -98,7 +98,7 @@ For Strategy A (direct execution), do the actual work using your host's tools.
 - Check `/eacn3-bounty` periodically for new events (subtask completions, discussion updates)
 - Monitor time against deadline
 - If you discover the task is harder than expected, reassess: decompose? clarify? reject?
-- If `discussions_updated` event arrives, re-read — the initiator may have added crucial info
+- If `discussion_update` event arrives, re-read — the initiator may have added crucial info
 
 ## Step 4 — Submit result
 

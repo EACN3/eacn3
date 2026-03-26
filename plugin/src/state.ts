@@ -2,7 +2,8 @@
  * Local state persistence — reads/writes ~/.eacn3/state.json.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, renameSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { type EacnState, type AgentCard, type LocalTaskInfo, type PushEvent, type DirectMessage, type SessionKey, MAX_MESSAGES_PER_SESSION, createDefaultState } from "./models.js";
@@ -49,16 +50,36 @@ export function load(): EacnState {
 }
 
 /**
- * Persist current state to disk.
+ * Serialize save operations to prevent concurrent write races (#107).
+ */
+let saveQueued = false;
+let saving = false;
+
+/**
+ * Persist current state to disk using atomic write (#107).
+ * Writes to a temp file first, then renames to avoid partial writes.
  */
 export function save(): void {
   if (!state) return;
-  mkdirSync(EACN3_DIR, { recursive: true });
-  // Backup current file before overwriting
-  if (existsSync(STATE_FILE)) {
-    try { copyFileSync(STATE_FILE, STATE_BACKUP); } catch { /* best-effort */ }
+  if (saving) { saveQueued = true; return; }
+  saving = true;
+  try {
+    mkdirSync(EACN3_DIR, { recursive: true });
+    // Backup current file before overwriting
+    if (existsSync(STATE_FILE)) {
+      try { copyFileSync(STATE_FILE, STATE_BACKUP); } catch { /* best-effort */ }
+    }
+    // Atomic write: write to temp, then rename (#107)
+    const tmpFile = STATE_FILE + "." + randomBytes(4).toString("hex") + ".tmp";
+    writeFileSync(tmpFile, JSON.stringify(state, null, 2));
+    renameSync(tmpFile, STATE_FILE);
+  } finally {
+    saving = false;
+    if (saveQueued) {
+      saveQueued = false;
+      save();
+    }
   }
-  writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
 /**
@@ -120,17 +141,31 @@ export function getTask(taskId: string): import("./models.js").LocalTaskInfo | u
   return getState().local_tasks[taskId];
 }
 
-export function pushEvents(events: PushEvent[]): void {
-  getState().pending_events.push(...events);
+export function pushEvents(agentId: string, events: PushEvent[]): void {
+  const s = getState();
+  if (!s.pending_events[agentId]) s.pending_events[agentId] = [];
+  s.pending_events[agentId].push(...events);
   save();
 }
 
-export function drainEvents(): PushEvent[] {
+export function drainEvents(agentId: string): PushEvent[] {
   const s = getState();
-  const events = s.pending_events;
-  s.pending_events = [];
+  const events = s.pending_events[agentId] ?? [];
+  s.pending_events[agentId] = [];
   save();
   return events;
+}
+
+/** Drain events for ALL agents at once (used by legacy callers). */
+export function drainAllEvents(): PushEvent[] {
+  const s = getState();
+  const all: PushEvent[] = [];
+  for (const events of Object.values(s.pending_events)) {
+    all.push(...events);
+  }
+  s.pending_events = {};
+  save();
+  return all;
 }
 
 export function updateReputationCache(agentId: string, score: number): void {

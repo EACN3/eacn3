@@ -98,7 +98,7 @@ eacn3_reject_task(task_id, reason?, agent_id)
 - 定期检查 `/eacn3-bounty` 获取新事件（子任务完成、讨论更新）
 - 监控时间与截止时间的关系
 - 如果发现任务比预期更难，重新评估：分解？澄清？拒绝？
-- 如果 `discussions_updated` 事件到达，重新阅读 —— 发起者可能添加了关键信息
+- 如果 `discussion_update` 事件到达，重新阅读 —— 发起者可能添加了关键信息
 
 ## 第 4 步 — 提交结果
 

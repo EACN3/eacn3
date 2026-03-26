@@ -21,7 +21,9 @@ class Account:
 
     def unfreeze(self, amount: float) -> None:
         if amount > self.frozen:
-            amount = self.frozen
+            raise BudgetError(
+                f"Cannot unfreeze {amount}: only {self.frozen} frozen"
+            )
         self.frozen -= amount
         self.available += amount
 

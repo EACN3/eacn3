@@ -285,29 +285,36 @@ export interface Result {
 }
 
 // ---------------------------------------------------------------------------
-// WebSocket Push Events
+// Push Events
 // ---------------------------------------------------------------------------
 
 /**
- * WebSocket push event types. Events buffer in memory; drain with eacn3_get_events().
+ * Push event types — aligned with cloud PushEventType enum.
+ * See docs/event-types.md for the shared contract.
+ *
  * - `"task_broadcast"` — New task matching your domains is available. Evaluate and bid.
- * - `"discussions_updated"` — Initiator added a clarification message to a task.
+ * - `"bid_request_confirmation"` — A bid on your task exceeded its budget; approve or reject.
+ * - `"bid_result"` — Your bid was accepted or rejected.
+ * - `"discussion_update"` — Initiator added a clarification message to a task.
  * - `"subtask_completed"` — A subtask you created has finished; payload contains results.
- * - `"awaiting_retrieval"` — A task you published has results ready for retrieval.
- * - `"budget_confirmation"` — A bid on your task exceeded its budget; approve or reject via eacn3_confirm_budget.
- * - `"timeout"` — A task expired with no result. Reputation hit is automatic.
+ * - `"task_collected"` — A task you published has results ready for retrieval.
+ * - `"task_timeout"` — A task expired with no result. Reputation hit is automatic.
+ * - `"adjudication_task"` — You've been asked to adjudicate a dispute.
  * - `"direct_message"` — Another agent sent you a message; check payload.from and payload.content.
  */
 export type PushEventType =
   | "task_broadcast"
-  | "discussions_updated"
+  | "bid_request_confirmation"
+  | "bid_result"
+  | "discussion_update"
   | "subtask_completed"
-  | "awaiting_retrieval"
-  | "budget_confirmation"
-  | "timeout"
+  | "task_collected"
+  | "result_submitted"
+  | "task_timeout"
+  | "adjudication_task"
   | "direct_message";
 
-/** A single event received over the WebSocket connection. */
+/** A single push event received from the server message queue. */
 export interface PushEvent {
   /** Unique message ID for ACK-based reliable delivery. */
   msg_id: string;
@@ -317,8 +324,8 @@ export interface PushEvent {
   task_id: string;
   /** Event-specific data; structure varies by type (e.g. results for subtask_completed, from/content for direct_message). */
   payload: Record<string, unknown>;
-  /** Unix timestamp in milliseconds when the event was received; added client-side by ws-manager. */
-  received_at: number; // timestamp ms, added by ws-manager
+  /** Unix timestamp in milliseconds when the event was received client-side. */
+  received_at: number;
   /** True if this message was delivered from offline cache on reconnect. */
   _offline?: boolean;
 }
@@ -360,7 +367,7 @@ export interface RegisterServerResponse {
   status: string;
 }
 
-/** Response from eacn3_register_agent. Agent is now discoverable and receives WebSocket events. */
+/** Response from eacn3_register_agent. Agent is now discoverable and receives push events. */
 export interface RegisterAgentResponse {
   /** Unique agent ID assigned by the network on registration. */
   agent_id: string;
@@ -479,6 +486,8 @@ export interface HealthResponse {
 export interface LocalTaskInfo {
   /** The task's unique identifier. */
   task_id: string;
+  /** The agent this entry belongs to (#108). */
+  agent_id: string;
   /** Whether this agent created the task ("initiator") or is working on it ("executor"). */
   role: "initiator" | "executor";
   /** Last-known lifecycle state; may be stale if not recently refreshed. */
@@ -526,8 +535,8 @@ export interface EacnState {
   local_tasks: Record<string, LocalTaskInfo>;
   /** Cached reputation scores keyed by agent_id; may be stale. Values are 0.0-1.0. */
   reputation_cache: Record<string, number>;
-  /** Buffered WebSocket events not yet consumed. Drained by eacn3_get_events(). */
-  pending_events: PushEvent[];
+  /** Buffered push events per agent, keyed by agent_id. Drained by eacn3_get_events(). */
+  pending_events: Record<string, PushEvent[]>;
   /** Active message sessions keyed by "local_agent_id:peer_agent_id". */
   active_sessions: Record<SessionKey, DirectMessage[]>;
 }
@@ -545,7 +554,7 @@ export function createDefaultState(networkEndpoint?: string): EacnState {
     agents: {},
     local_tasks: {},
     reputation_cache: {},
-    pending_events: [],
+    pending_events: {},
     active_sessions: {},
   };
 }

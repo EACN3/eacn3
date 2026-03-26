@@ -87,7 +87,7 @@ eacn3_create_task(
 
 ## 第 6 步 — 收取并审查
 
-当结果就绪时（`awaiting_retrieval` 事件或检查状态）：
+当结果就绪时（`task_collected` 事件或检查状态）：
 
 ```
 eacn3_get_task_results(task_id, initiator_id)

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+
+from pydantic import ValidationError
 
 from eacn.core.exceptions import TaskError, BudgetError
 from eacn.core.models import TaskStatus
@@ -21,14 +23,22 @@ from eacn.network.api.schemas import (
     OkResponse,
 )
 
+from eacn.network.auth import require_admin as _require_admin
+
 router = APIRouter(prefix="/api", tags=["network"])
 
 _network = None
+_store = None  # OfflineStore — per-agent message queue
 
 
 def set_network(network) -> None:
     global _network
     _network = network
+
+
+def set_offline_store(store) -> None:
+    global _store
+    _store = store
 
 
 def _net():
@@ -59,7 +69,7 @@ async def create_task(req: CreateTaskRequest):
             max_concurrent_bidders=req.max_concurrent_bidders,
             max_depth=req.max_depth,
             human_contact=human_contact,
-            level=req.level,
+            level=req.level.value if req.level else None,
             invited_agent_ids=req.invited_agent_ids,
         )
         return _task_to_response(task)
@@ -67,6 +77,8 @@ async def create_task(req: CreateTaskRequest):
         raise HTTPException(402, str(e))
     except TaskError as e:
         raise HTTPException(409, str(e))
+    except (ValueError, ValidationError) as e:
+        raise HTTPException(422, str(e))
 
 
 # NOTE: /tasks/open MUST be before /tasks/{task_id} to avoid path parameter capture
@@ -350,6 +362,7 @@ async def create_subtask(task_id: str, req: CreateSubtaskRequest):
                     "domains": req.domains,
                     "budget": req.budget,
                     "deadline": req.deadline,
+                    "level": req.level.value if req.level else None,
                 },
             )
             return TaskResponse(
@@ -369,11 +382,13 @@ async def create_subtask(task_id: str, req: CreateSubtaskRequest):
             domains=req.domains,
             budget=req.budget,
             deadline=req.deadline,
-            level=req.level,
+            level=req.level.value if req.level else None,
         )
         return _task_to_response(sub)
     except (TaskError, BudgetError) as e:
         raise HTTPException(400, str(e))
+    except (ValueError, ValidationError) as e:
+        raise HTTPException(422, str(e))
 
 
 
@@ -408,12 +423,24 @@ async def get_balance(agent_id: str = Query(...)):
     )
 
 
+@router.get("/economy/escrows")
+async def list_escrows(agent_id: str = Query(...)):
+    """Query per-task escrow breakdown for an agent (#9)."""
+    net = _net()
+    escrows = []
+    for task_id, (initiator_id, amount) in net.escrow._task_escrows.items():
+        if initiator_id == agent_id:
+            escrows.append({"task_id": task_id, "amount": amount})
+    return {"agent_id": agent_id, "escrows": escrows, "total_frozen": sum(e["amount"] for e in escrows)}
+
+
 @router.post("/economy/deposit", response_model=DepositResponse)
 async def deposit(req: DepositRequest):
     """Deposit funds into an agent's account."""
     net = _net()
     account = net.escrow.get_or_create_account(req.agent_id, 0.0)
     account.credit(req.amount)
+    await net.escrow._persist_account(req.agent_id)
     return DepositResponse(
         agent_id=req.agent_id,
         deposited=req.amount,
@@ -432,7 +459,6 @@ async def relay_message(req: RelayMessageRequest):
     deliver immediately. Otherwise forward to peer nodes via /peer/message.
     """
     from eacn.core.models import PushEvent, PushEventType
-    from eacn.network.api.websocket import manager
 
     net = _net()
     target_agent_id = req.to.agent_id
@@ -450,10 +476,16 @@ async def relay_message(req: RelayMessageRequest):
         },
     )
 
-    # Try local delivery first
-    if manager.is_connected(target_agent_id):
-        delivered = await manager.broadcast_event(event)
-        return {"ok": True, "delivered": delivered, "method": "local"}
+    # Enqueue locally — agent will pick it up via HTTP polling
+    if _store:
+        await _store.store(
+            msg_id=event.msg_id,
+            agent_id=target_agent_id,
+            event_type=event.type.value,
+            task_id=event.task_id,
+            payload=event.payload,
+        )
+        return {"ok": True, "delivered": 1, "method": "queue"}
 
     # Forward to all peer nodes — they'll try local delivery
     if not net.cluster.standalone:
@@ -473,7 +505,7 @@ async def relay_message(req: RelayMessageRequest):
             "error": f"Agent {target_agent_id} not connected to any node"}
 
 
-@router.get("/cluster/status")
+@router.get("/cluster/status", dependencies=[Depends(_require_admin)])
 async def cluster_status():
     """View cluster status: local node info, all known members, cluster mode."""
     net = _net()
@@ -508,13 +540,13 @@ async def cluster_status():
     }
 
 
-@router.get("/admin/config")
+@router.get("/admin/config", dependencies=[Depends(_require_admin)])
 async def get_config():
     """Read all current hyperparameters."""
     return _net().config.model_dump()
 
 
-@router.put("/admin/config")
+@router.put("/admin/config", dependencies=[Depends(_require_admin)])
 async def update_config(patch: dict):
     """Partially update hyperparameters and persist to config.toml.
 
@@ -548,33 +580,100 @@ async def update_config(patch: dict):
 
 
 
-@router.post("/admin/scan-deadlines")
+# ── Event Polling (HTTP transport — works everywhere) ────────────────
+
+def _format_offline_messages(messages: list[dict]) -> list[dict]:
+    """Convert offline store rows to API response format."""
+    return [
+        {
+            "msg_id": m["msg_id"],
+            "type": m["type"],
+            "task_id": m["task_id"],
+            "payload": m["payload"],
+        }
+        for m in messages
+    ]
+
+
+@router.get("/events/{agent_id}")
+async def poll_events(
+    agent_id: str,
+    timeout: int = Query(default=0, ge=0, le=60),
+    ack: str | None = Query(default=None),
+):
+    """HTTP polling endpoint for draining the per-agent message queue.
+
+    Flow:
+    1. Drain any messages already buffered in the queue.
+    2. If messages found → return immediately.
+    3. If timeout > 0 and no messages → block up to `timeout` seconds,
+       checking the store every second for new arrivals.
+    4. `ack` parameter is accepted for compatibility but currently a no-op.
+
+    Returns: {"events": [...], "count": int}
+    """
+    import asyncio
+
+    store = _store
+
+    # Fast path: drain buffered messages
+    if store:
+        messages = await store.drain(agent_id)
+        if messages:
+            return {
+                "events": _format_offline_messages(messages),
+                "count": len(messages),
+            }
+
+    if timeout <= 0:
+        return {"events": [], "count": 0}
+
+    # Long-poll: wait up to `timeout` seconds, checking every 1s.
+    # The push handler writes to the queue unconditionally,
+    # so new events appear within ~1s of being pushed.
+    elapsed = 0
+    while elapsed < timeout:
+        await asyncio.sleep(1)
+        elapsed += 1
+        if store:
+            messages = await store.drain(agent_id)
+            if messages:
+                return {
+                    "events": _format_offline_messages(messages),
+                    "count": len(messages),
+                }
+
+    return {"events": [], "count": 0}
+
+
+@router.post("/admin/scan-deadlines", dependencies=[Depends(_require_admin)])
 async def scan_deadlines(now: str | None = None):
     expired_ids = await _net().scan_deadlines(now)
     return {"expired": expired_ids}
 
 
 
-@router.post("/admin/fund")
+@router.post("/admin/fund", dependencies=[Depends(_require_admin)])
 async def fund_account(agent_id: str = Body(...), amount: float = Body(...)):
     """Admin: credit an agent's account for testing."""
-    account = _net().escrow.get_or_create_account(agent_id, 0.0)
+    net = _net()
+    account = net.escrow.get_or_create_account(agent_id, 0.0)
     account.credit(amount)
+    await net.escrow._persist_account(agent_id)
     return {"agent_id": agent_id, "available": account.available, "frozen": account.frozen}
 
 
-@router.get("/admin/offline-stats")
+@router.get("/admin/offline-stats", dependencies=[Depends(_require_admin)])
 async def offline_stats():
-    """Query offline message queue stats per agent."""
-    from eacn.network.api.websocket import manager
-    store = manager._offline_store
+    """Query message queue stats per agent."""
+    store = _store
     if not store:
         return {"agents": {}, "total": 0}
     counts = await store.count_all()
     return {"agents": counts, "total": sum(counts.values())}
 
 
-@router.get("/admin/logs")
+@router.get("/admin/logs", dependencies=[Depends(_require_admin)])
 async def query_logs(
     task_id: str | None = None,
     agent_id: str | None = None,

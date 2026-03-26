@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from eacn.core.models import Task, TaskStatus, TaskType, TaskLevel, Bid, BidStatus, Result
 from eacn.core.exceptions import TaskError, BudgetError
+
+if TYPE_CHECKING:
+    from eacn.network.db.database import Database
+
+_log = logging.getLogger(__name__)
 
 
 class TaskManager:
@@ -19,10 +26,53 @@ class TaskManager:
     - Concurrent bidder slots + wait queue + auto-promotion
     - Subtask creation with depth guard
     - Deadline-based scanning
+    - Persistence to SQLite (if db provided)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, db: "Database | None" = None) -> None:
         self._tasks: dict[str, Task] = {}
+        # Per-task locks for concurrent mutation safety (#21, #29)
+        self._task_locks: dict[str, asyncio.Lock] = {}
+        self._db = db
+
+    def _persist(self, task: Task) -> None:
+        """Schedule async DB write for a task (fire-and-forget)."""
+        if not self._db:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._do_persist(task))
+
+    async def _do_persist(self, task: Task) -> None:
+        try:
+            data = task.model_dump(mode="json")
+            await self._db.save_task(task.id, data)
+        except Exception as e:
+            _log.warning("Failed to persist task %s: %s", task.id, e)
+
+    async def load_from_db(self) -> int:
+        """Load all non-terminal tasks from DB into memory. Returns count."""
+        if not self._db:
+            return 0
+        rows = await self._db.list_tasks(limit=10000)
+        loaded = 0
+        for data in rows:
+            try:
+                task = Task.model_validate(data)
+                self._tasks[task.id] = task
+                loaded += 1
+            except Exception as e:
+                _log.warning("Failed to restore task %s: %s", data.get("id"), e)
+        _log.info("Restored %d tasks from database", loaded)
+        return loaded
+
+    def get_lock(self, task_id: str) -> asyncio.Lock:
+        """Get or create a per-task asyncio.Lock."""
+        if task_id not in self._task_locks:
+            self._task_locks[task_id] = asyncio.Lock()
+        return self._task_locks[task_id]
 
     # ── CRUD ─────────────────────────────────────────────────────────
 
@@ -34,6 +84,8 @@ class TaskManager:
         self._tasks[task.id] = task
         if task.parent_id and task.parent_id in self._tasks:
             self._tasks[task.parent_id].child_ids.append(task.id)
+            self._persist(self._tasks[task.parent_id])
+        self._persist(task)
         return task
 
     def get(self, task_id: str) -> Task:
@@ -56,6 +108,7 @@ class TaskManager:
                 f"Invalid transition: {task.status} → {new_status}"
             )
         task.status = new_status
+        self._persist(task)
         return task
 
     @staticmethod
@@ -101,6 +154,7 @@ class TaskManager:
         if task.concurrent_slots_full:
             task.budget_locked = True
 
+        self._persist(task)
         return bid.status
 
     def promote_from_queue(self, task_id: str) -> str | None:
@@ -112,6 +166,7 @@ class TaskManager:
                 # Unlock budget if we have room again
                 if not task.concurrent_slots_full:
                     task.budget_locked = False
+                self._persist(task)
                 return bid.agent_id
         return None
 
@@ -121,6 +176,7 @@ class TaskManager:
         for bid in task.bids:
             if bid.agent_id == agent_id:
                 bid.status = BidStatus.REJECTED
+                self._persist(task)
                 return
         raise TaskError(f"Bid from {agent_id} not found on task {task_id}")
 
@@ -130,6 +186,7 @@ class TaskManager:
         for bid in task.bids:
             if bid.agent_id == agent_id:
                 bid.status = BidStatus.ACCEPTED
+                self._persist(task)
                 return
         raise TaskError(f"Bid from {agent_id} not found on task {task_id}")
 
@@ -140,7 +197,17 @@ class TaskManager:
         task = self.get(task_id)
         if task.status not in (TaskStatus.BIDDING, TaskStatus.AWAITING_RETRIEVAL):
             raise TaskError(f"Cannot submit result in status {task.status}")
+        # Verify submitter has an active bid (#26)
+        active_bidders = {
+            b.agent_id for b in task.bids
+            if b.status in (BidStatus.EXECUTING, BidStatus.ACCEPTED, BidStatus.WAITING)
+        }
+        if result.agent_id not in active_bidders:
+            raise TaskError(
+                f"Agent {result.agent_id} is not an active bidder on task {task_id}"
+            )
         task.results.append(result)
+        self._persist(task)
 
     def select_result(self, task_id: str, agent_id: str) -> Result:
         """Select a result. Marks it as selected and transitions task."""
@@ -159,6 +226,10 @@ class TaskManager:
                 bid.status = BidStatus.ACCEPTED
             elif bid.status in (BidStatus.EXECUTING, BidStatus.WAITING):
                 bid.status = BidStatus.REJECTED
+        # Transition task to COMPLETED (#28)
+        if task.status in (TaskStatus.BIDDING, TaskStatus.AWAITING_RETRIEVAL):
+            task.status = TaskStatus.COMPLETED
+        self._persist(task)
         return selected
 
     # ── Subtask creation ─────────────────────────────────────────────
@@ -177,12 +248,13 @@ class TaskManager:
         parent = self.get(parent_task_id)
         new_depth = parent.depth + 1
 
-        if new_depth > parent.max_depth:
+        if new_depth >= parent.max_depth:
             raise TaskError(
                 f"Max depth {parent.max_depth} exceeded (current: {new_depth})"
             )
 
-        if parent.remaining_budget is not None and budget > parent.remaining_budget:
+        # Use small epsilon for float comparison to avoid precision issues
+        if parent.remaining_budget is not None and budget > parent.remaining_budget + 1e-9:
             raise BudgetError(
                 f"Subtask budget {budget} exceeds parent remaining {parent.remaining_budget}"
             )
@@ -206,6 +278,7 @@ class TaskManager:
         # Deduct from parent remaining budget
         if parent.remaining_budget is not None:
             parent.remaining_budget -= budget
+            self._persist(parent)
 
         return self.create(subtask)
 
@@ -225,6 +298,7 @@ class TaskManager:
             task.status = TaskStatus.AWAITING_RETRIEVAL
         else:
             task.status = TaskStatus.NO_ONE_ABLE
+        self._persist(task)
         return task
 
     def collect_results(self, task_id: str) -> list[Result]:
@@ -240,6 +314,7 @@ class TaskManager:
             )
         if task.status == TaskStatus.AWAITING_RETRIEVAL:
             task.status = TaskStatus.COMPLETED
+            self._persist(task)
         return list(task.results)
 
     def update_deadline(self, task_id: str, deadline: str) -> Task:
@@ -250,30 +325,46 @@ class TaskManager:
         ):
             raise TaskError(f"Cannot update deadline in status {task.status}")
         task.deadline = deadline
+        self._persist(task)
         return task
 
-    def update_discussions(self, task_id: str, message: str) -> Task:
+    def update_discussions(self, task_id: str, message: str, author: str = "") -> Task:
         """Append a discussion message to task content."""
         task = self.get(task_id)
         discussions = task.content.setdefault("discussions", [])
         discussions.append({
             "message": message,
+            "author": author,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
+        self._persist(task)
         return task
 
     # ── Deadline scanning ────────────────────────────────────────────
 
+    @staticmethod
+    def _parse_datetime(s: str) -> datetime:
+        """Parse ISO 8601 datetime, normalizing Z suffix (#19)."""
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
     def scan_expired(self, now: str | None = None) -> list[Task]:
         """Find tasks whose deadline has passed. Returns list of expired tasks."""
-        if now is None:
-            now = datetime.now(timezone.utc).isoformat()
+        now_dt = (
+            self._parse_datetime(now)
+            if now is not None
+            else datetime.now(timezone.utc)
+        )
         expired = []
         for task in self._tasks.values():
             if task.status in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
                 continue
-            if task.deadline and task.deadline <= now:
-                expired.append(task)
+            if task.deadline:
+                try:
+                    deadline_dt = self._parse_datetime(task.deadline)
+                    if deadline_dt <= now_dt:
+                        expired.append(task)
+                except ValueError:
+                    continue
         return expired
 
     def handle_expired(self, task_id: str) -> TaskStatus:
@@ -283,6 +374,7 @@ class TaskManager:
             task.status = TaskStatus.AWAITING_RETRIEVAL
         else:
             task.status = TaskStatus.NO_ONE_ABLE
+        self._persist(task)
         return task.status
 
     # ── Auto-collection check ────────────────────────────────────────
@@ -290,26 +382,44 @@ class TaskManager:
     def check_auto_collect(self, task_id: str) -> bool:
         """Check if task should auto-transition to AWAITING_RETRIEVAL.
 
-        Triggers:
-        - All concurrent slots have submitted results
-        - max_concurrent_bidders results collected
+        Triggers when ALL actively executing bidders have submitted results.
+        This means: every bid with status 'executing' has a corresponding
+        result entry. No need to wait for max_concurrent_bidders — if only
+        1 agent is executing and submits, the task collects immediately.
         """
         task = self.get(task_id)
         if task.status != TaskStatus.BIDDING:
             return False
-        if len(task.results) >= task.max_concurrent_bidders:
+
+        executing_agents = {
+            b.agent_id for b in task.bids
+            if b.status in (BidStatus.EXECUTING, BidStatus.ACCEPTED)
+        }
+        if not executing_agents:
+            return False
+
+        submitted_agents = {r.agent_id for r in task.results}
+
+        # All executing agents have submitted → auto-collect
+        if executing_agents <= submitted_agents:
             task.status = TaskStatus.AWAITING_RETRIEVAL
+            self._persist(task)
             return True
         return False
 
     # ── Tree operations ──────────────────────────────────────────────
 
-    def get_subtree(self, task_id: str) -> list[Task]:
+    def get_subtree(self, task_id: str, _visited: set[str] | None = None) -> list[Task]:
         """Return all tasks in the subtree rooted at task_id."""
+        if _visited is None:
+            _visited = set()
+        if task_id in _visited:
+            return []  # Cycle detected (#27)
+        _visited.add(task_id)
         task = self.get(task_id)
         subtree = [task]
         for child_id in task.child_ids:
-            subtree.extend(self.get_subtree(child_id))
+            subtree.extend(self.get_subtree(child_id, _visited))
         return subtree
 
     def get_root(self, task_id: str) -> Task:
@@ -318,3 +428,26 @@ class TaskManager:
         while task.parent_id:
             task = self.get(task.parent_id)
         return task
+
+    def purge_terminated(self, max_age_seconds: float = 3600) -> int:
+        """Remove completed/no_one_able tasks older than max_age from memory (#40).
+
+        Returns the number of purged tasks.
+        """
+        now = datetime.now(timezone.utc)
+        to_remove: list[str] = []
+        for task_id, task in self._tasks.items():
+            if task.status not in (TaskStatus.COMPLETED, TaskStatus.NO_ONE_ABLE):
+                continue
+            # Use deadline as proxy for age if available
+            if task.deadline:
+                try:
+                    dt = self._parse_datetime(task.deadline)
+                    if (now - dt).total_seconds() > max_age_seconds:
+                        to_remove.append(task_id)
+                except ValueError:
+                    pass
+        for tid in to_remove:
+            self._tasks.pop(tid, None)
+            self._task_locks.pop(tid, None)
+        return len(to_remove)

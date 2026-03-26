@@ -90,3 +90,11 @@ class OfflineStore:
     async def count_all(self) -> dict[str, int]:
         """Count pending messages grouped by agent."""
         return await self._db.offline_count_all()
+
+    async def cleanup_task(self, task_id: str) -> int:
+        """Remove all offline messages related to a task (#80).
+
+        Called when a task reaches a terminal state.
+        Returns count of deleted messages.
+        """
+        return await self._db.offline_delete_by_task(task_id)

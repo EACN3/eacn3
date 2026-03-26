@@ -13,15 +13,28 @@ import { z } from "zod";
 import { type EacnState, type AgentCard, type PushEvent, type AgentTier, type TaskLevel, createDefaultState, EACN3_DEFAULT_NETWORK_ENDPOINT, isTierEligible, AGENT_TIER_HIERARCHY } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
-import * as ws from "./src/ws-manager.js";
+import * as ws from "./src/event-transport.js";
 import * as a2a from "./src/a2a-server.js";
+import * as rc from "./src/reverse-control.js";
 
 // ---------------------------------------------------------------------------
 // Helper: MCP text result
 // ---------------------------------------------------------------------------
 
 function ok(data: unknown) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
+  const result: { content: Array<{ type: "text"; text: string }> } = {
+    content: [{ type: "text" as const, text: JSON.stringify(data) }],
+  };
+
+  // Fallback directive injection: when sampling is unavailable,
+  // append pending event directives to any tool response so the
+  // Host LLM sees actionable events without explicit polling.
+  const directives = rc.drainDirectives();
+  if (directives) {
+    result.content.push({ type: "text" as const, text: directives });
+  }
+
+  return result;
 }
 
 function err(message: string) {
@@ -126,7 +139,7 @@ server.tool(
 // #1 eacn3_connect
 server.tool(
   "eacn3_connect",
-  "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: opens WebSocket connections for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
+  "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: starts event polling for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
   {
     network_endpoint: z.string().optional().describe(`Network URL. Defaults to ${EACN3_DEFAULT_NETWORK_ENDPOINT}`),
     seed_nodes: z.array(z.string()).optional().describe("Additional seed node URLs for fallback"),
@@ -223,7 +236,7 @@ server.tool(
 // #2 eacn3_disconnect
 server.tool(
   "eacn3_disconnect",
-  "Disconnect from the EACN3 network and close all WebSocket connections. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
+  "Disconnect from the EACN3 network and stop event polling. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
   {},
   async () => {
     stopHeartbeat();
@@ -287,7 +300,7 @@ server.tool(
 // Inlines: adapter (AgentCard assembly) + registry (validate + persist + DHT)
 server.tool(
   "eacn3_register_agent",
-  "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and opens a WebSocket for real-time event push (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
+  "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and starts polling for push events (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
   {
     name: z.string().describe("Agent display name"),
     description: z.string().describe("What this Agent does"),
@@ -307,6 +320,11 @@ server.tool(
     agent_id: z.string().optional().describe("Custom agent ID. Auto-generated if omitted."),
     a2a_port: z.number().optional().describe("Port for A2A HTTP server. Enables direct agent-to-agent messaging. Omit to use Network relay only."),
     a2a_url: z.string().optional().describe("Full public URL for A2A callbacks (e.g. 'http://my-server.com:3001'). Auto-generated from a2a_port if omitted."),
+    reverse_control: z.object({
+      enabled: z.boolean().optional().describe("Enable MCP reverse control (sampling/notifications). Default true."),
+      sampling_events: z.array(z.string()).optional().describe("Event types that trigger LLM sampling (e.g. ['task_broadcast', 'direct_message']). Default: all actionable events."),
+      notification_events: z.array(z.string()).optional().describe("Event types that send notifications only (e.g. ['task_collected', 'task_timeout']). Default: status events."),
+    }).optional().describe("Configure MCP reverse control — lets the network proactively drive your agent via sampling requests."),
   },
   async (params) => {
     const s = state.getState();
@@ -351,8 +369,23 @@ server.tool(
     // Persist locally
     state.addAgent(card);
 
-    // Open WebSocket for event push
+    // Start polling for push events
     ws.connect(agentId);
+
+    // Configure reverse control for this agent
+    if (params.reverse_control?.enabled !== false) {
+      const rcPolicies: Record<string, { method: "sampling" | "notification" | "auto_action" | "buffer_only"; autoAction?: string }> = {};
+      const samplingEvents = params.reverse_control?.sampling_events ?? ["task_broadcast", "direct_message", "subtask_completed", "bid_request_confirmation", "discussion_update"];
+      const notifEvents = params.reverse_control?.notification_events ?? ["task_collected"];
+
+      for (const e of samplingEvents) rcPolicies[e] = { method: "sampling" };
+      for (const e of notifEvents) rcPolicies[e] = { method: "notification" };
+      rcPolicies["task_timeout"] = { method: "auto_action", autoAction: "report_and_close" };
+
+      rc.configure(agentId, { enabled: true, policies: rcPolicies });
+    }
+
+    const rcStatus = rc.getStatus();
 
     return ok({
       registered: true,
@@ -361,6 +394,11 @@ server.tool(
       domains: params.domains,
       url: agentUrl,
       a2a_server: a2a.isRunning() ? { port: a2a.getServerPort() } : null,
+      reverse_control: {
+        enabled: params.reverse_control?.enabled !== false,
+        sampling_available: rcStatus.samplingAvailable,
+        fallback: rcStatus.samplingAvailable ? "none" : "directive_injection",
+      },
     });
   },
 );
@@ -421,13 +459,14 @@ server.tool(
 // #8 eacn3_unregister_agent
 server.tool(
   "eacn3_unregister_agent",
-  "Remove an agent from the network and close its WebSocket connection. Side effects: deletes agent from local state, stops receiving events for this agent. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
+  "Remove an agent from the network and stop its event polling. Side effects: deletes agent from local state, stops receiving events for this agent. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
   {
     agent_id: z.string(),
   },
   async (params) => {
     const res = await net.unregisterAgent(params.agent_id);
     ws.disconnect(params.agent_id);
+    rc.unconfigure(params.agent_id);
     state.removeAgent(params.agent_id);
 
     // Stop A2A server if no agents remain
@@ -442,7 +481,7 @@ server.tool(
 // #9 eacn3_list_my_agents
 server.tool(
   "eacn3_list_my_agents",
-  "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
+  "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and polling_active (event polling status). No network call — reads local state only. Use to check which agents are active and receiving events.",
   {},
   async () => {
     const agents = state.listAgents();
@@ -452,7 +491,8 @@ server.tool(
         agent_id: a.agent_id,
         name: a.name,
         domains: a.domains,
-        ws_connected: ws.isConnected(a.agent_id),
+        connected: ws.isConnected(a.agent_id),
+        transport: ws.getTransportStatus(a.agent_id),
       })),
     });
   },
@@ -613,6 +653,7 @@ server.tool(
     // Track locally
     state.updateTask({
       task_id: taskId,
+      agent_id: initiatorId,
       role: "initiator",
       status: task.status,
       domains: params.domains ?? [],
@@ -694,7 +735,7 @@ server.tool(
 // #21 eacn3_update_discussions
 server.tool(
   "eacn3_update_discussions",
-  "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussions_updated' WebSocket event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
+  "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussion_update' push event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
   {
     task_id: z.string(),
     message: z.string(),
@@ -710,7 +751,7 @@ server.tool(
 // #22 eacn3_confirm_budget
 server.tool(
   "eacn3_confirm_budget",
-  "Approve or reject a bid that exceeded your task's budget, triggered by a 'budget_confirmation' event. Set approved=true to accept (optionally raising the budget with new_budget); approved=false to reject the bid. Side effects: if approved, additional credits are frozen from your balance; the bid transitions from 'pending_confirmation' to 'accepted'. Returns updated task status.",
+  "Approve or reject a bid that exceeded your task's budget, triggered by a 'bid_request_confirmation' event. Set approved=true to accept (optionally raising the budget with new_budget); approved=false to reject the bid. Side effects: if approved, additional credits are frozen from your balance; the bid transitions from 'pending_confirmation' to 'accepted'. Returns updated task status.",
   {
     task_id: z.string(),
     approved: z.boolean(),
@@ -819,6 +860,7 @@ server.tool(
     if (res.status && res.status !== "rejected") {
       state.updateTask({
         task_id: params.task_id,
+        agent_id: agentId,
         role: "executor",
         status: "bidding",
         domains: [],
@@ -915,7 +957,7 @@ server.tool(
 // A2A direct + Network relay fallback — agent.md:358-362
 server.tool(
   "eacn3_send_message",
-  "Send a direct agent-to-agent message. Delivery order: (1) local agent → instant push, (2) remote agent with reachable URL → A2A direct POST, (3) fallback → Network relay via WebSocket. Returns {sent, to, from, method} where method is 'local', 'a2a_direct', or 'relay'. All sent messages are stored in your session history. The recipient sees a 'direct_message' event. Use /eacn3-message to handle received messages.",
+  "Send a direct agent-to-agent message. Delivery order: (1) local agent → instant push, (2) remote agent with reachable URL → A2A direct POST, (3) fallback → Network relay. Returns {sent, to, from, method} where method is 'local', 'a2a_direct', or 'relay'. All sent messages are stored in your session history. The recipient sees a 'direct_message' event. Use /eacn3-message to handle received messages.",
   {
     agent_id: z.string().describe("Target agent ID"),
     content: z.string(),
@@ -937,7 +979,8 @@ server.tool(
     // 1. Local agent — direct push to event buffer
     const localAgent = state.getAgent(targetId);
     if (localAgent) {
-      state.pushEvents([{
+      state.pushEvents(targetId, [{
+        msg_id: crypto.randomUUID().replace(/-/g, ""),
         type: "direct_message",
         task_id: "",
         payload: { from: senderId, content: params.content },
@@ -1102,20 +1145,294 @@ server.tool(
 // #34 eacn3_get_events
 server.tool(
   "eacn3_get_events",
-  "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[]} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. Call periodically in your main loop. Events arrive via WebSocket and accumulate until drained — missing events means missed tasks and messages.",
-  {},
-  async () => {
-    const events = state.drainEvents();
+  "Drain the in-memory event buffer for a specific agent, returning its pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details. Call periodically in your main loop.",
+  {
+    agent_id: z.string().optional().describe("Agent ID to drain events for (auto-injected if omitted)"),
+  },
+  async (params) => {
+    const agentId = resolveAgentId(params.agent_id);
+    const events = state.drainEvents(agentId);
     return ok({
       count: events.length,
       events,
+      reverse_control: rc.getStatus(),
     });
   },
 );
 
+// #39 eacn3_await_events — long-polling reverse control
+server.tool(
+  "eacn3_await_events",
+  "Block until a network event arrives or timeout expires, then return with the event AND a suggested action. This is the reverse-control mechanism when MCP sampling is unavailable (e.g. OpenClaw). Instead of polling eacn3_get_events in a loop, call this — it waits for the network to push something, then tells you exactly what to do. Returns {event, suggested_action, suggested_tool, suggested_params, urgency} per event, or {timeout: true}. Prefer this over eacn3_get_events for reactive agent loops.",
+  {
+    agent_id: z.string().optional().describe("Agent ID to await events for (auto-injected if omitted)"),
+    timeout_seconds: z.number().optional().describe("Max seconds to wait (1-120). Default 30."),
+    event_types: z.array(z.string()).optional().describe("Only return for these event types. Default: all."),
+  },
+  async (params) => {
+    const agentId = resolveAgentId(params.agent_id);
+    const timeoutSec = Math.min(Math.max(params.timeout_seconds ?? 30, 1), 120);
+    const filterTypes = params.event_types;
+
+    // Check immediate buffered events
+    const immediate = drainMatchingEvents(agentId, filterTypes);
+    if (immediate.length > 0) {
+      return ok(buildAwaitResponse(immediate));
+    }
+
+    // Long-poll
+    const result = await new Promise<import("./src/models.js").PushEvent[]>((resolve) => {
+      const deadline = setTimeout(() => { cleanup(); resolve([]); }, timeoutSec * 1000);
+      const poll = setInterval(() => {
+        const events = drainMatchingEvents(agentId, filterTypes);
+        if (events.length > 0) { cleanup(); resolve(events); }
+      }, 500);
+      function cleanup() { clearTimeout(deadline); clearInterval(poll); }
+    });
+
+    if (result.length === 0) {
+      return ok({ timeout: true, waited_seconds: timeoutSec, hint: "No events arrived. Call again to keep waiting, or proceed with other work." });
+    }
+    return ok(buildAwaitResponse(result));
+  },
+);
+
+// #41 eacn3_next — single-event non-blocking poll
+const URGENCY_ORDER: Record<string, number> = {
+  task_broadcast: 1,
+  direct_message: 1,
+  subtask_completed: 1,
+  bid_request_confirmation: 1,
+  result_submitted: 1,
+  task_collected: 2,
+  bid_result: 2,
+  discussion_update: 3,
+  task_timeout: 4,
+  adjudication_task: 2,
+};
+
+function buildNextAction(event: import("./src/models.js").PushEvent) {
+  const payload = event.payload as Record<string, unknown>;
+  switch (event.type) {
+    case "task_broadcast":
+      return {
+        action: "bid",
+        description: `New task [${((payload.domains as string[]) ?? []).join(", ")}] budget=${payload.budget ?? "?"}. Evaluate and bid.`,
+        tool: "eacn3_submit_bid",
+        params: { task_id: event.task_id },
+      };
+    case "direct_message":
+      return {
+        action: "reply",
+        description: `Message from ${payload.from ?? "?"}: "${String(payload.content ?? "").slice(0, 200)}"`,
+        tool: "eacn3_send_message",
+        params: { to_agent_id: payload.from, task_id: event.task_id },
+      };
+    case "subtask_completed":
+      return {
+        action: "collect",
+        description: `Subtask ${payload.subtask_id ?? "?"} completed. Fetch results and continue.`,
+        tool: "eacn3_get_task_results",
+        params: { task_id: String(payload.subtask_id ?? event.task_id) },
+      };
+    case "bid_request_confirmation":
+      return {
+        action: "confirm",
+        description: `Bid on ${event.task_id} exceeded budget. Approve or reject.`,
+        tool: "eacn3_confirm_budget",
+        params: { task_id: event.task_id },
+      };
+    case "result_submitted":
+      return {
+        action: "review",
+        description: `Agent ${payload.agent_id ?? "?"} submitted a result for task ${event.task_id} (${payload.results_count ?? "?"}/${payload.executing_count ?? "?"} results in). Call eacn3_get_task_results to retrieve, then eacn3_select_result to accept${payload.all_submitted ? " — all executors have submitted" : ""}.`,
+        tool: "eacn3_get_task_results",
+        params: { task_id: event.task_id },
+      };
+    case "task_collected":
+      return {
+        action: "collect",
+        description: `Task ${event.task_id}: all executors have submitted. Retrieve and select.`,
+        tool: "eacn3_get_task_results",
+        params: { task_id: event.task_id },
+      };
+    case "bid_result": {
+      const accepted = (payload as any)?.accepted;
+      if (accepted) {
+        return {
+          action: "execute",
+          description: `Bid accepted on ${event.task_id}. Start working.`,
+          tool: "eacn3_get_task",
+          params: { task_id: event.task_id },
+        };
+      }
+      return {
+        action: "note",
+        description: `Bid rejected on ${event.task_id}. Reason: ${(payload as any)?.reason ?? "unknown"}.`,
+        tool: null,
+        params: {},
+      };
+    }
+    case "task_timeout":
+      return {
+        action: "note",
+        description: `Task ${event.task_id} timed out.`,
+        tool: null,
+        params: {},
+      };
+    default:
+      return {
+        action: "check",
+        description: `Event "${event.type}" on ${event.task_id}.`,
+        tool: "eacn3_get_task",
+        params: { task_id: event.task_id },
+      };
+  }
+}
+
+server.tool(
+  "eacn3_next",
+  "Non-blocking single-step work dispatcher: returns the ONE highest-priority pending event for this agent with a clear action directive. When you get a task back, process it, then call eacn3_next again. When idle is returned, there are no NEW network events — but check the returned 'prompts' array for context-aware guidance: unfinished tasks, delegated work to review, reflection questions, and delegation suggestions. Act on those prompts instead of waiting. Never sleep or poll — always keep making progress.",
+  {
+    agent_id: z.string().optional().describe("Agent ID (auto-injected if omitted)"),
+  },
+  async (params) => {
+    const agentId = resolveAgentId(params.agent_id);
+    const events = state.drainEvents(agentId);
+
+    if (events.length === 0) {
+      // Build context-aware prompts based on agent's current task state
+      const tasks = Object.values(state.getState().local_tasks).filter(
+        (t) => t.agent_id === agentId,
+      );
+      const inProgress = tasks.filter((t) => t.role === "executor" && (t.status === "bidding" || t.status === "unclaimed"));
+      const delegated = tasks.filter((t) => t.role === "initiator" && t.status !== "completed" && t.status !== "no_one");
+      const completed = tasks.filter((t) => t.status === "completed" || t.status === "awaiting_retrieval");
+
+      const prompts: string[] = [];
+
+      if (inProgress.length > 0) {
+        prompts.push(`You have ${inProgress.length} task(s) still in progress (${inProgress.map(t => t.task_id).join(", ")}). Have you actually finished them? Are the results thorough and correct?`);
+      }
+      if (delegated.length > 0) {
+        prompts.push(`You delegated ${delegated.length} task(s) to other agents (${delegated.map(t => t.task_id).join(", ")}). Have you checked their results? Do the results meet your expectations?`);
+      }
+      if (completed.length > 0) {
+        prompts.push(`You have ${completed.length} completed task(s). Have you reviewed all the results? Have you reflected on the overall outcome based on everything you've gathered so far?`);
+      }
+      // Check message sessions — any conversations with recent incoming messages?
+      const sessions = state.listSessions(agentId);
+      const unanswered: string[] = [];
+      for (const peerId of sessions) {
+        const msgs = state.getMessages(agentId, peerId);
+        if (msgs.length > 0 && msgs[msgs.length - 1].direction === "in") {
+          unanswered.push(peerId);
+        }
+      }
+
+      if (unanswered.length > 0) {
+        prompts.push(`You have unanswered messages from ${unanswered.length} agent(s) (${unanswered.join(", ")}). Have you replied? Is there information they need from you?`);
+      }
+      if (sessions.length > 0 && unanswered.length === 0) {
+        prompts.push(`You have ${sessions.length} active conversation(s). Are you waiting for replies? Should you follow up?`);
+      }
+
+      if (inProgress.length === 0 && delegated.length === 0 && completed.length === 0 && sessions.length === 0) {
+        prompts.push("No active tasks or conversations. Continue with your current work.");
+      }
+
+      // Always-applicable reflective prompts
+      prompts.push(
+        "Are there parts of your current work that another agent with different expertise could handle better? Consider delegating via eacn3_create_task.",
+        "If you're stuck on something, have you considered alternative approaches?",
+        "If you have long-running subtasks, have you broken them into smaller pieces that can run in parallel?",
+      );
+
+      return ok({
+        idle: true,
+        active_tasks: inProgress.map(t => t.task_id),
+        delegated_tasks: delegated.map(t => t.task_id),
+        completed_tasks: completed.map(t => t.task_id),
+        active_conversations: sessions.length,
+        unanswered_from: unanswered,
+        prompts,
+      });
+    }
+
+    // Sort by urgency (lower number = higher priority)
+    events.sort((a, b) => (URGENCY_ORDER[a.type] ?? 5) - (URGENCY_ORDER[b.type] ?? 5));
+
+    // Take the first (highest priority), put the rest back
+    const [top, ...rest] = events;
+    if (rest.length > 0) state.pushEvents(agentId, rest);
+
+    const next = buildNextAction(top);
+    return ok({
+      idle: false,
+      remaining: rest.length,
+      event: top,
+      ...next,
+    });
+  },
+);
+
+// #40 eacn3_reverse_control_status
+server.tool(
+  "eacn3_reverse_control_status",
+  "Get the current status of the MCP reverse control engine. Shows whether sampling is available, which agents are configured, pending directive count, and rate limiting info. Use for debugging reverse control behavior.",
+  {},
+  async () => {
+    return ok(rc.getStatus());
+  },
+);
+
 // ---------------------------------------------------------------------------
-// Start
+// Long-polling helpers
 // ---------------------------------------------------------------------------
+
+function drainMatchingEvents(agentId: string, filterTypes?: string[]): import("./src/models.js").PushEvent[] {
+  const all = state.drainEvents(agentId);
+  if (!filterTypes || filterTypes.length === 0) return all;
+
+  const matching: import("./src/models.js").PushEvent[] = [];
+  const remaining: import("./src/models.js").PushEvent[] = [];
+  for (const e of all) {
+    if (filterTypes.includes(e.type)) {
+      matching.push(e);
+    } else {
+      remaining.push(e);
+    }
+  }
+  if (remaining.length > 0) state.pushEvents(agentId, remaining);
+  return matching;
+}
+
+function buildAwaitResponse(events: import("./src/models.js").PushEvent[]) {
+  return {
+    count: events.length,
+    events: events.map((event) => {
+      const payload = event.payload as Record<string, unknown>;
+      switch (event.type) {
+        case "task_broadcast":
+          return { event, suggested_action: `New task in [${((payload.domains as string[]) ?? []).join(", ")}] budget=${payload.budget ?? "?"}. Evaluate and bid.`, suggested_tool: "eacn3_submit_bid", suggested_params: { task_id: event.task_id }, urgency: "high" };
+        case "direct_message":
+          return { event, suggested_action: `Message from ${payload.from ?? "?"}: "${String(payload.content ?? "").slice(0, 200)}". Reply.`, suggested_tool: "eacn3_send_message", suggested_params: { to_agent_id: payload.from, task_id: event.task_id }, urgency: "high" };
+        case "subtask_completed":
+          return { event, suggested_action: `Subtask ${payload.subtask_id ?? "?"} done. Fetch results.`, suggested_tool: "eacn3_get_task_results", suggested_params: { task_id: String(payload.subtask_id ?? event.task_id) }, urgency: "high" };
+        case "bid_request_confirmation":
+          return { event, suggested_action: `Bid exceeded budget on ${event.task_id}. Approve/reject.`, suggested_tool: "eacn3_confirm_budget", suggested_params: { task_id: event.task_id }, urgency: "high" };
+        case "result_submitted":
+          return { event, suggested_action: `Agent ${payload.agent_id ?? "?"} submitted result for ${event.task_id}. Review and decide: select with eacn3_select_result or wait for more.`, suggested_tool: "eacn3_get_task", suggested_params: { task_id: event.task_id }, urgency: "high" };
+        case "task_collected":
+          return { event, suggested_action: `Task ${event.task_id}: all executors done. Retrieve and select.`, suggested_tool: "eacn3_get_task_results", suggested_params: { task_id: event.task_id }, urgency: "medium" };
+        case "task_timeout":
+          return { event, suggested_action: `Task ${event.task_id} timed out. No action needed.`, suggested_tool: "eacn3_get_task", suggested_params: { task_id: event.task_id }, urgency: "low" };
+        default:
+          return { event, suggested_action: `Event "${event.type}" on ${event.task_id}.`, suggested_tool: "eacn3_get_task", suggested_params: { task_id: event.task_id }, urgency: "low" };
+      }
+    }),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // WS Event Callbacks — auto-actions when events arrive
@@ -1125,8 +1442,15 @@ function registerEventCallbacks(): void {
   ws.setEventCallback((agentId, event) => {
     const taskId = event.task_id;
 
+    // --- Reverse Control: try to handle event proactively ---
+    // This runs async; if it handles the event, it may take action
+    // (sampling, notification, auto-action) without waiting for polling.
+    rc.handleEvent(agentId, event).catch(() => { /* non-critical */ });
+
+    // --- Legacy behavior: local state updates + event buffering ---
+    // These still run regardless of reverse control, to keep local state consistent.
     switch (event.type) {
-      case "awaiting_retrieval":
+      case "task_collected":
         // Task has results ready — update local status so dashboard/skills see it
         state.updateTaskStatus(taskId, "awaiting_retrieval");
         break;
@@ -1138,7 +1462,8 @@ function registerEventCallbacks(): void {
           net.getTaskResults(subtaskId, agentId)
             .then((res) => {
               // Buffer a synthetic event with the results for the skill to pick up
-              state.pushEvents([{
+              state.pushEvents(agentId, [{
+                msg_id: crypto.randomUUID().replace(/-/g, ""),
                 type: "subtask_completed",
                 task_id: taskId,
                 payload: { subtask_id: subtaskId, results: res.results },
@@ -1150,13 +1475,13 @@ function registerEventCallbacks(): void {
         break;
       }
 
-      case "timeout":
+      case "task_timeout":
         // Task timed out — auto-report reputation event, update local status
         state.updateTaskStatus(taskId, "no_one");
         net.reportEvent(agentId, "task_timeout").catch(() => { /* non-critical */ });
         break;
 
-      case "budget_confirmation":
+      case "bid_request_confirmation":
         // Bid exceeded budget — mark in local state for initiator to handle
         // The event stays in the buffer for /eacn3-bounty to surface
         break;
@@ -1212,7 +1537,8 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
 
   // Passed auto-filter — enrich the buffered event with a hint
   // The skill layer (/eacn3-bounty) will see this and can fast-track bidding
-  state.pushEvents([{
+  state.pushEvents(agentId, [{
+    msg_id: crypto.randomUUID().replace(/-/g, ""),
     type: "task_broadcast",
     task_id: taskId,
     payload: { ...payload, auto_match: true, matched_agent: agentId },
@@ -1233,6 +1559,10 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Initialize reverse control engine with the underlying MCP Server instance.
+  // Must be called AFTER connect() so client capabilities are available.
+  rc.init((server as any).server ?? server);
 }
 
 main().catch((e) => {

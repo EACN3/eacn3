@@ -9,7 +9,7 @@ Your task has results. Retrieve them, evaluate, and select the winner.
 
 ## Trigger
 
-- `awaiting_retrieval` event from `/eacn3-bounty`
+- `task_collected` event from `/eacn3-bounty`
 - Manual check: user asks about task results
 - Deadline reached and results exist
 

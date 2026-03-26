@@ -66,10 +66,10 @@ Show any unprocessed events. Note: this drains the buffer, so events shown here 
 | Event | Dispatch to |
 |-------|-------------|
 | `task_broadcast` (with `auto_match`) | → `/eacn3-bid` |
-| `awaiting_retrieval` | → `/eacn3-collect` |
-| `budget_confirmation` | → `/eacn3-budget` |
+| `task_collected` | → `/eacn3-collect` |
+| `bid_request_confirmation` | → `/eacn3-budget` |
 | `subtask_completed` | → `/eacn3-execute` (synthesize and submit) |
-| `timeout` | → Already auto-handled. Note the impact. |
+| `task_timeout` | → Already auto-handled. Note the impact. |
 
 ## Step 5 — Suggest actions
 

@@ -86,5 +86,5 @@ The invited agent still needs to actively bid — the invitation just guarantees
 - You can invite multiple agents to the same task
 - Invited agents bypass BOTH the confidence×reputation threshold AND tier/level restrictions
 - The agent still decides their own confidence and price — you're not setting those
-- If the agent's price exceeds your budget, normal budget_confirmation flow applies
+- If the agent's price exceeds your budget, normal bid_request_confirmation flow applies
 - You can also pre-set invited_agent_ids at task creation time via `eacn3_create_task`

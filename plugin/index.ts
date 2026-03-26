@@ -8,8 +8,9 @@
 import { type AgentCard, type PushEvent, type AgentTier, type TaskLevel, EACN3_DEFAULT_NETWORK_ENDPOINT, isTierEligible } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
-import * as ws from "./src/ws-manager.js";
+import * as ws from "./src/event-transport.js";
 import * as a2a from "./src/a2a-server.js";
+import * as rc from "./src/reverse-control.js";
 
 // ---------------------------------------------------------------------------
 // Heartbeat
@@ -33,7 +34,20 @@ function stopHeartbeat(): void {
 // ---------------------------------------------------------------------------
 
 function ok(data: unknown) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
+  const result: { content: Array<{ type: "text"; text: string }> } = {
+    content: [{ type: "text" as const, text: JSON.stringify(data) }],
+  };
+
+  // Directive injection: in OpenClaw we have no MCP Server instance,
+  // so sampling/notifications are unavailable. Instead, piggyback
+  // pending event directives onto every tool response — the Host LLM
+  // sees them immediately and can act without explicit polling.
+  const directives = rc.drainDirectives();
+  if (directives) {
+    result.content.push({ type: "text" as const, text: directives });
+  }
+
+  return result;
 }
 
 function err(message: string) {
@@ -76,8 +90,11 @@ function registerEventCallbacks(): void {
   ws.setEventCallback((agentId, event) => {
     const taskId = event.task_id;
 
+    // Reverse control: try to handle event proactively
+    rc.handleEvent(agentId, event).catch(() => { /* non-critical */ });
+
     switch (event.type) {
-      case "awaiting_retrieval":
+      case "task_collected":
         state.updateTaskStatus(taskId, "awaiting_retrieval");
         break;
 
@@ -86,7 +103,8 @@ function registerEventCallbacks(): void {
         if (subtaskId) {
           net.getTaskResults(subtaskId, agentId)
             .then((res) => {
-              state.pushEvents([{
+              state.pushEvents(agentId, [{
+                msg_id: crypto.randomUUID().replace(/-/g, ""),
                 type: "subtask_completed",
                 task_id: taskId,
                 payload: { subtask_id: subtaskId, results: res.results },
@@ -98,12 +116,12 @@ function registerEventCallbacks(): void {
         break;
       }
 
-      case "timeout":
+      case "task_timeout":
         state.updateTaskStatus(taskId, "no_one");
         net.reportEvent(agentId, "task_timeout").catch(() => { /* non-critical */ });
         break;
 
-      case "budget_confirmation":
+      case "bid_request_confirmation":
         break;
 
       case "task_broadcast":
@@ -131,18 +149,151 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
   if (!isInvited && !isTierEligible(agentTier, taskLevel)) return;
 
   if (agent.capabilities?.max_concurrent_tasks) {
+    // Filter by this agent's tasks only (#110)
     const activeTasks = Object.values(state.getState().local_tasks).filter(
-      (t) => t.role === "executor" && t.status !== "completed" && t.status !== "no_one",
+      (t) => t.agent_id === agentId && t.role === "executor" && t.status !== "completed" && t.status !== "no_one",
     );
     if (activeTasks.length >= agent.capabilities.max_concurrent_tasks) return;
   }
 
-  state.pushEvents([{
+  state.pushEvents(agentId, [{
+    msg_id: crypto.randomUUID().replace(/-/g, ""),
     type: "task_broadcast",
     task_id: taskId,
     payload: { ...payload, auto_match: true, matched_agent: agentId },
     received_at: Date.now(),
   }]);
+}
+
+// ---------------------------------------------------------------------------
+// Long-polling helpers for eacn3_await_events
+// ---------------------------------------------------------------------------
+
+/**
+ * Drain events from the buffer, optionally filtering by type.
+ * Unlike state.drainEvents(), only removes matching events and leaves the rest.
+ */
+function drainMatchingEvents(agentId: string, filterTypes?: string[]): PushEvent[] {
+  const all = state.drainEvents(agentId);
+  if (!filterTypes || filterTypes.length === 0) return all;
+
+  const matching: PushEvent[] = [];
+  const remaining: PushEvent[] = [];
+  for (const e of all) {
+    if (filterTypes.includes(e.type)) {
+      matching.push(e);
+    } else {
+      remaining.push(e);
+    }
+  }
+  // Put non-matching events back
+  if (remaining.length > 0) state.pushEvents(agentId, remaining);
+  return matching;
+}
+
+/**
+ * Build the await_events response with suggested actions for each event.
+ * This is the core of "reverse control without sampling" — the tool result
+ * tells the LLM exactly what action to take.
+ */
+function buildAwaitResponse(events: PushEvent[]): {
+  count: number;
+  events: Array<{
+    event: PushEvent;
+    suggested_action: string;
+    suggested_tool: string;
+    suggested_params: Record<string, unknown>;
+    urgency: "high" | "medium" | "low";
+  }>;
+} {
+  return {
+    count: events.length,
+    events: events.map((event) => {
+      const payload = event.payload as Record<string, unknown>;
+
+      switch (event.type) {
+        case "task_broadcast":
+          return {
+            event,
+            suggested_action: `New task in domains [${((payload.domains as string[]) ?? []).join(", ")}] with budget ${payload.budget ?? "?"}. Evaluate and submit a bid if it matches your capabilities.`,
+            suggested_tool: "eacn3_submit_bid",
+            suggested_params: {
+              task_id: event.task_id,
+              confidence: "0.0-1.0 (your self-assessed ability)",
+              price: "credits you want as payment",
+            },
+            urgency: "high" as const,
+          };
+
+        case "direct_message":
+          return {
+            event,
+            suggested_action: `Agent ${payload.from ?? "unknown"} sent you a message: "${String(payload.content ?? "").slice(0, 200)}". Consider replying.`,
+            suggested_tool: "eacn3_send_message",
+            suggested_params: {
+              to_agent_id: payload.from,
+              content: "your reply here",
+              task_id: event.task_id,
+            },
+            urgency: "high" as const,
+          };
+
+        case "subtask_completed":
+          return {
+            event,
+            suggested_action: `Subtask ${payload.subtask_id ?? "?"} completed for task ${event.task_id}. Fetch and review the results, then decide: submit your final result or create another subtask.`,
+            suggested_tool: "eacn3_get_task_results",
+            suggested_params: { task_id: String(payload.subtask_id ?? event.task_id) },
+            urgency: "high" as const,
+          };
+
+        case "bid_request_confirmation":
+          return {
+            event,
+            suggested_action: `A bid on task ${event.task_id} exceeded the budget (bid: ${payload.price ?? "?"}, budget: ${payload.budget ?? "?"}). Approve or reject.`,
+            suggested_tool: "eacn3_confirm_budget",
+            suggested_params: { task_id: event.task_id, approved: true },
+            urgency: "high" as const,
+          };
+
+        case "task_collected":
+          return {
+            event,
+            suggested_action: `Task ${event.task_id} has results ready. Retrieve and select the best one.`,
+            suggested_tool: "eacn3_get_task_results",
+            suggested_params: { task_id: event.task_id },
+            urgency: "medium" as const,
+          };
+
+        case "discussion_update":
+          return {
+            event,
+            suggested_action: `New discussion message on task ${event.task_id}. Read and respond.`,
+            suggested_tool: "eacn3_get_task",
+            suggested_params: { task_id: event.task_id },
+            urgency: "medium" as const,
+          };
+
+        case "task_timeout":
+          return {
+            event,
+            suggested_action: `Task ${event.task_id} timed out. Reputation impact was automatic. No action needed.`,
+            suggested_tool: "eacn3_get_task",
+            suggested_params: { task_id: event.task_id },
+            urgency: "low" as const,
+          };
+
+        default:
+          return {
+            event,
+            suggested_action: `Unknown event type "${event.type}" on task ${event.task_id}. Inspect manually.`,
+            suggested_tool: "eacn3_get_task",
+            suggested_params: { task_id: event.task_id },
+            urgency: "low" as const,
+          };
+      }
+    }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +362,7 @@ export default {
   // #1 eacn3_connect
   api.registerTool({
     name: "eacn3_connect",
-    description: "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: opens WebSocket connections for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
+    description: "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: starts event polling for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
     parameters: {
       type: "object",
       properties: {
@@ -284,7 +435,7 @@ export default {
   // #2 eacn3_disconnect
   api.registerTool({
     name: "eacn3_disconnect",
-    description: "Disconnect from the EACN3 network and close all WebSocket connections. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
+    description: "Disconnect from the EACN3 network and stop event polling. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
     parameters: { type: "object", properties: {} },
     async execute() {
       stopHeartbeat(); ws.disconnectAll();
@@ -358,7 +509,7 @@ export default {
   // #5 eacn3_register_agent
   api.registerTool({
     name: "eacn3_register_agent",
-    description: "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and opens a WebSocket for real-time event push (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
+    description: "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and starts polling for push events (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
     parameters: {
       type: "object",
       properties: {
@@ -402,10 +553,21 @@ export default {
       };
       const res = await net.registerAgent(card);
       state.addAgent(card); ws.connect(agentId);
+
+      // Configure reverse control — in OpenClaw mode, sampling is never
+      // available, so the engine relies on directive injection + long-polling.
+      rc.configure(agentId, { enabled: true, policies: {} });
+
       return ok({
         registered: true, agent_id: agentId, seeds: res.seeds, domains: params.domains,
         url: agentUrl,
         a2a_server: a2a.isRunning() ? { port: a2a.getServerPort() } : null,
+        reverse_control: {
+          enabled: true,
+          sampling_available: false,
+          mode: "openclaw",
+          hint: "Use eacn3_await_events for reactive event handling (long-polling). Directive injection is active on all tool responses.",
+        },
       });
     },
   });
@@ -454,11 +616,11 @@ export default {
   // #8 eacn3_unregister_agent
   api.registerTool({
     name: "eacn3_unregister_agent",
-    description: "Remove an agent from the network and close its WebSocket connection. Side effects: deletes agent from local state, stops receiving events for this agent. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
+    description: "Remove an agent from the network and stop its event polling. Side effects: deletes agent from local state, stops receiving events for this agent. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
     parameters: { type: "object", properties: { agent_id: { type: "string" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
       const res = await net.unregisterAgent(params.agent_id);
-      ws.disconnect(params.agent_id); state.removeAgent(params.agent_id);
+      ws.disconnect(params.agent_id); rc.unconfigure(params.agent_id); state.removeAgent(params.agent_id);
       // Stop A2A server if no agents remain
       if (state.listAgents().length === 0 && a2a.isRunning()) {
         await a2a.stopServer();
@@ -470,11 +632,11 @@ export default {
   // #9 eacn3_list_my_agents
   api.registerTool({
     name: "eacn3_list_my_agents",
-    description: "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and ws_connected (WebSocket status). No network call — reads local state only. Use to check which agents are active and receiving events.",
+    description: "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and polling_active (event polling status). No network call — reads local state only. Use to check which agents are active and receiving events.",
     parameters: { type: "object", properties: {} },
     async execute() {
       const agents = state.listAgents();
-      return ok({ count: agents.length, agents: agents.map((a) => ({ agent_id: a.agent_id, name: a.name, domains: a.domains, tier: a.tier, ws_connected: ws.isConnected(a.agent_id) })) });
+      return ok({ count: agents.length, agents: agents.map((a) => ({ agent_id: a.agent_id, name: a.name, domains: a.domains, tier: a.tier, polling_active: ws.isConnected(a.agent_id) })) });
     },
   });
 
@@ -603,7 +765,7 @@ export default {
         level: params.level ?? "general",
         invited_agent_ids: params.invited_agent_ids,
       });
-      state.updateTask({ task_id: taskId, role: "initiator", status: task.status, domains: params.domains ?? [], description_summary: params.description.slice(0, 100), created_at: new Date().toISOString() });
+      state.updateTask({ task_id: taskId, agent_id: initiatorId, role: "initiator", status: task.status, domains: params.domains ?? [], description_summary: params.description.slice(0, 100), created_at: new Date().toISOString() });
       return ok({ task_id: taskId, status: task.status, budget: params.budget, local_matches: matchedLocal.map((a: AgentCard) => a.agent_id) });
     },
   });
@@ -643,7 +805,7 @@ export default {
   // #21 eacn3_update_discussions
   api.registerTool({
     name: "eacn3_update_discussions",
-    description: "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussions_updated' WebSocket event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
+    description: "Post a clarification or discussion message on a task visible to all bidders. Requires: you must be the task initiator. Side effects: triggers a 'discussion_update' push event to all bidding agents. Returns confirmation. Use to provide additional context or answer bidder questions.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, message: { type: "string" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "message"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.updateDiscussions(params.task_id, initiatorId, params.message)); },
   });
@@ -651,7 +813,7 @@ export default {
   // #22 eacn3_confirm_budget
   api.registerTool({
     name: "eacn3_confirm_budget",
-    description: "Approve or reject a bid that exceeded your task's budget, triggered by a 'budget_confirmation' event. Set approved=true to accept (optionally raising the budget with new_budget); approved=false to reject the bid. Side effects: if approved, additional credits are frozen from your balance; the bid transitions from 'pending_confirmation' to 'accepted'. Returns updated task status.",
+    description: "Approve or reject a bid that exceeded your task's budget, triggered by a 'bid_request_confirmation' event. Set approved=true to accept (optionally raising the budget with new_budget); approved=false to reject the bid. Side effects: if approved, additional credits are frozen from your balance; the bid transitions from 'pending_confirmation' to 'accepted'. Returns updated task status.",
     parameters: { type: "object", properties: { task_id: { type: "string" }, approved: { type: "boolean" }, new_budget: { type: "number" }, initiator_id: { type: "string", description: "Initiator agent ID (auto-injected if omitted)" } }, required: ["task_id", "approved"] },
     async execute(_id: string, params: any) { const initiatorId = resolveAgentId(params.initiator_id); return ok(await net.confirmBudget(params.task_id, initiatorId, params.approved, params.new_budget)); },
   });
@@ -712,7 +874,7 @@ export default {
       // Tier/level filtering and invite bypass are handled server-side in matcher.check_bid().
       const res = await net.submitBid(params.task_id, agentId, params.confidence, params.price);
       if (res.status && res.status !== "rejected") {
-        state.updateTask({ task_id: params.task_id, role: "executor", status: "bidding", domains: [], description_summary: "", created_at: new Date().toISOString() });
+        state.updateTask({ task_id: params.task_id, agent_id: agentId, role: "executor", status: "bidding", domains: [], description_summary: "", created_at: new Date().toISOString() });
       }
       return ok(res);
     }),
@@ -777,6 +939,7 @@ export default {
       const targetId = params.agent_id;
 
       const message: PushEvent = {
+        msg_id: crypto.randomUUID().replace(/-/g, ""),
         type: "direct_message" as any,
         task_id: "",
         payload: { from: senderId, content: params.content },
@@ -786,7 +949,7 @@ export default {
       // Local agent — direct push to event buffer
       const localAgent = state.getAgent(targetId);
       if (localAgent) {
-        state.pushEvents([message]);
+        state.pushEvents(targetId, [message]);
         return ok({ sent: true, to: targetId, from: senderId, local: true });
       }
 
@@ -882,12 +1045,78 @@ export default {
   // #32 eacn3_get_events
   api.registerTool({
     name: "eacn3_get_events",
-    description: "Drain the in-memory event buffer, returning all pending events and clearing them. Returns {count, events[]} where event types include: task_broadcast, discussions_updated, subtask_completed, awaiting_retrieval, budget_confirmation, timeout, direct_message. Call periodically in your main loop. Events arrive via WebSocket and accumulate until drained — missing events means missed tasks and messages.",
-    parameters: { type: "object", properties: {} },
-    async execute() {
-      const events = state.drainEvents();
-      return ok({ count: events.length, events });
+    description: "Drain the in-memory event buffer for a specific agent, returning its pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. Call periodically in your main loop. Events arrive via HTTP polling and accumulate until drained — missing events means missed tasks and messages.",
+    parameters: { type: "object", properties: { agent_id: { type: "string", description: "Agent ID to drain events for (auto-injected if omitted)" } } },
+    async execute(_id: string, params: any) {
+      const agentId = resolveAgentId(params.agent_id);
+      const events = state.drainEvents(agentId);
+      return ok({ count: events.length, events, reverse_control: rc.getStatus() });
     },
   });
+
+  // #39 eacn3_await_events — long-polling reverse control for OpenClaw
+  api.registerTool({
+    name: "eacn3_await_events",
+    description: "Block until a network event arrives or timeout expires, then return with the event AND a suggested action. This is the primary reverse-control mechanism for OpenClaw (where MCP sampling is unavailable). Instead of polling eacn3_get_events in a loop, call this tool — it waits for the network to push something, then tells you exactly what to do. Returns {event, suggested_action, params} or {timeout: true} if nothing happened. Prefer this over eacn3_get_events for reactive agent loops.",
+    parameters: {
+      type: "object",
+      properties: {
+        agent_id: { type: "string", description: "Agent ID to await events for (auto-injected if omitted)" },
+        timeout_seconds: { type: "number", description: "Max seconds to wait. Default 30, max 120." },
+        event_types: { type: "array", items: { type: "string" }, description: "Only return for these event types. Default: all types." },
+      },
+    },
+    async execute(_id: string, params: any) {
+      const agentId = resolveAgentId(params.agent_id);
+      const timeoutSec = Math.min(Math.max(params.timeout_seconds ?? 30, 1), 120);
+      const filterTypes = params.event_types as string[] | undefined;
+
+      // Check if there are already buffered events
+      const immediate = drainMatchingEvents(agentId, filterTypes);
+      if (immediate.length > 0) {
+        return ok(buildAwaitResponse(immediate));
+      }
+
+      // Long-poll: wait for new events via a Promise that resolves
+      // when event-transport pushes an event or timeout expires.
+      const result = await new Promise<PushEvent[]>((resolve) => {
+        const deadline = setTimeout(() => {
+          cleanup();
+          resolve([]);
+        }, timeoutSec * 1000);
+
+        // Check periodically (every 500ms) if new events have been buffered
+        const poll = setInterval(() => {
+          const events = drainMatchingEvents(agentId, filterTypes);
+          if (events.length > 0) {
+            cleanup();
+            resolve(events);
+          }
+        }, 500);
+
+        function cleanup() {
+          clearTimeout(deadline);
+          clearInterval(poll);
+        }
+      });
+
+      if (result.length === 0) {
+        return ok({ timeout: true, waited_seconds: timeoutSec, hint: "No events arrived. Call again to keep waiting, or proceed with other work." });
+      }
+
+      return ok(buildAwaitResponse(result));
+    },
+  });
+
+  // #40 eacn3_reverse_control_status
+  api.registerTool({
+    name: "eacn3_reverse_control_status",
+    description: "Get the current status of the MCP reverse control engine. Shows whether sampling is available (always false in OpenClaw — use eacn3_await_events instead), configured agents, pending directive count, and rate limiting info.",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      return ok({ ...rc.getStatus(), openclaw_mode: true, recommended_tool: "eacn3_await_events" });
+    },
+  });
+
   },
 };
