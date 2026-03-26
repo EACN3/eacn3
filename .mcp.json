@@ -1,7 +1,10 @@
 {
   "mcpServers": {
     "eacn3": {
-      "command": "/home/user/eacn-dev/plugin/start-mcp.sh",
+      "command": "node",
+      "args": [
+        "/home/user/eacn-dev/plugin/dist/server.js"
+      ],
       "env": {
         "EACN3_NETWORK_URL": "http://127.0.0.1:8000"
       }
