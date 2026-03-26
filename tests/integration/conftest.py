@@ -304,10 +304,15 @@ async def mcp(live_server):
     finally:
         # Disconnect cleanly to stop event polling before killing process
         try:
-            await client.call_tool_parsed("eacn3_disconnect")
+            await asyncio.wait_for(
+                client.call_tool_parsed("eacn3_disconnect"),
+                timeout=5.0,
+            )
         except Exception:
             pass
         client.close()
+        # Small delay to ensure port is released
+        await asyncio.sleep(0.2)
         shutil.rmtree(state_dir, ignore_errors=True)
 
 

@@ -154,7 +154,7 @@ class TestDiscussions:
 
     @pytest.mark.asyncio
     async def test_discussion_push_event_received(self, mcp, http, funded_network):
-        """Adding discussion pushes event to bidder's event buffer."""
+        """Adding discussion sends event to server queue (verified via HTTP)."""
         task_id = await _setup(mcp, funded_network)
 
         await mcp.call_tool_parsed("eacn3_submit_bid", {
@@ -162,9 +162,8 @@ class TestDiscussions:
             "confidence": 0.9, "price": 80.0,
         })
 
-        # Drain old events
-        await asyncio.sleep(0.5)
-        await mcp.call_tool_parsed("eacn3_get_events")
+        # Drain old events from server queue
+        await http.get("/api/events/dd-worker", params={"timeout": 0})
 
         # Add discussion
         await mcp.call_tool_parsed("eacn3_update_discussions", {
@@ -173,10 +172,10 @@ class TestDiscussions:
             "initiator_id": "dd-init",
         })
 
-        await asyncio.sleep(1.0)
-        result = await mcp.call_tool_parsed("eacn3_get_events")
-        events = result["events"]
+        # Check server queue directly (no need to wait for plugin polling)
+        resp = await http.get("/api/events/dd-worker", params={"timeout": 0})
+        events = resp.json()["events"]
         event_types = [e["type"] for e in events]
         assert any("discussion" in t for t in event_types), (
-            f"Expected discussion event, got types: {event_types}"
+            f"Expected discussion event in server queue, got types: {event_types}"
         )
