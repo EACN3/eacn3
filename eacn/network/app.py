@@ -294,6 +294,12 @@ class Network:
         if agent_id not in task.invited_agent_ids:
             task.invited_agent_ids.append(agent_id)
 
+        # Clear previous rejected bid so the invited agent can re-bid cleanly
+        task.bids = [
+            b for b in task.bids
+            if not (b.agent_id == agent_id and b.status == BidStatus.REJECTED)
+        ]
+
     async def reject_task(
         self,
         task_id: str,
