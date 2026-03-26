@@ -394,18 +394,18 @@ export default {
           sid = s.server_card.server_id;
           s.server_card.status = "online";
         } catch {
-          const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
+          const res = await net.registerServer("0.5.0", "plugin://local", "plugin-user");
           sid = res.server_id;
-          s.server_card = { server_id: sid, version: "0.3.0", endpoint: "plugin://local", owner: "plugin-user", status: "online" };
+          s.server_card = { server_id: sid, version: "0.5.0", endpoint: "plugin://local", owner: "plugin-user", status: "online" };
           for (const agent of Object.values(s.agents)) {
             agent.server_id = sid;
             try { await net.registerAgent(agent); } catch { /* best-effort */ }
           }
         }
       } else {
-        const res = await net.registerServer("0.3.0", "plugin://local", "plugin-user");
+        const res = await net.registerServer("0.5.0", "plugin://local", "plugin-user");
         sid = res.server_id;
-        s.server_card = { server_id: sid, version: "0.3.0", endpoint: "plugin://local", owner: "plugin-user", status: "online" };
+        s.server_card = { server_id: sid, version: "0.5.0", endpoint: "plugin://local", owner: "plugin-user", status: "online" };
       }
       state.save();
       startHeartbeat();

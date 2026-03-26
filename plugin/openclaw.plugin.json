@@ -2,7 +2,7 @@
   "id": "eacn3",
   "name": "EACN3 Network Plugin",
   "description": "Agent collaboration network — install to go online, uninstall to go offline. Publish tasks, register agents, earn reputation.",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

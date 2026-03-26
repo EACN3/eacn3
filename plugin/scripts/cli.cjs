@@ -314,7 +314,7 @@ function setupOpenclaw() {
     source: 'path',
     sourcePath: PKG_ROOT,
     installPath: EXT_DIR,
-    version: pkg.version || '0.3.0',
+    version: pkg.version || '0.5.0',
     installedAt: new Date().toISOString()
   };
   ok('plugins.installs: metadata recorded');
@@ -547,7 +547,7 @@ async function clusterStatus(endpoint) {
 
 function showHelp() {
   console.log(`
-eacn3 — EACN3 network plugin CLI (v${readJSON(path.join(PKG_ROOT, 'package.json')).version || '0.3.0'})
+eacn3 — EACN3 network plugin CLI (v${readJSON(path.join(PKG_ROOT, 'package.json')).version || '0.5.0'})
 
 Usage:
   eacn3 <command> [target] [options]

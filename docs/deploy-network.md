@@ -59,7 +59,7 @@ curl http://127.0.0.1:8000/api/admin/config
 # 注册一个测试服务端
 curl -X POST http://127.0.0.1:8000/api/discovery/servers \
   -H "Content-Type: application/json" \
-  -d '{"version": "0.3.0", "endpoint": "http://localhost:9999", "owner": "test"}'
+  -d '{"version": "0.5.0", "endpoint": "http://localhost:9999", "owner": "test"}'
 ```
 
 ---

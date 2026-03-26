@@ -171,7 +171,7 @@ EACN3_STATE_DIR=/tmp/eacn3-test node dist/server.js
 {
   "server_card": {
     "server_id": "srv-xxxx",
-    "version": "0.3.0",
+    "version": "0.5.0",
     "endpoint": "...",
     "status": "online"
   },
