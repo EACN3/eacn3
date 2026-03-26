@@ -152,15 +152,16 @@ class TestSelectValidation:
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_select_during_bidding_without_close_flag(self, client):
+    async def test_select_after_all_executors_submitted(self, client):
         await create_task(client, task_id="sv-3", budget=200.0)
         await bid(client, task_id="sv-3", agent_id="a1", price=80.0)
         await submit_result(client, task_id="sv-3", agent_id="a1")
-        # Don't close — select without close_task flag should fail
+        # All executors submitted → auto-collect → awaiting_retrieval
+        # Select should succeed without needing close_task flag
         resp = await client.post("/api/tasks/sv-3/select", json={
             "initiator_id": "user1", "agent_id": "a1",
         })
-        assert resp.status_code == 400
+        assert resp.status_code == 200
 
 
 class TestCloseValidation:

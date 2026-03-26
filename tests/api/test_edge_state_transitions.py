@@ -132,8 +132,8 @@ class TestCloseAndSelectCombination:
         assert task["status"] == "completed"
 
     @pytest.mark.asyncio
-    async def test_select_without_close_from_bidding_fails(self, client):
-        """select_result without close_task from bidding → 400."""
+    async def test_select_after_all_submitted_succeeds(self, client):
+        """All executors submitted → auto-collect → select succeeds without close."""
         await create_task(client, task_id="cs-2", budget=200.0)
         await bid(client, task_id="cs-2", agent_id="a1", price=80.0)
         await submit_result(client, task_id="cs-2", agent_id="a1")
@@ -141,7 +141,7 @@ class TestCloseAndSelectCombination:
         resp = await client.post("/api/tasks/cs-2/select", json={
             "initiator_id": "user1", "agent_id": "a1",
         })
-        assert resp.status_code == 400
+        assert resp.status_code == 200
 
     @pytest.mark.asyncio
     async def test_close_then_select(self, client):
