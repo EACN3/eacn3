@@ -7,6 +7,8 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import http from "http";
 import { z } from "zod";
 import { EACN3_DEFAULT_NETWORK_ENDPOINT } from "./src/models.js";
 import * as state from "./src/state.js";
@@ -1233,11 +1235,40 @@ async function main() {
     state.load();
     // Register WS event callbacks
     registerEventCallbacks();
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    // Initialize reverse control engine with the underlying MCP Server instance.
-    // Must be called AFTER connect() so client capabilities are available.
-    rc.init(server.server ?? server);
+    const mode = process.env.EACN3_MCP_MODE || "stdio";
+    if (mode === "sse") {
+        // SSE/HTTP mode — for web environments that don't support stdio
+        const port = parseInt(process.env.EACN3_MCP_PORT || "3100");
+        let sseTransport = null;
+        const httpServer = http.createServer(async (req, res) => {
+            const path = new URL(req.url, `http://127.0.0.1:${port}`).pathname;
+            if (path === "/sse") {
+                sseTransport = new SSEServerTransport("/message", res);
+                await server.connect(sseTransport);
+                rc.init(server.server ?? server);
+            }
+            else if (path === "/message") {
+                if (sseTransport) {
+                    await sseTransport.handlePostMessage(req, res);
+                }
+                else {
+                    res.writeHead(503);
+                    res.end("no connection");
+                }
+            }
+            else {
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end('{"status":"ok"}');
+            }
+        });
+        httpServer.listen(port, "127.0.0.1");
+    }
+    else {
+        // Default: stdio mode
+        const transport = new StdioServerTransport();
+        await server.connect(transport);
+        rc.init(server.server ?? server);
+    }
 }
 main().catch((e) => {
     console.error("EACN3 MCP server failed to start:", e);
