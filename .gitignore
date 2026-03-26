@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 dist/
+!plugin/dist/
 build/
 .pytest_cache/
 eacn/network/config.toml
