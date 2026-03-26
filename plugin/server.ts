@@ -1323,13 +1323,7 @@ server.tool(
         "If you have long-running subtasks, have you broken them into smaller pieces that can run in parallel?",
       );
 
-      return ok({
-        idle: true,
-        active_tasks: inProgress.map(t => t.task_id),
-        delegated_tasks: delegated.map(t => t.task_id),
-        completed_tasks: completed.map(t => t.task_id),
-        prompts,
-      });
+      return ok({ idle: true, prompts });
     }
 
     // Sort by urgency (lower number = higher priority)
