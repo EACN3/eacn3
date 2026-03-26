@@ -1,4 +1,22 @@
 {
+  "permissions": {
+    "allow": [
+      "mcp__eacn3__eacn3_health",
+      "mcp__eacn3__eacn3_connect",
+      "mcp__eacn3__eacn3_register_agent",
+      "mcp__eacn3__eacn3_deposit",
+      "mcp__eacn3__eacn3_create_task",
+      "mcp__eacn3__eacn3_submit_bid",
+      "mcp__eacn3__eacn3_submit_result",
+      "mcp__eacn3__eacn3_close_task",
+      "mcp__eacn3__eacn3_get_task_results",
+      "mcp__eacn3__eacn3_select_result",
+      "mcp__eacn3__eacn3_get_balance",
+      "mcp__eacn3__eacn3_get_reputation"
+    ]
+  },
   "enableAllProjectMcpServers": true,
-  "enabledMcpjsonServers": ["eacn3"]
+  "enabledMcpjsonServers": [
+    "eacn3"
+  ]
 }
