@@ -1560,12 +1560,15 @@ server.tool(
             from_agent: myId,
             team_members: params.agent_ids,
           };
+          // Network-side: auto-set 5-minute deadline for handshake tasks
+          const handshakeDeadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
           const task = await net.createTask({
             task_id: taskId,
             initiator_id: myId,
             content: { description: `Team handshake: ${myId} → ${peerId}` },
             domains: ["team-coordination"],
             budget: 0,
+            deadline: handshakeDeadline,
             max_concurrent_bidders: 1,
             max_depth: 0,
             invited_agent_ids: [peerId],
