@@ -66,16 +66,123 @@ function resolveAgentId(provided?: string): string {
   throw new Error(`Multiple agents registered (${agents.map(a => a.agent_id).join(", ")}). Specify agent_id explicitly.`);
 }
 
+/**
+ * Detect whether an API error indicates the server/agent registration is stale
+ * on the backend (e.g. "server not found", "agent not found", 404 on discovery).
+ */
+function isStaleRegistrationError(e: unknown): boolean {
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return (
+    msg.includes("404") ||
+    msg.includes("not found") ||
+    msg.includes("not registered") ||
+    msg.includes("unknown server") ||
+    msg.includes("unknown agent")
+  );
+}
+
+/**
+ * Wrap a tool's async handler to auto-reconnect on stale registration errors.
+ * If the first attempt fails because the backend forgot our server/agent,
+ * trigger autoReconnect() and retry once.
+ */
+async function withAutoReconnect<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (isStaleRegistrationError(e) && !reconnecting) {
+      console.error(`[EACN3] stale registration detected, auto-reconnecting before retry...`);
+      await autoReconnect();
+      // Retry once after reconnect
+      return await fn();
+    }
+    throw e;
+  }
+}
+
 // ---------------------------------------------------------------------------
-// Heartbeat background interval
+// Heartbeat background interval with auto-reconnect
 // ---------------------------------------------------------------------------
 
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+let heartbeatConsecutiveFailures = 0;
+let reconnecting = false;
+
+const HEARTBEAT_FAIL_THRESHOLD = 2; // trigger reconnect after 2 consecutive heartbeat failures
+
+/**
+ * Attempt to re-register server and agents with the network.
+ * Called when heartbeat failures indicate the backend has forgotten us.
+ */
+async function autoReconnect(): Promise<void> {
+  if (reconnecting) return;
+  reconnecting = true;
+  console.error("[EACN3] auto-reconnect: heartbeat failures exceeded threshold, re-registering...");
+
+  const s = state.getState();
+  try {
+    // Try heartbeat once more — maybe transient
+    try {
+      await net.heartbeat();
+      heartbeatConsecutiveFailures = 0;
+      console.error("[EACN3] auto-reconnect: heartbeat recovered, no re-registration needed");
+      return;
+    } catch { /* still failing */ }
+
+    // Re-register server
+    const res = await net.registerServer("0.5.0", "plugin://local", "plugin-user");
+    const newSid = res.server_id;
+    s.server_card = {
+      server_id: newSid,
+      version: "0.5.0",
+      endpoint: "plugin://local",
+      owner: "plugin-user",
+      status: "online",
+    };
+    state.saveServerData();
+
+    // Re-register all owned agents with the new server_id
+    for (const agent of state.listAgents()) {
+      agent.server_id = newSid;
+      try {
+        await net.registerAgent(agent);
+        console.error(`[EACN3] auto-reconnect: re-registered agent ${agent.agent_id}`);
+      } catch (e) {
+        console.error(`[EACN3] auto-reconnect: failed to re-register agent ${agent.agent_id}: ${(e as Error).message}`);
+      }
+    }
+    state.save();
+
+    heartbeatConsecutiveFailures = 0;
+    console.error("[EACN3] auto-reconnect: completed successfully");
+  } catch (e) {
+    console.error(`[EACN3] auto-reconnect: failed: ${(e as Error).message}`);
+  } finally {
+    reconnecting = false;
+  }
+}
 
 function startHeartbeat(): void {
   if (heartbeatInterval) return;
+  heartbeatConsecutiveFailures = 0;
+
+  // Wire up the connection-degraded callback from network-client
+  net.setConnectionDegradedCallback(() => {
+    console.error("[EACN3] connection degraded (multiple request failures), scheduling reconnect");
+    autoReconnect();
+  });
+
   heartbeatInterval = setInterval(async () => {
-    try { await net.heartbeat(); } catch { /* silent */ }
+    try {
+      await net.heartbeat();
+      heartbeatConsecutiveFailures = 0;
+    } catch (e) {
+      heartbeatConsecutiveFailures++;
+      console.error(`[EACN3] heartbeat failed (${heartbeatConsecutiveFailures}/${HEARTBEAT_FAIL_THRESHOLD}): ${(e as Error).message}`);
+      if (heartbeatConsecutiveFailures >= HEARTBEAT_FAIL_THRESHOLD) {
+        autoReconnect();
+      }
+    }
   }, 60_000);
 }
 
@@ -84,6 +191,7 @@ function stopHeartbeat(): void {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
   }
+  heartbeatConsecutiveFailures = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -735,7 +843,7 @@ server.tool(
       finalDescription = `${preamble}\n${params.description}`;
     }
 
-    const task = await net.createTask({
+    const task = await withAutoReconnect(() => net.createTask({
       task_id: taskId,
       initiator_id: initiatorId,
       content: {
@@ -750,7 +858,7 @@ server.tool(
       human_contact: params.human_contact,
       level: (params.level as TaskLevel) ?? "general",
       invited_agent_ids: params.invited_agent_ids,
-    });
+    }));
 
     // Track locally
     state.updateTask({
@@ -962,7 +1070,7 @@ server.tool(
 
     // Tier/level filtering and invite bypass are handled server-side in matcher.check_bid().
     // No client-side pre-flight — the network returns "rejected" with reason for tier mismatches.
-    const res = await net.submitBid(params.task_id, agentId, params.confidence, params.price);
+    const res = await withAutoReconnect(() => net.submitBid(params.task_id, agentId, params.confidence, params.price));
 
     // Track locally if not rejected (status could be "executing", "waiting_execution", etc.)
     if (res.status && res.status !== "rejected") {
@@ -993,7 +1101,7 @@ server.tool(
   },
   async (params) => {
     const agentId = resolveAgentId(params.agent_id);
-    const res = await net.submitResult(params.task_id, agentId, params.content);
+    const res = await withAutoReconnect(() => net.submitResult(params.task_id, agentId, params.content));
 
     // Auto-report reputation event (what logger used to do)
     try {
@@ -1016,7 +1124,7 @@ server.tool(
   },
   async (params) => {
     const agentId = resolveAgentId(params.agent_id);
-    const res = await net.rejectTask(params.task_id, agentId, params.reason);
+    const res = await withAutoReconnect(() => net.rejectTask(params.task_id, agentId, params.reason));
 
     // Auto-report reputation event
     try {
@@ -1042,7 +1150,7 @@ server.tool(
   },
   async (params) => {
     const initiatorId = resolveAgentId(params.initiator_id);
-    const task = await net.createSubtask(
+    const task = await withAutoReconnect(() => net.createSubtask(
       params.parent_task_id,
       initiatorId,
       { description: params.description },
@@ -1050,7 +1158,7 @@ server.tool(
       params.budget,
       params.deadline,
       params.level,
-    );
+    ));
 
     return ok({
       subtask_id: task.id,
@@ -1117,6 +1225,7 @@ server.tool(
             from: senderId,
             content: params.content,
           }),
+          signal: AbortSignal.timeout(10_000),
         });
         if (res.ok) {
           return ok({ sent: true, to: targetId, from: senderId, method: "a2a_direct" });

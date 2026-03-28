@@ -29,6 +29,31 @@ import { getState, getServerId } from "./state.js";
 // Internals
 // ---------------------------------------------------------------------------
 
+/** Default timeout for API requests (15 seconds). */
+const REQUEST_TIMEOUT_MS = 15_000;
+
+/** Max retries for transient failures. */
+const MAX_RETRIES = 3;
+
+/** Base delay for exponential backoff (doubles each retry). */
+const BASE_RETRY_DELAY_MS = 1_000;
+
+/** Track consecutive request failures for connection health monitoring. */
+let consecutiveFailures = 0;
+
+/** Callback invoked when consecutive failures exceed threshold. */
+let onConnectionDegraded: (() => void) | null = null;
+
+const CONNECTION_DEGRADED_THRESHOLD = 3;
+
+export function setConnectionDegradedCallback(cb: () => void): void {
+  onConnectionDegraded = cb;
+}
+
+export function getConsecutiveFailures(): number {
+  return consecutiveFailures;
+}
+
 function baseUrl(): string {
   return getState().network_endpoint;
 }
@@ -37,6 +62,20 @@ function serverId(): string {
   const id = getServerId();
   if (!id) throw new Error("Not connected. Call eacn3_connect first.");
   return id;
+}
+
+/** Whether an error is transient and worth retrying. */
+function isRetryable(error: unknown, status?: number): boolean {
+  // Network-level errors (ECONNREFUSED, ECONNRESET, ETIMEDOUT, fetch abort)
+  if (error instanceof TypeError) return true; // fetch network error
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  // Server errors (5xx) are retryable; client errors (4xx) are not
+  if (status !== undefined) return status >= 500;
+  return false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function request<T>(
@@ -61,18 +100,61 @@ async function request<T>(
   const sid = getServerId();
   if (sid) headers["x-server-id"] = sid;
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const bodyStr = body !== undefined ? JSON.stringify(body) : undefined;
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`${method} ${path} → ${res.status}: ${text}`);
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: bodyStr,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        const err = new Error(`${method} ${path} → ${res.status}: ${text}`);
+        if (isRetryable(null, res.status) && attempt < MAX_RETRIES) {
+          lastError = err;
+          const delay = BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+          console.error(`[NetClient] ${method} ${path} → ${res.status}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`);
+          await sleep(delay);
+          continue;
+        }
+        consecutiveFailures++;
+        if (consecutiveFailures >= CONNECTION_DEGRADED_THRESHOLD && onConnectionDegraded) {
+          onConnectionDegraded();
+        }
+        throw err;
+      }
+
+      // Success — reset failure counter
+      consecutiveFailures = 0;
+      return (await res.json()) as T;
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith(`${method} ${path}`)) {
+        // Already a formatted HTTP error from above — don't wrap
+        throw e;
+      }
+      // Network-level error (timeout, connection refused, etc.)
+      if (isRetryable(e) && attempt < MAX_RETRIES) {
+        lastError = e as Error;
+        const delay = BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+        console.error(`[NetClient] ${method} ${path} network error: ${(e as Error).message}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`);
+        await sleep(delay);
+        continue;
+      }
+      consecutiveFailures++;
+      if (consecutiveFailures >= CONNECTION_DEGRADED_THRESHOLD && onConnectionDegraded) {
+        onConnectionDegraded();
+      }
+      throw e;
+    }
   }
 
-  return (await res.json()) as T;
+  // All retries exhausted
+  throw lastError ?? new Error(`${method} ${path} failed after ${MAX_RETRIES} retries`);
 }
 
 // ---------------------------------------------------------------------------

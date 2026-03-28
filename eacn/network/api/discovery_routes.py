@@ -75,11 +75,21 @@ async def get_server(server_id: str):
 
 @discovery_router.post("/servers/{server_id}/heartbeat", response_model=OkResponse)
 async def server_heartbeat(server_id: str):
-    """Server heartbeat — marks server as online."""
+    """Server heartbeat — marks server and its agents as online.
+
+    If the server is alive, its agents are reachable. Refresh their
+    last_fetch_at so the liveness scanner doesn't kill them while the
+    host LLM is busy (e.g. executing a long task without polling events).
+    """
     card = await _net().discovery.bootstrap.get_server_card(server_id)
     if not card:
         raise HTTPException(404, f"Server {server_id} not found")
     await _net().discovery.bootstrap.set_server_status(server_id, "online")
+    # Keep agents alive too — heartbeat proves the server (and its agents) are reachable
+    try:
+        await _net().db.touch_agents_by_server(server_id)
+    except Exception:
+        pass  # best-effort; don't fail the heartbeat
     return OkResponse(message="heartbeat ok")
 
 
