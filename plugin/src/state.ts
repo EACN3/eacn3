@@ -1,8 +1,16 @@
 /**
- * Local state persistence — reads/writes ~/.eacn3/state.json.
+ * Local state persistence — per-agent file isolation.
+ *
+ * Storage layout:
+ *   ~/.eacn3/server.json              ← shared server identity (rarely written)
+ *   ~/.eacn3/agents/{agent_id}.json   ← per-agent state (only one process writes)
+ *   ~/.eacn3/events-{agent_id}.json   ← per-agent events (already isolated)
+ *
+ * Each CC session owns exactly one agent and only writes to its own files.
+ * No cross-process file locking needed.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, renameSync, unlinkSync, openSync, closeSync, constants as fsConstants } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, renameSync, unlinkSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -13,56 +21,48 @@ import { type EacnState, type AgentCard, type LocalTaskInfo, type PushEvent, typ
 // ---------------------------------------------------------------------------
 
 const EACN3_DIR = process.env.EACN3_STATE_DIR ?? join(homedir(), ".eacn3");
-const STATE_FILE = join(EACN3_DIR, "state.json");
-const STATE_BACKUP = join(EACN3_DIR, "state.json.bak");
-const STATE_LOCK = join(EACN3_DIR, "state.lock");
+const SERVER_FILE = join(EACN3_DIR, "server.json");
+const AGENTS_DIR = join(EACN3_DIR, "agents");
+
+/** Legacy state file — migrated on first load. */
+const LEGACY_STATE_FILE = join(EACN3_DIR, "state.json");
 
 // ---------------------------------------------------------------------------
-// Cross-process file lock — prevents multi-session races on state.json
+// Per-agent data stored on disk
 // ---------------------------------------------------------------------------
 
-const LOCK_RETRY_MS = 50;
-const LOCK_MAX_RETRIES = 20; // 50ms × 20 = 1s max wait
-const LOCK_STALE_MS = 10_000; // force-break locks older than 10s
-
-/**
- * Acquire an exclusive lock file. Returns true on success.
- * Uses O_CREAT | O_EXCL for atomic creation. Retries with backoff.
- * Stale locks (>10s old) are force-removed to prevent deadlock from crashed processes.
- */
-function acquireLock(): boolean {
-  mkdirSync(EACN3_DIR, { recursive: true });
-  for (let i = 0; i < LOCK_MAX_RETRIES; i++) {
-    try {
-      const fd = openSync(STATE_LOCK, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY);
-      // Write PID + timestamp for stale detection
-      writeFileSync(fd, `${process.pid}:${Date.now()}`);
-      closeSync(fd);
-      return true;
-    } catch {
-      // Lock exists — check if stale
-      try {
-        const raw = readFileSync(STATE_LOCK, "utf-8");
-        const ts = parseInt(raw.split(":")[1], 10);
-        if (Date.now() - ts > LOCK_STALE_MS) {
-          // Stale lock from crashed process — force remove
-          try { unlinkSync(STATE_LOCK); } catch { /* race with another cleaner */ }
-          continue;
-        }
-      } catch { /* lock file unreadable — retry */ }
-
-      // Busy-wait with small delay
-      const waitMs = LOCK_RETRY_MS + Math.random() * LOCK_RETRY_MS;
-      const start = Date.now();
-      while (Date.now() - start < waitMs) { /* spin */ }
-    }
-  }
-  console.error("[State] failed to acquire lock after retries — proceeding unlocked");
-  return false;
+interface AgentData {
+  agent: AgentCard;
+  local_tasks: Record<string, LocalTaskInfo>;
+  reputation_cache: Record<string, number>;
+  active_sessions: Record<SessionKey, DirectMessage[]>;
+  teams: Record<string, TeamInfo>;
 }
 
-function releaseLock(): void {
-  try { unlinkSync(STATE_LOCK); } catch { /* already removed */ }
+interface ServerData {
+  server_card: import("./models.js").ServerCard | null;
+  network_endpoint: string;
+}
+
+// ---------------------------------------------------------------------------
+// Atomic file write helper
+// ---------------------------------------------------------------------------
+
+function atomicWrite(filePath: string, data: string): void {
+  const dir = join(filePath, "..");
+  mkdirSync(dir, { recursive: true });
+  const tmpFile = filePath + "." + randomBytes(4).toString("hex") + ".tmp";
+  writeFileSync(tmpFile, data);
+  renameSync(tmpFile, filePath);
+}
+
+function safeReadJSON<T>(filePath: string): T | null {
+  try {
+    if (!existsSync(filePath)) return null;
+    return JSON.parse(readFileSync(filePath, "utf-8")) as T;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -71,49 +71,189 @@ function releaseLock(): void {
 
 let state: EacnState | null = null;
 
-/**
- * Read state from disk (no side effects on the singleton).
- * Tries primary file, then backup, then returns default.
- */
-function readStateFromDisk(): EacnState {
-  if (existsSync(STATE_FILE)) {
-    try {
-      const raw = readFileSync(STATE_FILE, "utf-8");
-      return JSON.parse(raw) as EacnState;
-    } catch { /* primary corrupted */ }
-  }
-  if (existsSync(STATE_BACKUP)) {
-    try {
-      const bak = readFileSync(STATE_BACKUP, "utf-8");
-      return JSON.parse(bak) as EacnState;
-    } catch { /* backup also corrupted */ }
-  }
-  return createDefaultState();
+// ---------------------------------------------------------------------------
+// Server data (shared, rarely written)
+// ---------------------------------------------------------------------------
+
+function loadServerData(): ServerData {
+  return safeReadJSON<ServerData>(SERVER_FILE) ?? { server_card: null, network_endpoint: "" };
 }
+
+function saveServerData(): void {
+  if (!state) return;
+  const data: ServerData = {
+    server_card: state.server_card,
+    network_endpoint: state.network_endpoint,
+  };
+  atomicWrite(SERVER_FILE, JSON.stringify(data, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// Per-agent data
+// ---------------------------------------------------------------------------
+
+function agentFilePath(agentId: string): string {
+  return join(AGENTS_DIR, `${agentId}.json`);
+}
+
+function loadAgentData(agentId: string): AgentData | null {
+  return safeReadJSON<AgentData>(agentFilePath(agentId));
+}
+
+function saveAgentData(agentId: string): void {
+  if (!state) return;
+  const agent = state.agents[agentId];
+  if (!agent) return;
+
+  const s = state;
+  const prefix = `${agentId}:`;
+
+  // Collect this agent's tasks
+  const tasks: Record<string, LocalTaskInfo> = {};
+  for (const [tid, task] of Object.entries(s.local_tasks)) {
+    if (task.agent_id === agentId) tasks[tid] = task;
+  }
+
+  // Collect this agent's sessions
+  const sessions: Record<SessionKey, DirectMessage[]> = {};
+  if (s.active_sessions) {
+    for (const [key, msgs] of Object.entries(s.active_sessions)) {
+      if (key.startsWith(prefix)) sessions[key] = msgs;
+    }
+  }
+
+  // Collect this agent's teams
+  const teams: Record<string, TeamInfo> = {};
+  if (s.teams) {
+    for (const [key, team] of Object.entries(s.teams)) {
+      if (team.my_agent_id === agentId) teams[key] = team;
+    }
+  }
+
+  const data: AgentData = {
+    agent,
+    local_tasks: tasks,
+    reputation_cache: { [agentId]: s.reputation_cache[agentId] ?? 0 },
+    active_sessions: sessions,
+    teams,
+  };
+  atomicWrite(agentFilePath(agentId), JSON.stringify(data, null, 2));
+}
+
+function loadAllAgents(): Record<string, AgentData> {
+  const result: Record<string, AgentData> = {};
+  if (!existsSync(AGENTS_DIR)) return result;
+  try {
+    for (const file of readdirSync(AGENTS_DIR)) {
+      if (!file.endsWith(".json")) continue;
+      const agentId = file.slice(0, -5); // strip .json
+      const data = loadAgentData(agentId);
+      if (data) result[agentId] = data;
+    }
+  } catch { /* dir unreadable */ }
+  return result;
+}
+
+function removeAgentFile(agentId: string): void {
+  const filePath = agentFilePath(agentId);
+  try { if (existsSync(filePath)) unlinkSync(filePath); } catch { /* best-effort */ }
+}
+
+// ---------------------------------------------------------------------------
+// Migration from legacy state.json
+// ---------------------------------------------------------------------------
+
+function migrateLegacyState(): void {
+  if (!existsSync(LEGACY_STATE_FILE)) return;
+
+  let legacy: EacnState;
+  try {
+    legacy = JSON.parse(readFileSync(LEGACY_STATE_FILE, "utf-8")) as EacnState;
+  } catch { return; }
+
+  // Write server data
+  const serverData: ServerData = {
+    server_card: legacy.server_card,
+    network_endpoint: legacy.network_endpoint,
+  };
+  atomicWrite(SERVER_FILE, JSON.stringify(serverData, null, 2));
+
+  // Write per-agent data
+  for (const [agentId, agent] of Object.entries(legacy.agents ?? {})) {
+    const prefix = `${agentId}:`;
+    const tasks: Record<string, LocalTaskInfo> = {};
+    for (const [tid, task] of Object.entries(legacy.local_tasks ?? {})) {
+      if (task.agent_id === agentId) tasks[tid] = task;
+    }
+    const sessions: Record<SessionKey, DirectMessage[]> = {};
+    for (const [key, msgs] of Object.entries(legacy.active_sessions ?? {})) {
+      if (key.startsWith(prefix)) sessions[key] = msgs;
+    }
+    const teams: Record<string, TeamInfo> = {};
+    for (const [key, team] of Object.entries(legacy.teams ?? {})) {
+      if (team.my_agent_id === agentId) teams[key] = team;
+    }
+
+    const data: AgentData = {
+      agent,
+      local_tasks: tasks,
+      reputation_cache: { [agentId]: legacy.reputation_cache?.[agentId] ?? 0 },
+      active_sessions: sessions,
+      teams,
+    };
+    atomicWrite(agentFilePath(agentId), JSON.stringify(data, null, 2));
+  }
+
+  // Migrate per-agent pending_events to event files
+  if (legacy.pending_events) {
+    for (const [agentId, events] of Object.entries(legacy.pending_events)) {
+      if (events.length > 0) {
+        agentEvents.set(agentId, events);
+        saveAgentEventsFile(agentId);
+      }
+    }
+  }
+
+  // Rename legacy file so we don't re-migrate
+  try { renameSync(LEGACY_STATE_FILE, LEGACY_STATE_FILE + ".migrated"); } catch { /* best-effort */ }
+  console.error("[State] migrated legacy state.json to per-agent files");
+}
+
+// ---------------------------------------------------------------------------
+// Assemble / Disassemble EacnState
+// ---------------------------------------------------------------------------
+
+function assembleState(): EacnState {
+  const server = loadServerData();
+  const allAgents = loadAllAgents();
+
+  const s = createDefaultState(server.network_endpoint || undefined);
+  s.server_card = server.server_card;
+
+  for (const [agentId, data] of Object.entries(allAgents)) {
+    s.agents[agentId] = data.agent;
+    Object.assign(s.local_tasks, data.local_tasks);
+    Object.assign(s.reputation_cache, data.reputation_cache);
+    if (!s.active_sessions) s.active_sessions = {};
+    Object.assign(s.active_sessions, data.active_sessions);
+    if (!s.teams) s.teams = {};
+    Object.assign(s.teams, data.teams);
+  }
+
+  return s;
+}
+
+// ---------------------------------------------------------------------------
+// Public API — same interface as before
+// ---------------------------------------------------------------------------
 
 /**
  * Load state from disk. Creates default if not exists.
  */
 export function load(): EacnState {
-  acquireLock();
-  try {
-    state = readStateFromDisk();
-  } finally {
-    releaseLock();
-  }
-
-  // Migrate pending_events from main state to per-agent files
-  if (state.pending_events) {
-    for (const [agentId, events] of Object.entries(state.pending_events)) {
-      if (events.length > 0) {
-        agentEvents.set(agentId, events);
-        saveAgentEvents(agentId);
-      }
-    }
-    state.pending_events = {};
-  }
-
-  snapshotKnownIds();
+  mkdirSync(EACN3_DIR, { recursive: true });
+  migrateLegacyState();
+  state = assembleState();
   return state;
 }
 
@@ -124,92 +264,19 @@ let saveQueued = false;
 let saving = false;
 
 /**
- * Merge in-memory state onto a freshly-read disk state.
- * This preserves changes made by OTHER processes (agents, tasks, sessions)
- * while applying our in-memory mutations on top.
- *
- * Strategy: our in-memory state wins for keys we actively manage,
- * but we pick up new agents/tasks/sessions that appeared on disk.
- */
-function mergeWithDisk(mem: EacnState): EacnState {
-  let disk: EacnState;
-  try {
-    disk = readStateFromDisk();
-  } catch {
-    return mem; // can't read disk — just use memory
-  }
-
-  // Merge agents: keep all from disk, overwrite with ours
-  disk.agents = { ...disk.agents, ...mem.agents };
-  // Remove agents we explicitly deleted (not in mem but were in previous load)
-  for (const id of Object.keys(disk.agents)) {
-    if (!(id in mem.agents) && id in (lastKnownAgentIds)) {
-      delete disk.agents[id];
-    }
-  }
-
-  // Merge local_tasks: same strategy
-  disk.local_tasks = { ...disk.local_tasks, ...mem.local_tasks };
-  for (const id of Object.keys(disk.local_tasks)) {
-    if (!(id in mem.local_tasks) && id in lastKnownTaskIds) {
-      delete disk.local_tasks[id];
-    }
-  }
-
-  // Merge reputation_cache
-  disk.reputation_cache = { ...disk.reputation_cache, ...mem.reputation_cache };
-
-  // Merge active_sessions
-  disk.active_sessions = { ...(disk.active_sessions ?? {}), ...(mem.active_sessions ?? {}) };
-
-  // Merge teams
-  disk.teams = { ...(disk.teams ?? {}), ...(mem.teams ?? {}) };
-
-  // Use our server_card and network_endpoint (we own these)
-  disk.server_card = mem.server_card;
-  disk.network_endpoint = mem.network_endpoint;
-
-  return disk;
-}
-
-/** Track IDs from last load so we can detect intentional deletions. */
-let lastKnownAgentIds: Record<string, true> = {};
-let lastKnownTaskIds: Record<string, true> = {};
-
-function snapshotKnownIds(): void {
-  if (!state) return;
-  lastKnownAgentIds = {};
-  for (const id of Object.keys(state.agents)) lastKnownAgentIds[id] = true;
-  lastKnownTaskIds = {};
-  for (const id of Object.keys(state.local_tasks)) lastKnownTaskIds[id] = true;
-}
-
-/**
- * Persist current state to disk using cross-process lock + atomic write.
- * Re-reads disk state and merges to prevent lost updates from other processes.
+ * Persist current state to disk.
+ * Writes server.json + per-agent files for agents known to this session.
  */
 export function save(): void {
   if (!state) return;
   if (saving) { saveQueued = true; return; }
   saving = true;
-  acquireLock();
   try {
-    mkdirSync(EACN3_DIR, { recursive: true });
-
-    // Merge with disk to avoid overwriting other processes' changes
-    state = mergeWithDisk(state);
-    snapshotKnownIds();
-
-    // Backup current file before overwriting
-    if (existsSync(STATE_FILE)) {
-      try { copyFileSync(STATE_FILE, STATE_BACKUP); } catch { /* best-effort */ }
+    saveServerData();
+    for (const agentId of Object.keys(state.agents)) {
+      saveAgentData(agentId);
     }
-    // Atomic write: write to temp, then rename (#107)
-    const tmpFile = STATE_FILE + "." + randomBytes(4).toString("hex") + ".tmp";
-    writeFileSync(tmpFile, JSON.stringify(state, null, 2));
-    renameSync(tmpFile, STATE_FILE);
   } finally {
-    releaseLock();
     saving = false;
     if (saveQueued) {
       saveQueued = false;
@@ -276,9 +343,8 @@ export function removeAgent(agentId: string): void {
     }
   }
 
-  save();
-
-  // Remove per-agent event file
+  // Remove per-agent files
+  removeAgentFile(agentId);
   agentEvents.delete(agentId);
   const evtFile = eventsFilePath(agentId);
   try { if (existsSync(evtFile)) unlinkSync(evtFile); } catch { /* best-effort */ }
@@ -315,7 +381,7 @@ export function getTask(taskId: string): import("./models.js").LocalTaskInfo | u
 }
 
 // ---------------------------------------------------------------------------
-// Per-agent event files — isolated from main state to avoid async contention
+// Per-agent event files (unchanged — already isolated)
 // ---------------------------------------------------------------------------
 
 /** In-memory cache of per-agent events. */
@@ -325,10 +391,9 @@ function eventsFilePath(agentId: string): string {
   return join(EACN3_DIR, `events-${agentId}.json`);
 }
 
-function loadAgentEvents(agentId: string): PushEvent[] {
+function loadAgentEventsFromFile(agentId: string): PushEvent[] {
   if (agentEvents.has(agentId)) return agentEvents.get(agentId)!;
   const filePath = eventsFilePath(agentId);
-  acquireEventsLock(agentId);
   try {
     if (existsSync(filePath)) {
       const raw = readFileSync(filePath, "utf-8");
@@ -337,49 +402,12 @@ function loadAgentEvents(agentId: string): PushEvent[] {
       return events;
     }
   } catch { /* corrupted — start fresh */ }
-  finally { releaseEventsLock(agentId); }
   agentEvents.set(agentId, []);
   return [];
 }
 
-/** Per-agent event lock file path. */
-function eventsLockPath(agentId: string): string {
-  return join(EACN3_DIR, `events-${agentId}.lock`);
-}
-
-function acquireEventsLock(agentId: string): boolean {
-  const lockPath = eventsLockPath(agentId);
-  mkdirSync(EACN3_DIR, { recursive: true });
-  for (let i = 0; i < LOCK_MAX_RETRIES; i++) {
-    try {
-      const fd = openSync(lockPath, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY);
-      writeFileSync(fd, `${process.pid}:${Date.now()}`);
-      closeSync(fd);
-      return true;
-    } catch {
-      try {
-        const raw = readFileSync(lockPath, "utf-8");
-        const ts = parseInt(raw.split(":")[1], 10);
-        if (Date.now() - ts > LOCK_STALE_MS) {
-          try { unlinkSync(lockPath); } catch { /* race */ }
-          continue;
-        }
-      } catch { /* retry */ }
-      const waitMs = LOCK_RETRY_MS + Math.random() * LOCK_RETRY_MS;
-      const start = Date.now();
-      while (Date.now() - start < waitMs) { /* spin */ }
-    }
-  }
-  return false;
-}
-
-function releaseEventsLock(agentId: string): void {
-  try { unlinkSync(eventsLockPath(agentId)); } catch { /* already removed */ }
-}
-
-function saveAgentEvents(agentId: string): void {
+function saveAgentEventsFile(agentId: string): void {
   const events = agentEvents.get(agentId) ?? [];
-  acquireEventsLock(agentId);
   try {
     mkdirSync(EACN3_DIR, { recursive: true });
     const filePath = eventsFilePath(agentId);
@@ -387,19 +415,18 @@ function saveAgentEvents(agentId: string): void {
     writeFileSync(tmpFile, JSON.stringify(events));
     renameSync(tmpFile, filePath);
   } catch { /* best-effort */ }
-  finally { releaseEventsLock(agentId); }
 }
 
 export function pushEvents(agentId: string, events: PushEvent[]): void {
-  const existing = loadAgentEvents(agentId);
+  const existing = loadAgentEventsFromFile(agentId);
   existing.push(...events);
-  saveAgentEvents(agentId);
+  saveAgentEventsFile(agentId);
 }
 
 export function drainEvents(agentId: string): PushEvent[] {
-  const events = loadAgentEvents(agentId);
+  const events = loadAgentEventsFromFile(agentId);
   agentEvents.set(agentId, []);
-  saveAgentEvents(agentId);
+  saveAgentEventsFile(agentId);
   return events;
 }
 
@@ -409,7 +436,7 @@ export function drainAllEvents(): PushEvent[] {
   for (const [agentId, events] of agentEvents) {
     all.push(...events);
     agentEvents.set(agentId, []);
-    saveAgentEvents(agentId);
+    saveAgentEventsFile(agentId);
   }
   return all;
 }
