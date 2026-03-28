@@ -1472,80 +1472,76 @@ server.tool(
     my_branch: z.string().describe("This agent's operation branch name"),
   },
   async (params) => {
-    const localAgents = state.listAgents();
-    const localIds = new Set(localAgents.map((a) => a.agent_id));
-
-    const myAgents = params.agent_ids.filter((id) => localIds.has(id));
-    if (myAgents.length === 0) {
-      return err("None of the specified agent_ids are registered on this server");
+    // Only the calling agent creates outgoing handshakes — peers join via autoHandshakeRespond
+    const myId = resolveAgentId(undefined);
+    if (!state.getAgent(myId)) {
+      return err(`Agent ${myId} is not registered on this server`);
+    }
+    if (!params.agent_ids.includes(myId)) {
+      return err(`Your agent ID ${myId} must be included in agent_ids`);
     }
 
     const teamId = `team-${Date.now().toString(36)}`;
-    const results: Array<{ agent_id: string; tasks_created: string[]; failed: string[] }> = [];
+    const peers = params.agent_ids.filter((id) => id !== myId);
 
-    for (const myId of myAgents) {
-      const peers = params.agent_ids.filter((id) => id !== myId);
+    const teamInfo: import("./src/models.js").TeamInfo = {
+      team_id: teamId,
+      git_repo: params.git_repo,
+      agent_ids: params.agent_ids,
+      my_agent_id: myId,
+      my_branch: params.my_branch,
+      peer_branches: {},
+      ack_out: {},
+      ack_in: {},
+      status: "forming",
+    };
 
-      const teamInfo: import("./src/models.js").TeamInfo = {
-        team_id: teamId,
-        git_repo: params.git_repo,
-        agent_ids: params.agent_ids,
-        my_agent_id: myId,
-        my_branch: params.my_branch,
-        peer_branches: {},
-        ack_out: {},
-        ack_in: {},
-        status: "forming",
-      };
+    const tasksCreated: string[] = [];
+    const failed: string[] = [];
+    for (const peerId of peers) {
+      try {
+        const taskId = `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+        const handshakeDeadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+        const task = await net.createTask({
+          task_id: taskId,
+          initiator_id: myId,
+          content: { description: `Team handshake: ${myId} → ${peerId} [team=${teamId}] [repo=${params.git_repo}] [members=${params.agent_ids.join(",")}]` },
+          domains: ["team-coordination"],
+          budget: 0,
+          deadline: handshakeDeadline,
+          max_concurrent_bidders: 1,
+          max_depth: 0,
+          invited_agent_ids: [peerId],
+        });
 
-      const tasksCreated: string[] = [];
-      const failed: string[] = [];
-      for (const peerId of peers) {
-        try {
-          const taskId = `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-          const handshakeDeadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-          const task = await net.createTask({
-            task_id: taskId,
-            initiator_id: myId,
-            content: { description: `Team handshake: ${myId} → ${peerId} [team=${teamId}] [repo=${params.git_repo}] [members=${params.agent_ids.join(",")}]` },
-            domains: ["team-coordination"],
-            budget: 0,
-            deadline: handshakeDeadline,
-            max_concurrent_bidders: 1,
-            max_depth: 0,
-            invited_agent_ids: [peerId],
-          });
+        teamInfo.ack_out[peerId] = task.id;
+        tasksCreated.push(task.id);
 
-          teamInfo.ack_out[peerId] = task.id;
-          tasksCreated.push(task.id);
-
-          state.updateTask({
-            task_id: task.id,
-            agent_id: myId,
-            role: "initiator",
-            status: task.status,
-            domains: ["team-coordination"],
-            description_summary: `Handshake → ${peerId}`,
-            created_at: new Date().toISOString(),
-          });
-        } catch (e: any) {
-          failed.push(`${peerId}: ${e.message ?? e}`);
-        }
+        state.updateTask({
+          task_id: task.id,
+          agent_id: myId,
+          role: "initiator",
+          status: task.status,
+          domains: ["team-coordination"],
+          description_summary: `Handshake → ${peerId}`,
+          created_at: new Date().toISOString(),
+        });
+      } catch (e: any) {
+        failed.push(`${peerId}: ${e.message ?? e}`);
       }
-
-      state.addTeam(teamInfo);
-      results.push({ agent_id: myId, tasks_created: tasksCreated, failed });
     }
+
+    state.addTeam(teamInfo);
 
     return ok({
       team_id: teamId,
       git_repo: params.git_repo,
       agent_ids: params.agent_ids,
-      local_agents: myAgents,
-      results,
+      my_agent_id: myId,
+      my_branch: params.my_branch,
+      tasks_created: tasksCreated,
+      failed,
       next_steps: [
-        "Create your operation branch in the git repo if you haven't already.",
-        "Handshake tasks are auto-processed — peers auto-bid and reply, results are auto-selected.",
         "Handshake tasks are auto-processed — peers auto-bid and reply, results are auto-selected.",
         "Call eacn3_team_status to check progress. Use eacn3_team_retry_ack if a peer is unresponsive.",
       ],
