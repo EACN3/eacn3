@@ -1462,13 +1462,13 @@ server.tool(
   },
 );
 
-// #42 eacn3_team_setup — message-based team handshake
+// #42 eacn3_team_setup — task-based team handshake (fully automatic)
 server.tool(
   "eacn3_team_setup",
   "Form a team of agents around a shared git repo. " +
-  "Step 1: Notifies all peers that we are a team, then sends an ACK message to each peer with this agent's info. " +
-  "Step 2: Each peer replies to the ACK (handled automatically on receiving). " +
-  "When all ACKs are exchanged, team is ready. Use eacn3_team_status to check progress, eacn3_team_retry_ack to poke unresponsive peers.",
+  "Creates a 0-budget handshake task (5-min deadline) for each peer. " +
+  "Peers auto-bid and auto-reply with their branch name; results are auto-selected. " +
+  "No manual steps needed — just call eacn3_team_status to check progress, or eacn3_team_retry_ack to poke unresponsive peers.",
   {
     agent_ids: z.array(z.string()).min(2).describe("Agent IDs to form a team"),
     git_repo: z.string().describe("Git repo URL for recording operations"),
@@ -1484,7 +1484,7 @@ server.tool(
     }
 
     const teamId = `team-${Date.now().toString(36)}`;
-    const results: Array<{ agent_id: string; ack_sent_to: string[]; failed: string[] }> = [];
+    const results: Array<{ agent_id: string; tasks_created: string[]; failed: string[] }> = [];
 
     for (const myId of myAgents) {
       const peers = params.agent_ids.filter((id) => id !== myId);
@@ -1496,38 +1496,48 @@ server.tool(
         my_agent_id: myId,
         my_branch: params.my_branch,
         peer_branches: {},
-        ack_sent: [],
-        ack_received: [],
+        ack_out: {},
+        ack_in: {},
         status: "forming",
       };
 
-      // Send ACK to each peer
-      const ackSentTo: string[] = [];
+      const tasksCreated: string[] = [];
       const failed: string[] = [];
       for (const peerId of peers) {
         try {
-          const ack: import("./src/models.js").TeamAck = {
-            _team_ack: true,
-            team_id: teamId,
-            git_repo: params.git_repo,
-            from_agent: myId,
-            branch: params.my_branch,
-            team_members: params.agent_ids,
-          };
-          await net.relayMessage({
-            to: { network_id: "", server_id: "", agent_id: peerId },
-            from: { network_id: "", server_id: state.getServerId() ?? "", agent_id: myId },
-            content: JSON.stringify(ack),
+          const taskId = `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+          const handshakeDeadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+          const task = await net.createTask({
+            task_id: taskId,
+            initiator_id: myId,
+            content: { description: `Team handshake: ${myId} → ${peerId} [team=${teamId}] [repo=${params.git_repo}] [members=${params.agent_ids.join(",")}]` },
+            domains: ["team-coordination"],
+            budget: 0,
+            deadline: handshakeDeadline,
+            max_concurrent_bidders: 1,
+            max_depth: 0,
+            invited_agent_ids: [peerId],
           });
-          teamInfo.ack_sent.push(peerId);
-          ackSentTo.push(peerId);
+
+          teamInfo.ack_out[peerId] = task.id;
+          tasksCreated.push(task.id);
+
+          state.updateTask({
+            task_id: task.id,
+            agent_id: myId,
+            role: "initiator",
+            status: task.status,
+            domains: ["team-coordination"],
+            description_summary: `Handshake → ${peerId}`,
+            created_at: new Date().toISOString(),
+          });
         } catch (e: any) {
           failed.push(`${peerId}: ${e.message ?? e}`);
         }
       }
 
       state.addTeam(teamInfo);
-      results.push({ agent_id: myId, ack_sent_to: ackSentTo, failed });
+      results.push({ agent_id: myId, tasks_created: tasksCreated, failed });
     }
 
     return ok({
@@ -1539,8 +1549,8 @@ server.tool(
       next_steps: [
         "Create your operation branch in the git repo if you haven't already.",
         "Call eacn3_team_set_branch to record your branch name.",
-        "Peers will receive your ACK and auto-reply. Call eacn3_team_status to check progress.",
-        "If a peer is unresponsive, use eacn3_team_retry_ack to re-send.",
+        "Handshake tasks are auto-processed — peers auto-bid and reply, results are auto-selected.",
+        "Call eacn3_team_status to check progress. Use eacn3_team_retry_ack if a peer is unresponsive.",
       ],
     });
   },
@@ -1549,7 +1559,7 @@ server.tool(
 // #43 eacn3_team_status — check team formation progress
 server.tool(
   "eacn3_team_status",
-  "Check team formation progress: which ACKs have been sent/received, which peer branches are known, and whether the team is ready. If peers are unresponsive, use eacn3_team_retry_ack.",
+  "Check team formation progress: which handshake tasks are complete, which peer branches are known, and whether the team is ready. If peers are unresponsive, use eacn3_team_retry_ack.",
   {
     team_id: z.string().describe("Team ID from eacn3_team_setup"),
   },
@@ -1568,8 +1578,8 @@ server.tool(
       my_agent_id: team.my_agent_id,
       my_branch: team.my_branch ?? null,
       peer_branches: team.peer_branches,
-      ack_sent: team.ack_sent,
-      ack_received: team.ack_received,
+      ack_out: team.ack_out,
+      ack_in: team.ack_in,
       connected,
       pending,
       ready: team.status === "ready",
@@ -1593,10 +1603,10 @@ server.tool(
   },
 );
 
-// #45 eacn3_team_retry_ack — re-send ACK to unresponsive peer
+// #45 eacn3_team_retry_ack — re-create handshake task for unresponsive peer
 server.tool(
   "eacn3_team_retry_ack",
-  "Re-send an ACK to a specific peer who hasn't responded yet. Use when eacn3_team_status shows a peer in 'pending'.",
+  "Re-create a handshake task for a specific peer who hasn't responded. Use when eacn3_team_status shows a peer in 'pending'.",
   {
     team_id: z.string().describe("Team ID"),
     peer_id: z.string().describe("Agent ID of the unresponsive peer"),
@@ -1609,23 +1619,24 @@ server.tool(
     }
 
     try {
-      const ack: import("./src/models.js").TeamAck = {
-        _team_ack: true,
-        team_id: team.team_id,
-        git_repo: team.git_repo,
-        from_agent: team.my_agent_id,
-        branch: team.my_branch,
-        team_members: team.agent_ids,
-      };
-      await net.relayMessage({
-        to: { network_id: "", server_id: "", agent_id: params.peer_id },
-        from: { network_id: "", server_id: state.getServerId() ?? "", agent_id: team.my_agent_id },
-        content: JSON.stringify(ack),
+      const taskId = `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const handshakeDeadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      const task = await net.createTask({
+        task_id: taskId,
+        initiator_id: team.my_agent_id,
+        content: { description: `Team handshake: ${team.my_agent_id} → ${params.peer_id} [team=${team.team_id}] [repo=${team.git_repo}] [members=${team.agent_ids.join(",")}]` },
+        domains: ["team-coordination"],
+        budget: 0,
+        deadline: handshakeDeadline,
+        max_concurrent_bidders: 1,
+        max_depth: 0,
+        invited_agent_ids: [params.peer_id],
       });
-      state.recordAckSent(team.team_id, params.peer_id);
-      return ok({ team_id: team.team_id, peer_id: params.peer_id, message: "ACK re-sent" });
+      team.ack_out[params.peer_id] = task.id;
+      state.addTeam(team); // persist updated ack_out
+      return ok({ team_id: team.team_id, peer_id: params.peer_id, task_id: task.id, message: "Handshake task re-created" });
     } catch (e: any) {
-      return err(`Failed to send ACK to ${params.peer_id}: ${e.message ?? e}`);
+      return err(`Failed to create handshake task for ${params.peer_id}: ${e.message ?? e}`);
     }
   },
 );
@@ -1740,17 +1751,28 @@ function registerEventCallbacks(): void {
         // The event stays in the buffer for /eacn3-bounty to surface
         break;
 
-      case "task_broadcast":
-        // New task available — auto-evaluate bid if agent has matching domains
-        autoBidEvaluate(agentId, event).catch(() => { /* non-critical */ });
+      case "task_broadcast": {
+        const bPayload = event.payload as Record<string, unknown>;
+        const bDomains = (bPayload?.domains as string[]) ?? [];
+        const bDesc = String(bPayload?.description ?? "");
+        // Auto-handle handshake tasks: auto-bid + auto-submit branch
+        if (bDomains.includes("team-coordination") && bDesc.startsWith("Team handshake:")) {
+          autoHandshakeRespond(agentId, event).catch(() => { /* non-critical */ });
+        } else {
+          autoBidEvaluate(agentId, event).catch(() => { /* non-critical */ });
+        }
+        break;
+      }
+
+      case "result_submitted":
+        // Auto-select result for handshake tasks
+        autoHandshakeSelect(agentId, event).catch(() => { /* non-critical */ });
         break;
 
       case "direct_message": {
         const payload = event.payload as Record<string, unknown>;
         const from = payload?.from as string | undefined;
         const content = payload?.content;
-
-        // Store in session
         if (from && content !== undefined) {
           state.addMessage(agentId, {
             from,
@@ -1760,11 +1782,6 @@ function registerEventCallbacks(): void {
             direction: "in",
           });
         }
-
-        // Handle team ACK messages
-        if (from && content) {
-          handleTeamAck(agentId, from, content).catch(() => { /* non-critical */ });
-        }
         break;
       }
     }
@@ -1772,67 +1789,94 @@ function registerEventCallbacks(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Team ACK handling — auto-reply to incoming ACKs, record peer branches
+// Team handshake auto-handling
 // ---------------------------------------------------------------------------
 
-async function handleTeamAck(agentId: string, from: string, rawContent: unknown): Promise<void> {
-  let ack: import("./src/models.js").TeamAck;
-  try {
-    const parsed = typeof rawContent === "string" ? JSON.parse(rawContent) : rawContent;
-    if (!parsed?._team_ack) return; // Not a team ACK
-    ack = parsed as import("./src/models.js").TeamAck;
-  } catch {
-    return; // Not JSON or not an ACK
-  }
+/**
+ * Auto-respond to an incoming handshake task_broadcast:
+ * 1. Parse team info from description
+ * 2. Create local team record if needed
+ * 3. Auto-bid (price=0, confidence=1)
+ * 4. Auto-submit result with our branch name
+ */
+async function autoHandshakeRespond(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
+  const payload = event.payload as Record<string, unknown>;
+  const desc = String(payload?.description ?? "");
 
-  // Record peer's branch if provided
-  if (ack.branch) {
-    state.updateTeamPeerBranch(ack.team_id, from, ack.branch);
-  }
+  // Parse: "Team handshake: agentA → agentB [team=team-xxx] [repo=...] [members=a,b,c]"
+  const teamMatch = desc.match(/\[team=([^\]]+)\]/);
+  const repoMatch = desc.match(/\[repo=([^\]]+)\]/);
+  const membersMatch = desc.match(/\[members=([^\]]+)\]/);
+  const fromMatch = desc.match(/^Team handshake:\s*(\S+)/);
 
-  if (ack.is_reply) {
-    // This is a reply to our ACK — just record it
-    state.recordAckReceived(ack.team_id, from);
-    return;
-  }
+  if (!teamMatch) return;
+  const teamId = teamMatch[1];
+  const gitRepo = repoMatch?.[1] ?? "";
+  const members = membersMatch?.[1]?.split(",") ?? [];
+  const fromAgent = fromMatch?.[1] ?? "";
 
-  // This is an incoming ACK — we need to reply
-  // First, ensure we have a local team record; create one if this is the first ACK we've seen
-  let team = state.findTeamForAgent(ack.team_id, agentId);
-  if (!team) {
-    const teamInfo: import("./src/models.js").TeamInfo = {
-      team_id: ack.team_id,
-      git_repo: ack.git_repo,
-      agent_ids: ack.team_members,
+  // Ensure local team record exists
+  const existing = state.getTeamsForAgent(agentId).find((t) => t.team_id === teamId);
+  if (!existing) {
+    state.addTeam({
+      team_id: teamId,
+      git_repo: gitRepo,
+      agent_ids: members,
       my_agent_id: agentId,
       peer_branches: {},
-      ack_sent: [],
-      ack_received: [],
+      ack_out: {},
+      ack_in: {},
       status: "forming",
-    };
-    if (ack.branch) teamInfo.peer_branches[from] = ack.branch;
-    state.addTeam(teamInfo);
-    team = state.findTeamForAgent(ack.team_id, agentId);
+    });
   }
 
-  // Send reply ACK with our branch info
+  // Record incoming handshake
+  state.recordAckIn(teamId, agentId, fromAgent, event.task_id);
+
+  // Auto-bid
   try {
-    const reply: import("./src/models.js").TeamAck = {
-      _team_ack: true,
-      team_id: ack.team_id,
-      git_repo: ack.git_repo,
-      from_agent: agentId,
-      branch: team?.my_branch,
-      team_members: ack.team_members,
-      is_reply: true,
-    };
-    await net.relayMessage({
-      to: { network_id: "", server_id: "", agent_id: from },
-      from: { network_id: "", server_id: state.getServerId() ?? "", agent_id: agentId },
-      content: JSON.stringify(reply),
+    await net.submitBid(event.task_id, agentId, 0, 1);
+  } catch { return; /* bid failed — maybe already bid or task closed */ }
+
+  // Auto-submit result with branch
+  const team = state.getTeamsForAgent(agentId).find((t) => t.team_id === teamId);
+  try {
+    await net.submitResult(event.task_id, agentId, {
+      _handshake_ack: true,
+      team_id: teamId,
+      branch: team?.my_branch ?? `agent/${agentId}`,
     });
-    state.recordAckSent(ack.team_id, from);
-  } catch { /* best-effort reply */ }
+  } catch { /* non-critical */ }
+}
+
+/**
+ * Auto-select result for handshake tasks when a result is submitted.
+ * Only acts on tasks in our ack_out (i.e., tasks we created as initiator).
+ */
+async function autoHandshakeSelect(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
+  const taskId = event.task_id;
+  const match = state.findTeamByHandshakeTask(taskId);
+  if (!match || match.direction !== "out") return; // Not our outgoing handshake
+
+  const payload = event.payload as Record<string, unknown>;
+  const resultAgentId = payload?.agent_id as string | undefined;
+  if (!resultAgentId) return;
+
+  // Auto-select the result
+  try {
+    await net.selectResult(taskId, agentId, resultAgentId);
+  } catch { /* non-critical */ }
+
+  // Extract branch from the result
+  try {
+    const taskData = await net.getTask(taskId);
+    const results = (taskData as any)?.results ?? [];
+    const result = results.find((r: any) => r.agent_id === resultAgentId);
+    const branch = result?.content?.branch;
+    if (branch) {
+      state.updateTeamPeerBranch(match.team.team_id, match.peerId, branch);
+    }
+  } catch { /* non-critical */ }
 }
 
 // ---------------------------------------------------------------------------

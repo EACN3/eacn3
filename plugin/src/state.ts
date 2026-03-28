@@ -273,34 +273,12 @@ export function updateTeamPeerBranch(
   const entries = Object.values(teams).filter((t) => t.team_id === teamId);
   for (const team of entries) {
     team.peer_branches[peerId] = branch;
-    // Check if all peers have completed ACK exchange
+    // Check if all peers have branches → team ready
     const peers = team.agent_ids.filter((id) => id !== team.my_agent_id);
     if (peers.every((id) => id in team.peer_branches)) {
       team.status = "ready";
     }
     save();
-  }
-}
-
-export function recordAckSent(teamId: string, peerId: string): void {
-  const teams = ensureTeams();
-  const entries = Object.values(teams).filter((t) => t.team_id === teamId);
-  for (const team of entries) {
-    if (!team.ack_sent.includes(peerId)) {
-      team.ack_sent.push(peerId);
-      save();
-    }
-  }
-}
-
-export function recordAckReceived(teamId: string, peerId: string): void {
-  const teams = ensureTeams();
-  const entries = Object.values(teams).filter((t) => t.team_id === teamId);
-  for (const team of entries) {
-    if (!team.ack_received.includes(peerId)) {
-      team.ack_received.push(peerId);
-      save();
-    }
   }
 }
 
@@ -316,9 +294,26 @@ export function setTeamBranch(teamId: string, branch: string): void {
   if (saved) save();
 }
 
-/** Find a team by team_id for a specific agent. */
-export function findTeamForAgent(teamId: string, agentId: string): TeamInfo | undefined {
-  return Object.values(ensureTeams()).find(
+/** Find team by handshake task ID (in either ack_out or ack_in). */
+export function findTeamByHandshakeTask(taskId: string): { team: TeamInfo; direction: "out" | "in"; peerId: string } | undefined {
+  for (const team of Object.values(ensureTeams())) {
+    for (const [peerId, tid] of Object.entries(team.ack_out)) {
+      if (tid === taskId) return { team, direction: "out", peerId };
+    }
+    for (const [peerId, tid] of Object.entries(team.ack_in)) {
+      if (tid === taskId) return { team, direction: "in", peerId };
+    }
+  }
+  return undefined;
+}
+
+/** Record an incoming handshake task for a team. */
+export function recordAckIn(teamId: string, agentId: string, peerId: string, taskId: string): void {
+  const team = Object.values(ensureTeams()).find(
     (t) => t.team_id === teamId && t.my_agent_id === agentId,
   );
+  if (team) {
+    team.ack_in[peerId] = taskId;
+    save();
+  }
 }
