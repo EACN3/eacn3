@@ -2,7 +2,7 @@
  * Local state persistence — reads/writes ~/.eacn3/state.json.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, renameSync, unlinkSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -118,8 +118,45 @@ export function addAgent(agent: AgentCard): void {
 }
 
 export function removeAgent(agentId: string): void {
-  delete getState().agents[agentId];
+  const s = getState();
+
+  // Remove agent record
+  delete s.agents[agentId];
+
+  // Remove agent's local tasks
+  for (const [taskId, task] of Object.entries(s.local_tasks)) {
+    if (task.agent_id === agentId) {
+      delete s.local_tasks[taskId];
+    }
+  }
+
+  // Remove agent's reputation cache
+  delete s.reputation_cache[agentId];
+
+  // Remove agent's message sessions
+  if (s.active_sessions) {
+    for (const key of Object.keys(s.active_sessions)) {
+      if (key.startsWith(`${agentId}:`)) {
+        delete s.active_sessions[key];
+      }
+    }
+  }
+
+  // Remove agent's team records
+  if (s.teams) {
+    for (const [key, team] of Object.entries(s.teams)) {
+      if (team.my_agent_id === agentId) {
+        delete s.teams[key];
+      }
+    }
+  }
+
   save();
+
+  // Remove per-agent event file
+  agentEvents.delete(agentId);
+  const evtFile = eventsFilePath(agentId);
+  try { if (existsSync(evtFile)) unlinkSync(evtFile); } catch { /* best-effort */ }
 }
 
 export function getAgent(agentId: string): AgentCard | undefined {
