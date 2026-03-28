@@ -166,7 +166,7 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
-// Long-polling helpers for eacn3_await_events
+// Event helpers for eacn3_await_events
 // ---------------------------------------------------------------------------
 
 /**
@@ -509,7 +509,7 @@ export default {
   // #5 eacn3_register_agent
   api.registerTool({
     name: "eacn3_register_agent",
-    description: "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and starts polling for push events (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
+    description: "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and registers it for on-demand event fetching (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
     parameters: {
       type: "object",
       properties: {
@@ -566,7 +566,7 @@ export default {
           enabled: true,
           sampling_available: false,
           mode: "openclaw",
-          hint: "Use eacn3_await_events for reactive event handling (long-polling). Directive injection is active on all tool responses.",
+          hint: "Use eacn3_await_events for reactive event handling. Directive injection is active on all tool responses.",
         },
       });
     },
@@ -1056,7 +1056,7 @@ export default {
     },
   });
 
-  // #39 eacn3_await_events — on-demand long-polling
+  // #39 eacn3_await_events — on-demand event fetching
   api.registerTool({
     name: "eacn3_await_events",
     description: "Fetch events from the network with a configurable wait time. First checks locally buffered synthetic events, then does a single long-poll to the network. Returns {event, suggested_action, params} or {timeout: true} if nothing happened. Prefer this over eacn3_get_events for reactive agent loops.",
