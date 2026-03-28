@@ -237,7 +237,6 @@ server.tool(
         team: {
           eacn3_team_setup: "Form a team of agents around a shared git repo via ACK message exchange.",
           eacn3_team_status: "Check team formation progress — which ACKs are exchanged, which peer branches are known.",
-          eacn3_team_set_branch: "Record your git branch name for a team after creating it.",
         },
         task: {
           eacn3_create_task: "Publish a task (supports team_id to auto-inject team preamble).",
@@ -425,7 +424,6 @@ server.tool(
         team: {
           eacn3_team_setup: "Form a team of agents around a shared git repo via ACK message exchange.",
           eacn3_team_status: "Check team formation progress — which ACKs are exchanged, which peer branches are known.",
-          eacn3_team_set_branch: "Record your git branch name for a team after creating it.",
         },
         task: {
           eacn3_create_task: "Publish a task (supports team_id to auto-inject team preamble).",
@@ -1471,7 +1469,7 @@ server.tool(
   {
     agent_ids: z.array(z.string()).min(2).describe("Agent IDs to form a team"),
     git_repo: z.string().describe("Git repo URL for recording operations"),
-    my_branch: z.string().optional().describe("This agent's branch name (if already created)"),
+    my_branch: z.string().describe("This agent's operation branch name"),
   },
   async (params) => {
     const localAgents = state.listAgents();
@@ -1547,7 +1545,7 @@ server.tool(
       results,
       next_steps: [
         "Create your operation branch in the git repo if you haven't already.",
-        "Call eacn3_team_set_branch to record your branch name.",
+        "Handshake tasks are auto-processed — peers auto-bid and reply, results are auto-selected.",
         "Handshake tasks are auto-processed — peers auto-bid and reply, results are auto-selected.",
         "Call eacn3_team_status to check progress. Use eacn3_team_retry_ack if a peer is unresponsive.",
       ],
@@ -1583,26 +1581,6 @@ server.tool(
       pending,
       ready: team.status === "ready",
     });
-  },
-);
-
-// #44 eacn3_team_set_branch — record this agent's operation branch
-server.tool(
-  "eacn3_team_set_branch",
-  "Record this agent's git branch name for a team. Call after creating your branch in the git repo.",
-  {
-    team_id: z.string().describe("Team ID"),
-    branch: z.string().describe("Branch name (e.g. 'agent/my-agent-id')"),
-  },
-  async (params) => {
-    const team = state.getTeam(params.team_id);
-    if (!team) return err(`Team ${params.team_id} not found`);
-    state.setTeamBranch(params.team_id, params.branch);
-
-    // Flush any pending handshake actions now that branch is ready
-    await flushPendingHandshakes(team.my_agent_id, params.team_id);
-
-    return ok({ team_id: params.team_id, branch: params.branch, message: "Branch recorded. Pending handshakes triggered." });
   },
 );
 
@@ -1814,9 +1792,9 @@ function registerEventCallbacks(): void {
 /**
  * Auto-respond to an incoming handshake task_broadcast:
  * 1. Parse team info from description
- * 2. Create local team record if needed
- * 3. If my_branch is set: auto-bid + create outgoing tasks
- *    If not: just record — handshake will be triggered by eacn3_team_set_branch
+ * 2. Create local team record if needed, auto-set branch to agent/{id}
+ * 3. Auto-bid on the incoming task
+ * 4. Create outgoing handshake tasks to all peers we haven't ACKed yet
  */
 async function autoHandshakeRespond(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
   const payload = event.payload as Record<string, unknown>;
@@ -1841,6 +1819,7 @@ async function autoHandshakeRespond(agentId: string, event: import("./src/models
       git_repo: gitRepo,
       agent_ids: members,
       my_agent_id: agentId,
+      my_branch: `agent/${agentId}`,
       peer_branches: {},
       ack_out: {},
       ack_in: {},
@@ -1850,11 +1829,14 @@ async function autoHandshakeRespond(agentId: string, event: import("./src/models
     team = state.getTeamsForAgent(agentId).find((t) => t.team_id === teamId)!;
   }
 
+  // Auto-set branch if not yet set
+  if (!team.my_branch) {
+    state.setTeamBranch(teamId, `agent/${agentId}`);
+    team.my_branch = `agent/${agentId}`;
+  }
+
   // Record incoming handshake task
   state.recordAckIn(teamId, agentId, fromAgent, event.task_id);
-
-  // Only proceed if branch is ready
-  if (!team.my_branch) return; // Will be triggered later by eacn3_team_set_branch
 
   // Auto-bid on the incoming task
   try {
@@ -1873,13 +1855,12 @@ async function autoHandshakeSubmit(agentId: string, event: import("./src/models.
   const taskId = event.task_id;
   const match = state.findTeamByHandshakeTask(taskId);
   if (!match || match.direction !== "in") return;
-  if (!match.team.my_branch) return; // Branch not ready — will be triggered by team_set_branch
 
   try {
     await net.submitResult(taskId, agentId, {
       _handshake_ack: true,
       team_id: match.team.team_id,
-      branch: match.team.my_branch,
+      branch: match.team.my_branch ?? `agent/${agentId}`,
     });
   } catch { /* non-critical */ }
 }
@@ -1909,25 +1890,6 @@ async function createOutgoingHandshakes(team: import("./src/models.js").TeamInfo
       state.addTeam(team);
     } catch { /* non-critical */ }
   }
-}
-
-/**
- * Flush all pending handshake actions for an agent after branch is set.
- * Called by eacn3_team_set_branch.
- */
-async function flushPendingHandshakes(agentId: string, teamId: string): Promise<void> {
-  const team = state.getTeamsForAgent(agentId).find((t) => t.team_id === teamId);
-  if (!team || !team.my_branch) return;
-
-  // Bid on any incoming handshake tasks we haven't bid on yet
-  for (const [, taskId] of Object.entries(team.ack_in)) {
-    try {
-      await net.submitBid(taskId, agentId, 0, 1);
-    } catch { /* already bid or task closed */ }
-  }
-
-  // Create outgoing tasks to peers we haven't ACKed yet
-  await createOutgoingHandshakes(team, agentId);
 }
 
 /**
