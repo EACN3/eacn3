@@ -732,6 +732,12 @@ server.tool(
       created_at: new Date().toISOString(),
     });
 
+    // If team task: reply to pending reverse handshakes with branch + task details
+    if (activeTeam) {
+      const taskSummary = { task_id: taskId, description: params.description.slice(0, 500) };
+      await replyPendingHandshakes(initiatorId, activeTeam, taskSummary);
+    }
+
     return ok({
       task_id: taskId,
       status: task.status,
@@ -1915,7 +1921,76 @@ async function autoHandshakeSelect(agentId: string, event: import("./src/models.
     if (branch) {
       state.updateTeamPeerBranch(match.team.team_id, match.peerId, branch);
     }
+    // If the reply carries a team task, buffer it as a synthetic event for the agent
+    const teamTask = result?.content?.team_task;
+    if (teamTask && teamTask.task_id) {
+      state.pushEvents(agentId, [{
+        msg_id: crypto.randomUUID().replace(/-/g, ""),
+        type: "direct_message",
+        task_id: teamTask.task_id,
+        payload: {
+          from: match.peerId,
+          content: JSON.stringify({ _team_task: true, ...teamTask }),
+        },
+        received_at: Date.now(),
+      }]);
+    }
   } catch { /* non-critical */ }
+}
+
+/**
+ * Reply to pending reverse handshakes when creating a team task.
+ * Fetches any unprocessed handshake events, bids, and submits result
+ * with both branch and task details.
+ */
+async function replyPendingHandshakes(
+  agentId: string,
+  team: import("./src/models.js").TeamInfo,
+  taskSummary: { task_id: string; description: string },
+): Promise<void> {
+  // Fetch pending events to pick up reverse handshake task_broadcasts
+  const events = await ws.fetchEvents(agentId, 0);
+  const localEvents = state.drainEvents(agentId);
+  const all = [...events, ...localEvents];
+
+  for (const event of all) {
+    const payload = event.payload as Record<string, unknown>;
+    const domains = (payload?.domains as string[]) ?? [];
+    const desc = String(payload?.description ?? "");
+
+    if (event.type !== "task_broadcast") {
+      // Put non-handshake events back for the agent to process later
+      state.pushEvents(agentId, [event]);
+      continue;
+    }
+
+    if (!domains.includes("team-coordination") || !desc.startsWith("Team handshake:")) {
+      state.pushEvents(agentId, [event]);
+      continue;
+    }
+
+    // This is a reverse handshake — bid + submit with branch and task details
+    const fromMatch = desc.match(/^Team handshake:\s*(\S+)/);
+    const fromAgent = fromMatch?.[1] ?? "";
+
+    state.recordAckIn(team.team_id, agentId, fromAgent, event.task_id);
+
+    try {
+      await net.submitBid(event.task_id, agentId, 0, 1);
+    } catch { continue; }
+
+    // We can't submit result until bid is accepted, but for the initiator
+    // replying at task-creation time, we try immediately — the bid on a
+    // 0-budget invited task is typically auto-accepted.
+    try {
+      await net.submitResult(event.task_id, agentId, {
+        _handshake_ack: true,
+        team_id: team.team_id,
+        branch: team.my_branch ?? `agent/${agentId}`,
+        team_task: taskSummary,
+      });
+    } catch { /* will be retried via autoHandshakeSubmit on bid_result */ }
+  }
 }
 
 // ---------------------------------------------------------------------------
