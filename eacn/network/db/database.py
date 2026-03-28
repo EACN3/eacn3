@@ -581,7 +581,7 @@ class Database:
 
     async def get_agent_card(self, agent_id: str) -> dict[str, Any] | None:
         async with self.db.execute(
-            "SELECT agent_id, server_id, network_id, name, tier, domains, skills, url, description FROM agent_cards WHERE agent_id = ?",
+            "SELECT agent_id, server_id, network_id, name, tier, domains, skills, url, description, status FROM agent_cards WHERE agent_id = ?",
             (agent_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -597,6 +597,7 @@ class Database:
                 "skills": json.loads(row[6]),
                 "url": row[7],
                 "description": row[8],
+                "status": row[9],
             }
 
     async def touch_agent_fetch(self, agent_id: str) -> None:
@@ -611,6 +612,20 @@ class Database:
             "UPDATE agent_cards SET status = ? WHERE agent_id = ?",
             (status, agent_id),
         )
+
+    async def mark_agent_offline_if_still_stale(self, agent_id: str, timeout_seconds: int) -> bool:
+        """Atomically mark agent offline ONLY if last_fetch_at is still stale.
+        Prevents race where agent polls between scan and update."""
+        async with self._write_lock:
+            await self.db.execute(
+                """UPDATE agent_cards SET status = 'offline'
+                   WHERE agent_id = ? AND status = 'online'
+                     AND last_fetch_at < datetime('now', ? || ' seconds')""",
+                (agent_id, f"-{timeout_seconds}"),
+            )
+            changed = self.db.total_changes
+            await self.db.commit()
+            return changed > 0
 
     async def scan_stale_agents(self, timeout_seconds: int) -> list[dict[str, str]]:
         """Find agents whose last_fetch_at is older than timeout_seconds.

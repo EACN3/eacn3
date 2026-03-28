@@ -115,12 +115,16 @@ async def lifespan(app: FastAPI):
                 stale = await db.scan_stale_agents(liveness_cfg.agent_offline_seconds)
                 affected_servers: set[str] = set()
                 for agent in stale:
-                    await db.set_agent_status(agent["agent_id"], "offline")
-                    affected_servers.add(agent["server_id"])
-                    _liveness_log.info(
-                        "Agent %s marked offline (no fetch for %ds)",
+                    # Atomic: only mark offline if STILL stale (prevents race with concurrent poll)
+                    marked = await db.mark_agent_offline_if_still_stale(
                         agent["agent_id"], liveness_cfg.agent_offline_seconds,
                     )
+                    if marked:
+                        affected_servers.add(agent["server_id"])
+                        _liveness_log.info(
+                            "Agent %s marked offline (no fetch for %ds)",
+                            agent["agent_id"], liveness_cfg.agent_offline_seconds,
+                        )
                 # Check if any affected server now has zero online agents
                 for sid in affected_servers:
                     online_count = await db.count_online_agents_by_server(sid)
