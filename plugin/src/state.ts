@@ -46,6 +46,17 @@ export function load(): EacnState {
   } else {
     state = createDefaultState();
   }
+  // Migrate pending_events from main state to per-agent files
+  if (state.pending_events) {
+    for (const [agentId, events] of Object.entries(state.pending_events)) {
+      if (events.length > 0) {
+        agentEvents.set(agentId, events);
+        saveAgentEvents(agentId);
+      }
+    }
+    state.pending_events = {};
+  }
+
   return state;
 }
 
@@ -141,30 +152,64 @@ export function getTask(taskId: string): import("./models.js").LocalTaskInfo | u
   return getState().local_tasks[taskId];
 }
 
+// ---------------------------------------------------------------------------
+// Per-agent event files — isolated from main state to avoid async contention
+// ---------------------------------------------------------------------------
+
+/** In-memory cache of per-agent events. */
+const agentEvents = new Map<string, PushEvent[]>();
+
+function eventsFilePath(agentId: string): string {
+  return join(EACN3_DIR, `events-${agentId}.json`);
+}
+
+function loadAgentEvents(agentId: string): PushEvent[] {
+  if (agentEvents.has(agentId)) return agentEvents.get(agentId)!;
+  const filePath = eventsFilePath(agentId);
+  try {
+    if (existsSync(filePath)) {
+      const raw = readFileSync(filePath, "utf-8");
+      const events = JSON.parse(raw) as PushEvent[];
+      agentEvents.set(agentId, events);
+      return events;
+    }
+  } catch { /* corrupted — start fresh */ }
+  agentEvents.set(agentId, []);
+  return [];
+}
+
+function saveAgentEvents(agentId: string): void {
+  const events = agentEvents.get(agentId) ?? [];
+  try {
+    mkdirSync(EACN3_DIR, { recursive: true });
+    const filePath = eventsFilePath(agentId);
+    const tmpFile = filePath + "." + randomBytes(4).toString("hex") + ".tmp";
+    writeFileSync(tmpFile, JSON.stringify(events));
+    renameSync(tmpFile, filePath);
+  } catch { /* best-effort */ }
+}
+
 export function pushEvents(agentId: string, events: PushEvent[]): void {
-  const s = getState();
-  if (!s.pending_events[agentId]) s.pending_events[agentId] = [];
-  s.pending_events[agentId].push(...events);
-  save();
+  const existing = loadAgentEvents(agentId);
+  existing.push(...events);
+  saveAgentEvents(agentId);
 }
 
 export function drainEvents(agentId: string): PushEvent[] {
-  const s = getState();
-  const events = s.pending_events[agentId] ?? [];
-  s.pending_events[agentId] = [];
-  save();
+  const events = loadAgentEvents(agentId);
+  agentEvents.set(agentId, []);
+  saveAgentEvents(agentId);
   return events;
 }
 
 /** Drain events for ALL agents at once (used by legacy callers). */
 export function drainAllEvents(): PushEvent[] {
-  const s = getState();
   const all: PushEvent[] = [];
-  for (const events of Object.values(s.pending_events)) {
+  for (const [agentId, events] of agentEvents) {
     all.push(...events);
+    agentEvents.set(agentId, []);
+    saveAgentEvents(agentId);
   }
-  s.pending_events = {};
-  save();
   return all;
 }
 
