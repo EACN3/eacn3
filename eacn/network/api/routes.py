@@ -616,6 +616,12 @@ async def poll_events(
 
     store = _store
 
+    # Touch agent liveness — this poll IS the heartbeat
+    try:
+        await _net().db.touch_agent_fetch(agent_id)
+    except Exception:
+        pass  # best-effort; don't block event delivery
+
     # Fast path: drain buffered messages
     if store:
         messages = await store.drain(agent_id)

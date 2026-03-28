@@ -867,8 +867,12 @@ class Network:
         if not all_agent_ids:
             return
 
-        # We'd normally fetch AgentCards here; for now push to all discovered
-        await self.push.broadcast_task(task, list(all_agent_ids))
+        # Filter out offline agents — only broadcast to those actively polling
+        online_ids = await self.db.filter_online_agents(list(all_agent_ids))
+        if not online_ids:
+            return
+
+        await self.push.broadcast_task(task, online_ids)
 
     async def _create_adjudication(
         self, parent_task: Task, result_agent_id: str
