@@ -173,7 +173,9 @@ export async function fetchEvents(agentId: string, timeoutSec: number = DEFAULT_
       // Fire event callback (reverse control, state updates, etc.)
       const cb = agentCallbacks.get(agentId) ?? eventCallback;
       if (cb) {
-        try { await Promise.resolve(cb(agentId, pushEvent)); } catch { }
+        try { await Promise.resolve(cb(agentId, pushEvent)); } catch (e) {
+          console.error(`[Transport] event callback error for ${agentId}/${pushEvent.type}:`, e);
+        }
       }
     }
 

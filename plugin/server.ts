@@ -2079,6 +2079,18 @@ async function main() {
   rc.init((server as any).server ?? server);
 }
 
+// ---------------------------------------------------------------------------
+// Global error handlers — keep process alive, log for debugging
+// ---------------------------------------------------------------------------
+
+process.on("uncaughtException", (err) => {
+  console.error("[EACN3] uncaughtException (kept alive):", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[EACN3] unhandledRejection (kept alive):", reason);
+});
+
 main().catch((e) => {
   console.error("EACN3 MCP server failed to start:", e);
   process.exit(1);
