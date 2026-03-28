@@ -1764,6 +1764,15 @@ function registerEventCallbacks(): void {
         break;
       }
 
+      case "bid_result": {
+        // If handshake bid was accepted, auto-submit result with branch
+        const brPayload = event.payload as Record<string, unknown>;
+        if ((brPayload as any)?.accepted) {
+          autoHandshakeSubmit(agentId, event).catch(() => { /* non-critical */ });
+        }
+        break;
+      }
+
       case "result_submitted":
         // Auto-select result for handshake tasks
         autoHandshakeSelect(agentId, event).catch(() => { /* non-critical */ });
@@ -1797,7 +1806,7 @@ function registerEventCallbacks(): void {
  * 1. Parse team info from description
  * 2. Create local team record if needed
  * 3. Auto-bid (price=0, confidence=1)
- * 4. Auto-submit result with our branch name
+ * Result submission happens later in autoHandshakeSubmit when bid is accepted.
  */
 async function autoHandshakeRespond(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
   const payload = event.payload as Record<string, unknown>;
@@ -1833,18 +1842,26 @@ async function autoHandshakeRespond(agentId: string, event: import("./src/models
   // Record incoming handshake
   state.recordAckIn(teamId, agentId, fromAgent, event.task_id);
 
-  // Auto-bid
+  // Auto-bid (result submitted after bid_result accepted)
   try {
     await net.submitBid(event.task_id, agentId, 0, 1);
-  } catch { return; /* bid failed — maybe already bid or task closed */ }
+  } catch { /* bid failed — maybe already bid or task closed */ }
+}
 
-  // Auto-submit result with branch
-  const team = state.getTeamsForAgent(agentId).find((t) => t.team_id === teamId);
+/**
+ * Auto-submit result after handshake bid is accepted (bid_result event).
+ * Looks up the task in ack_in to find team context, then submits branch.
+ */
+async function autoHandshakeSubmit(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
+  const taskId = event.task_id;
+  const match = state.findTeamByHandshakeTask(taskId);
+  if (!match || match.direction !== "in") return; // Not an incoming handshake
+
   try {
-    await net.submitResult(event.task_id, agentId, {
+    await net.submitResult(taskId, agentId, {
       _handshake_ack: true,
-      team_id: teamId,
-      branch: team?.my_branch ?? `agent/${agentId}`,
+      team_id: match.team.team_id,
+      branch: match.team.my_branch ?? `agent/${agentId}`,
     });
   } catch { /* non-critical */ }
 }
