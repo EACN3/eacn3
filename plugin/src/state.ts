@@ -75,8 +75,13 @@ let state: EacnState | null = null;
 // Server data (shared, rarely written)
 // ---------------------------------------------------------------------------
 
+/** Snapshot of last-written server data, to skip redundant writes. */
+let lastServerJSON = "";
+
 function loadServerData(): ServerData {
-  return safeReadJSON<ServerData>(SERVER_FILE) ?? { server_card: null, network_endpoint: "" };
+  const data = safeReadJSON<ServerData>(SERVER_FILE) ?? { server_card: null, network_endpoint: "" };
+  lastServerJSON = JSON.stringify(data);
+  return data;
 }
 
 function saveServerData(): void {
@@ -85,7 +90,11 @@ function saveServerData(): void {
     server_card: state.server_card,
     network_endpoint: state.network_endpoint,
   };
-  atomicWrite(SERVER_FILE, JSON.stringify(data, null, 2));
+  const json = JSON.stringify(data, null, 2);
+  // Skip write if unchanged — avoids cross-process EBUSY on Windows
+  if (JSON.stringify(data) === lastServerJSON) return;
+  atomicWrite(SERVER_FILE, json);
+  lastServerJSON = JSON.stringify(data);
 }
 
 // ---------------------------------------------------------------------------
