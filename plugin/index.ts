@@ -1051,7 +1051,7 @@ export default {
       const agentId = resolveAgentId(params.agent_id);
       const networkEvents = await ws.fetchEvents(agentId, 0);
       const localEvents = state.drainEvents(agentId);
-      const events = [...networkEvents, ...localEvents];
+      const events = [...networkEvents, ...localEvents].filter((e) => !e._handled);
       return ok({ count: events.length, events, reverse_control: rc.getStatus() });
     },
   });
@@ -1074,7 +1074,7 @@ export default {
       const filterTypes = params.event_types as string[] | undefined;
 
       // Check locally buffered synthetic events first
-      const immediate = drainMatchingEvents(agentId, filterTypes);
+      const immediate = drainMatchingEvents(agentId, filterTypes).filter((e: PushEvent) => !e._handled);
       if (immediate.length > 0) {
         return ok(buildAwaitResponse(immediate));
       }
@@ -1082,7 +1082,7 @@ export default {
       // Single long-poll to network with the agent's requested timeout
       const networkEvents = await ws.fetchEvents(agentId, timeoutSec);
       const localAfter = drainMatchingEvents(agentId, filterTypes);
-      const all = [...networkEvents, ...localAfter];
+      const all = [...networkEvents, ...localAfter].filter((e: PushEvent) => !e._handled);
 
       // Filter by event types if specified
       const filtered = filterTypes && filterTypes.length > 0

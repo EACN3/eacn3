@@ -328,6 +328,8 @@ export interface PushEvent {
   received_at: number;
   /** True if this message was delivered from offline cache on reconnect. */
   _offline?: boolean;
+  /** True if this event was already auto-handled by a callback (e.g. handshake). Consumers should skip it. */
+  _handled?: boolean;
 }
 
 // ---------------------------------------------------------------------------

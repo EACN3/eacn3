@@ -1224,10 +1224,9 @@ server.tool(
   },
   async (params) => {
     const agentId = resolveAgentId(params.agent_id);
-    // Fetch from network (non-blocking) + drain local synthetic events
     const networkEvents = await ws.fetchEvents(agentId, 0);
     const localEvents = state.drainEvents(agentId);
-    const events = [...networkEvents, ...localEvents];
+    const events = [...networkEvents, ...localEvents].filter((e) => !e._handled);
     return ok({
       count: events.length,
       events,
@@ -1251,7 +1250,7 @@ server.tool(
     const filterTypes = params.event_types;
 
     // Check locally buffered synthetic events first
-    const immediate = drainMatchingEvents(agentId, filterTypes);
+    const immediate = drainMatchingEvents(agentId, filterTypes).filter((e) => !e._handled);
     if (immediate.length > 0) {
       return ok(buildAwaitResponse(immediate));
     }
@@ -1259,7 +1258,7 @@ server.tool(
     // Single long-poll to network with the agent's requested timeout
     const networkEvents = await ws.fetchEvents(agentId, timeoutSec);
     const localAfter = drainMatchingEvents(agentId, filterTypes);
-    const all = [...networkEvents, ...localAfter];
+    const all = [...networkEvents, ...localAfter].filter((e) => !e._handled);
 
     // Filter by event types if specified
     const filtered = filterTypes && filterTypes.length > 0
@@ -1384,7 +1383,7 @@ server.tool(
     // Fetch from network (non-blocking) + drain local synthetic events
     const networkEvents = await ws.fetchEvents(agentId, 0);
     const localEvents = state.drainEvents(agentId);
-    const events = [...networkEvents, ...localEvents];
+    const events = [...networkEvents, ...localEvents].filter((e) => !e._handled);
 
     if (events.length === 0) {
       // Build context-aware prompts based on agent's current task state
@@ -1755,8 +1754,8 @@ function registerEventCallbacks(): void {
         const bPayload = event.payload as Record<string, unknown>;
         const bDomains = (bPayload?.domains as string[]) ?? [];
         const bDesc = String(bPayload?.description ?? "");
-        // Auto-handle handshake tasks: auto-bid + auto-submit branch
         if (bDomains.includes("team-coordination") && bDesc.startsWith("Team handshake:")) {
+          event._handled = true;
           autoHandshakeRespond(agentId, event).catch(() => { /* non-critical */ });
         } else {
           autoBidEvaluate(agentId, event).catch(() => { /* non-critical */ });
@@ -1765,18 +1764,25 @@ function registerEventCallbacks(): void {
       }
 
       case "bid_result": {
-        // If handshake bid was accepted, auto-submit result with branch
         const brPayload = event.payload as Record<string, unknown>;
         if ((brPayload as any)?.accepted) {
-          autoHandshakeSubmit(agentId, event).catch(() => { /* non-critical */ });
+          const match = state.findTeamByHandshakeTask(event.task_id);
+          if (match && match.direction === "in") {
+            event._handled = true;
+            autoHandshakeSubmit(agentId, event).catch(() => { /* non-critical */ });
+          }
         }
         break;
       }
 
-      case "result_submitted":
-        // Auto-select result for handshake tasks
-        autoHandshakeSelect(agentId, event).catch(() => { /* non-critical */ });
+      case "result_submitted": {
+        const match = state.findTeamByHandshakeTask(event.task_id);
+        if (match && match.direction === "out") {
+          event._handled = true;
+          autoHandshakeSelect(agentId, event).catch(() => { /* non-critical */ });
+        }
         break;
+      }
 
       case "direct_message": {
         const payload = event.payload as Record<string, unknown>;
