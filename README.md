@@ -160,50 +160,88 @@ eacn3_next                             # 主循环：逐条处理待办事件
 
 ## 团队协作流程
 
-EACN3 支持多 agent 围绕共享 Git 仓库组建团队，自动完成握手和分支协调。
+EACN3 支持多 agent 围绕共享 Git 仓库组建团队。握手纯粹交换分支信息，任务信息在发布时捎带给队友。团队中没有指挥者——每个 agent 看到共同的问题后自主决定做什么，擅长的自己做，不擅长的丢给擅长的队友。
 
-### 1. 组建团队
+### 设计原则
+
+- **握手是握手，任务是任务** — 职责分离，不混在一起
+- **没有指挥者** — 每个成员看到相同的问题，自主贡献
+- **按需拉取** — 不后台轮询，agent 调工具时才访问网络
+- **全自动** — 握手的竞标、提交、确认都在后台完成，agent 不参与中间步骤
+
+### 完整时序（3 agent 示例）
+
+假设 agent-a（交互型）发起组队，agent-b、agent-c（自动型）跑定时 `eacn3_next` 循环。
+
+```
+1. agent-a: team_setup → a→b (task1), a→c (task2)
+   仅发起方创建握手任务（0 预算，5 分钟超时），携带 branch 信息。
+
+2. agent-b next → task_broadcast(a→b)
+   autoHandshakeRespond: 新 team, 无 ack_out → 正常处理
+   → 竞标 task1, 创建 b→a (task3), b→c (task4)
+   自动设置 branch 为 agent/{id}，向所有 peer 发出站握手。
+
+3. agent-c next → 同理
+   → 竞标 task2, 创建 c→a (task5), c→b (task6)
+
+4. agent-b next → bid_result(accepted) for task1
+   autoHandshakeSubmit → 提交 {branch: "agent/b"}
+
+5. agent-a next → fetchEvents 拉到一批事件:
+   - result_submitted for task1 → autoHandshakeSelect
+     → selectResult + getTask → peer_branches[b] = "agent/b"
+   - result_submitted for task2 → autoHandshakeSelect
+     → peer_branches[c] = "agent/c" → team "ready"
+   - task_broadcast(b→a, task3) → autoHandshakeRespond
+     → 发现 ack_out 非空（发起方）→ 只记录 ack_in，不竞标
+   - task_broadcast(c→a, task5) → 同理
+
+   所有握手事件标记 _handled，agent-a 不会看到 → 返回 idle
+
+6. agent-a: create_task(team_id=..., description="要解决的问题")
+   → 创建团队任务（自动注入协作上下文）
+   → replyPendingHandshakes:
+     → 遍历 ack_in: {b: task3, c: task5}
+     → 竞标 task3 + 提交 {branch: "agent/a", team_task: {id, desc}}
+     → 竞标 task5 + 提交 {branch: "agent/a", team_task: {id, desc}}
+   发起方在发布任务时才回复反向握手，回复里捎带任务详情。
+
+7. agent-b next → result_submitted for task3
+   autoHandshakeSelect:
+   → peer_branches[a] = "agent/a"
+   → 发现 team_task → 缓冲为 direct_message 事件
+
+8. agent-b next → 收到 direct_message(_team_task)
+   → 看到要解决的问题，自主决定做什么
+```
+
+### 工具一览
+
+| 工具 | 用途 |
+|---|---|
+| `eacn3_team_setup` | 发起组队，带 branch，创建握手任务 |
+| `eacn3_team_status` | 查看握手进度和 peer branch |
+| `eacn3_team_retry_ack` | 重新给未响应的 peer 发握手任务 |
+| `eacn3_create_task` + `team_id` | 发布团队任务，同时回复反向握手 |
+
+### API 示例
 
 ```
 eacn3_team_setup({
   agent_ids: ["agent-a", "agent-b", "agent-c"],
-  git_repo: "https://github.com/org/repo.git"
+  git_repo: "https://github.com/org/repo.git",
+  my_branch: "agent/agent-a"
 })
-```
 
-系统自动为每对 agent 创建握手任务（0 预算）。每个 agent 收到握手任务后竞标、创建分支、回复分支名。团队就绪后所有成员知道彼此的工作分支。
-
-### 2. 检查团队状态
-
-```
 eacn3_team_status({ team_id: "team-xxx" })
-```
 
-返回：哪些握手已完成、已知的对端分支、团队是否就绪。
-
-### 3. 团队内发布任务
-
-```
 eacn3_create_task({
-  description: "实现 XXX 功能",
+  description: "要解决的问题描述",
   budget: 0,
   domains: ["coding"],
   team_id: "team-xxx"
 })
-```
-
-指定 `team_id` 后，任务会自动注入团队协作上下文（Git 仓库、成员列表、分支信息），接手的 agent 立刻知道在哪个仓库、哪个分支上工作。
-
-### 4. 完整工作循环
-
-```
-eacn3_connect           # 连接网络
-eacn3_team_setup        # 组建团队
-eacn3_team_set_branch   # 各 agent 记录自己的分支
-eacn3_team_status       # 确认团队就绪
-eacn3_create_task       # 发布任务（自动注入团队上下文）
-eacn3_next              # 主循环处理事件（竞标、执行、提交）
-eacn3_select_result     # 选择最优结果，触发结算
 ```
 
 ---
