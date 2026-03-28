@@ -81,6 +81,18 @@ class Network:
         invited_agent_ids: list[str] | None = None,
     ) -> Task:
         """Publish a new task: freeze budget → create → discover → broadcast."""
+        # Cap deadline to max_deadline_days
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        max_days = self.config.task.max_deadline_days
+        max_deadline_dt = _dt.now(_tz.utc) + _td(days=max_days)
+        if deadline:
+            try:
+                dl_dt = _dt.fromisoformat(deadline.replace("Z", "+00:00"))
+                if dl_dt > max_deadline_dt:
+                    deadline = max_deadline_dt.isoformat()
+            except Exception:
+                pass  # unparseable deadline — let task creation validate
+
         await self.escrow.freeze_budget(initiator_id, task_id, budget)
         try:
             task = Task(
@@ -148,6 +160,12 @@ class Network:
         price: float,
         server_id: str | None = None,
     ) -> BidStatus:
+        # Bidding is proof of liveness — mark agent online if it was offline
+        try:
+            await self.db.touch_agent_fetch(agent_id)
+        except Exception:
+            pass  # best-effort
+
         task = self.task_manager.get(task_id)
 
         # Guard: reject bids if parent task has already terminated
@@ -185,6 +203,10 @@ class Network:
         task_level = task.level.value if hasattr(task.level, "value") else str(task.level)
         is_invited = agent_id in task.invited_agent_ids
 
+        # Fallback: relax gates if task has no active bids and is past half deadline
+        has_bids = any(b.status != BidStatus.REJECTED for b in task.bids)
+        task_created_at = await self.db.get_task_created_at(task_id) if not has_bids else None
+
         check = self.matcher.check_bid(
             agent_id=agent_id,
             confidence=confidence,
@@ -196,6 +218,9 @@ class Network:
             agent_tier=agent_tier,
             task_level=task_level,
             is_invited=is_invited,
+            has_bids=has_bids,
+            task_deadline=task.deadline,
+            task_created_at=task_created_at,
         )
 
         if not check.passed:
@@ -567,6 +592,16 @@ class Network:
         if task.initiator_id != initiator_id:
             raise TaskError("Only the task initiator can update the deadline")
 
+        # Cap deadline
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        max_deadline_dt = _dt.now(_tz.utc) + _td(days=self.config.task.max_deadline_days)
+        try:
+            dl_dt = _dt.fromisoformat(deadline.replace("Z", "+00:00"))
+            if dl_dt > max_deadline_dt:
+                deadline = max_deadline_dt.isoformat()
+        except Exception:
+            pass
+
         task = self.task_manager.update_deadline(task_id, deadline)
         self._log_event("update_deadline", task_id=task_id)
         return task
@@ -652,6 +687,10 @@ class Network:
                 # Re-check with new budget
                 scores = self.reputation.get_scores([bid.agent_id])
                 neg_gain = self.reputation.negotiation_gain(bid.agent_id)
+                agent_card = await self.discovery.bootstrap.get_agent_card(bid.agent_id)
+                agent_tier = agent_card.get("tier", "general") if agent_card else "general"
+                task_level = task.level.value if hasattr(task.level, "value") else str(task.level)
+                active_bids = any(b.status != BidStatus.REJECTED for b in task.bids)
                 check = self.matcher.check_bid(
                     agent_id=bid.agent_id,
                     confidence=bid.confidence,
@@ -660,6 +699,12 @@ class Network:
                     scores=scores,
                     negotiation_gain=neg_gain,
                     is_adjudication=task.type == TaskType.ADJUDICATION,
+                    agent_tier=agent_tier,
+                    task_level=task_level,
+                    is_invited=bid.agent_id in task.invited_agent_ids,
+                    has_bids=active_bids,
+                    task_deadline=task.deadline,
+                    task_created_at=await self.db.get_task_created_at(task_id) if not active_bids else None,
                 )
                 if check.passed:
                     if not task.concurrent_slots_full:
@@ -697,6 +742,17 @@ class Network:
             raise TaskError(
                 f"Agent {initiator_id} is not a bidder on parent task {parent_task_id}"
             )
+
+        # Cap deadline
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        max_deadline_dt = _dt.now(_tz.utc) + _td(days=self.config.task.max_deadline_days)
+        if deadline:
+            try:
+                dl_dt = _dt.fromisoformat(deadline.replace("Z", "+00:00"))
+                if dl_dt > max_deadline_dt:
+                    deadline = max_deadline_dt.isoformat()
+            except Exception:
+                pass
 
         subtask = self.task_manager.create_subtask(
             parent_task_id=parent_task_id,
@@ -867,8 +923,12 @@ class Network:
         if not all_agent_ids:
             return
 
-        # We'd normally fetch AgentCards here; for now push to all discovered
-        await self.push.broadcast_task(task, list(all_agent_ids))
+        # Filter out offline agents — only broadcast to those actively polling
+        online_ids = await self.db.filter_online_agents(list(all_agent_ids))
+        if not online_ids:
+            return
+
+        await self.push.broadcast_task(task, online_ids)
 
     async def _create_adjudication(
         self, parent_task: Task, result_agent_id: str

@@ -139,7 +139,7 @@ server.tool(
 // #1 eacn3_connect
 server.tool(
   "eacn3_connect",
-  "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: starts event polling for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
+  "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, available_agents, hint}. IMPORTANT: agents are NOT auto-restored. Check available_agents — if you have a previous agent, call eacn3_claim_agent(agent_id) to resume it. Otherwise call eacn3_register_agent() to create a new one. Only one agent per session.",
   {
     network_endpoint: z.string().optional().describe(`Network URL. Defaults to ${EACN3_DEFAULT_NETWORK_ENDPOINT}`),
     seed_nodes: z.array(z.string()).optional().describe("Additional seed node URLs for fallback"),
@@ -196,38 +196,23 @@ server.tool(
         status: "online",
       };
     }
-    state.save();
+    state.saveServerData();
 
     // Start background heartbeat
     startHeartbeat();
 
-    // Re-register agents on network if needed; mark them for on-demand event fetching
-    for (const agent of Object.values(s.agents)) {
-      try {
-        await net.getAgentInfo(agent.agent_id);
-      } catch {
-        // Agent not found on network (e.g. server restarted with in-memory DB)
-        try { await net.registerAgent(agent); } catch { /* best-effort */ }
-      }
-      ws.connect(agent.agent_id);
-    }
-
-    const restoredAgents = Object.values(s.agents).map((a) => ({
-      agent_id: a.agent_id,
-      name: a.name,
-      domains: a.domains,
-      tier: a.tier,
-    }));
+    // List agents available on disk (from previous sessions) — do NOT auto-restore.
+    // Each session must explicitly claim an agent via eacn3_claim_agent.
+    const availableAgents = state.listAvailableAgents();
 
     return ok({
       connected: true,
       server_id: sid,
       network_endpoint: endpoint,
       fallback,
-      agents_online: restoredAgents.length,
-      restored_agents: restoredAgents,
-      hint: restoredAgents.length > 0
-        ? "You have previously registered agents restored and reconnected. You can use them directly without re-registering. Call eacn3_list_my_agents() for full details."
+      available_agents: availableAgents,
+      hint: availableAgents.length > 0
+        ? "Previous agents found on disk. Call eacn3_claim_agent(agent_id) to resume one, or eacn3_register_agent() to create a new one."
         : "No previous agents found. Register a new agent with eacn3_register_agent().",
       toolkit: {
         workflow: {
@@ -253,7 +238,7 @@ server.tool(
 // #2 eacn3_disconnect
 server.tool(
   "eacn3_disconnect",
-  "Disconnect from the EACN3 network. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
+  "Disconnect from the EACN3 network. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity is preserved — on next eacn3_connect you can claim your agent back via eacn3_claim_agent. Returns {disconnected: true}. Only call at end of session.",
   {},
   async () => {
     stopHeartbeat();
@@ -262,10 +247,9 @@ server.tool(
     // Do NOT call unregisterServer — it cascade-deletes all agents on the network side.
     // We only go offline; identity is preserved for reconnection.
     const s = state.getState();
-    if (s.server_card) {
-      s.server_card.status = "offline";
-    }
-    state.save();
+    // Don't write server.json — other sessions may still be using this server.
+    // Just clean up this session's in-memory state.
+    if (s.server_card) s.server_card.status = "offline";
 
     return ok({ disconnected: true });
   },
@@ -310,8 +294,55 @@ server.tool(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Agent Management (7)
+// Agent Management (8)
 // ═══════════════════════════════════════════════════════════════════════════
+
+// #4b eacn3_claim_agent
+server.tool(
+  "eacn3_claim_agent",
+  "Claim a previously registered agent from disk into this session. Use this to resume an agent listed in available_agents from eacn3_connect. The agent is re-registered on the network and event transport is started. Only one agent per session.",
+  {
+    agent_id: z.string().describe("ID of the agent to claim (from available_agents)"),
+  },
+  async (params) => {
+    logToolCall("eacn3_claim_agent", params);
+
+    if (state.listAgents().length > 0) {
+      return err("This session already has an agent. Only one agent per session.");
+    }
+
+    const agent = state.claimAgent(params.agent_id);
+    if (!agent) {
+      return err(`Agent ${params.agent_id} not found on disk. Use eacn3_register_agent to create a new one.`);
+    }
+
+    // Re-register on network with current session's server_id
+    const s = state.getState();
+    const oldServerId = agent.server_id;
+    if (s.server_card) agent.server_id = s.server_card.server_id;
+    try {
+      await net.registerAgent(agent);
+    } catch {
+      agent.server_id = oldServerId; // Revert on failure to stay consistent with network
+    }
+
+    // Start event transport
+    ws.connect(agent.agent_id);
+
+    // Initialize reverse control
+    rc.configure(agent.agent_id);
+
+    state.save();
+    logToolResult("eacn3_claim_agent", true, agent.agent_id);
+    return ok({
+      claimed: true,
+      agent_id: agent.agent_id,
+      name: agent.name,
+      domains: agent.domains,
+      tier: agent.tier,
+    });
+  },
+);
 
 // #5 eacn3_register_agent
 // Inlines: adapter (AgentCard assembly) + registry (validate + persist + DHT)
@@ -1688,6 +1719,10 @@ function buildAwaitResponse(events: import("./src/models.js").PushEvent[]) {
 
 function registerEventCallbacks(): void {
   ws.setEventCallback((agentId, event) => {
+    // Skip if agent not claimed in this session — events are on-demand only,
+    // but guard against edge cases.
+    if (!state.getAgent(agentId)) return;
+
     const taskId = event.task_id;
 
     // --- Reverse Control: try to handle event proactively ---

@@ -6,6 +6,8 @@ Shutdown: close DB.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -101,9 +103,47 @@ async def lifespan(app: FastAPI):
     set_peer_cluster(network.cluster)
     set_peer_network(network)
 
+    # ── Agent liveness scanner ────────────────────────────────────────
+    _liveness_log = logging.getLogger("eacn.liveness")
+    liveness_cfg = network.config.liveness
+
+    async def _liveness_scan_loop():
+        """Periodically mark stale agents offline; cascade to server."""
+        while True:
+            await asyncio.sleep(liveness_cfg.scan_interval_seconds)
+            try:
+                stale = await db.scan_stale_agents(liveness_cfg.agent_offline_seconds)
+                affected_servers: set[str] = set()
+                for agent in stale:
+                    # Atomic: only mark offline if STILL stale (prevents race with concurrent poll)
+                    marked = await db.mark_agent_offline_if_still_stale(
+                        agent["agent_id"], liveness_cfg.agent_offline_seconds,
+                    )
+                    if marked:
+                        affected_servers.add(agent["server_id"])
+                        _liveness_log.info(
+                            "Agent %s marked offline (no fetch for %ds)",
+                            agent["agent_id"], liveness_cfg.agent_offline_seconds,
+                        )
+                # Check if any affected server now has zero online agents
+                for sid in affected_servers:
+                    online_count = await db.count_online_agents_by_server(sid)
+                    if online_count == 0:
+                        await db.update_server_status(sid, "offline")
+                        _liveness_log.info("Server %s marked offline (all agents offline)", sid)
+            except Exception:
+                _liveness_log.debug("Liveness scan error", exc_info=True)
+
+    liveness_task = asyncio.create_task(_liveness_scan_loop())
+
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────────
+    liveness_task.cancel()
+    try:
+        await liveness_task
+    except asyncio.CancelledError:
+        pass
     await network.cluster.stop()
     await db.close()
 

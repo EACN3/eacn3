@@ -144,6 +144,8 @@ class Database:
                 skills         TEXT NOT NULL,
                 url            TEXT NOT NULL,
                 description    TEXT NOT NULL DEFAULT '',
+                status         TEXT NOT NULL DEFAULT 'online',
+                last_fetch_at  TEXT NOT NULL DEFAULT (datetime('now')),
                 created_at     TEXT NOT NULL DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_agent_cards_server ON agent_cards(server_id);
@@ -220,6 +222,21 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_offline_expires ON offline_messages(expires_at);
         """)
         await self.db.commit()
+        # Migration: add status + last_fetch_at to agent_cards if missing
+        try:
+            await self.db.execute(
+                "ALTER TABLE agent_cards ADD COLUMN status TEXT NOT NULL DEFAULT 'online'"
+            )
+            await self.db.commit()
+        except Exception:
+            pass  # column already exists
+        try:
+            await self.db.execute(
+                "ALTER TABLE agent_cards ADD COLUMN last_fetch_at TEXT NOT NULL DEFAULT (datetime('now'))"
+            )
+            await self.db.commit()
+        except Exception:
+            pass  # column already exists
 
     async def save_task(self, task_id: str, data: dict[str, Any]) -> None:
         """Insert or replace a full task JSON blob."""
@@ -238,6 +255,13 @@ class Database:
                 data.get("deadline"),
             ),
         )
+
+    async def get_task_created_at(self, task_id: str) -> str | None:
+        async with self.db.execute(
+            "SELECT created_at FROM tasks WHERE id = ?", (task_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
 
     async def load_task(self, task_id: str) -> dict[str, Any] | None:
         async with self.db.execute(
@@ -541,13 +565,14 @@ class Database:
     async def save_agent_card(self, card: dict[str, Any]) -> None:
         await self._exec_write(
             """INSERT INTO agent_cards
-               (agent_id, server_id, network_id, name, tier, domains, skills, url, description)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               (agent_id, server_id, network_id, name, tier, domains, skills, url, description, status, last_fetch_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'online', datetime('now'))
                ON CONFLICT(agent_id) DO UPDATE SET
                  server_id=excluded.server_id, network_id=excluded.network_id,
                  name=excluded.name, tier=excluded.tier,
                  domains=excluded.domains, skills=excluded.skills,
-                 url=excluded.url, description=excluded.description""",
+                 url=excluded.url, description=excluded.description,
+                 status='online', last_fetch_at=datetime('now')""",
             (
                 card["agent_id"],
                 card["server_id"],
@@ -563,7 +588,7 @@ class Database:
 
     async def get_agent_card(self, agent_id: str) -> dict[str, Any] | None:
         async with self.db.execute(
-            "SELECT agent_id, server_id, network_id, name, tier, domains, skills, url, description FROM agent_cards WHERE agent_id = ?",
+            "SELECT agent_id, server_id, network_id, name, tier, domains, skills, url, description, status FROM agent_cards WHERE agent_id = ?",
             (agent_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -579,7 +604,66 @@ class Database:
                 "skills": json.loads(row[6]),
                 "url": row[7],
                 "description": row[8],
+                "status": row[9],
             }
+
+    async def touch_agent_fetch(self, agent_id: str) -> None:
+        """Update last_fetch_at and mark agent online (called on every event poll)."""
+        await self._exec_write(
+            "UPDATE agent_cards SET last_fetch_at = datetime('now'), status = 'online' WHERE agent_id = ?",
+            (agent_id,),
+        )
+
+    async def set_agent_status(self, agent_id: str, status: str) -> None:
+        await self._exec_write(
+            "UPDATE agent_cards SET status = ? WHERE agent_id = ?",
+            (status, agent_id),
+        )
+
+    async def mark_agent_offline_if_still_stale(self, agent_id: str, timeout_seconds: int) -> bool:
+        """Atomically mark agent offline ONLY if last_fetch_at is still stale.
+        Prevents race where agent polls between scan and update."""
+        async with self._write_lock:
+            await self.db.execute(
+                """UPDATE agent_cards SET status = 'offline'
+                   WHERE agent_id = ? AND status = 'online'
+                     AND last_fetch_at < datetime('now', ? || ' seconds')""",
+                (agent_id, f"-{timeout_seconds}"),
+            )
+            changed = self.db.total_changes
+            await self.db.commit()
+            return changed > 0
+
+    async def scan_stale_agents(self, timeout_seconds: int) -> list[dict[str, str]]:
+        """Find agents whose last_fetch_at is older than timeout_seconds.
+        Returns list of {agent_id, server_id, status} for agents that should go offline."""
+        async with self.db.execute(
+            """SELECT agent_id, server_id, status FROM agent_cards
+               WHERE status = 'online'
+                 AND last_fetch_at < datetime('now', ? || ' seconds')""",
+            (f"-{timeout_seconds}",),
+        ) as cursor:
+            return [{"agent_id": r[0], "server_id": r[1], "status": r[2]} async for r in cursor]
+
+    async def count_online_agents_by_server(self, server_id: str) -> int:
+        """Count how many agents on a server are still online."""
+        async with self.db.execute(
+            "SELECT COUNT(*) FROM agent_cards WHERE server_id = ? AND status = 'online'",
+            (server_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def filter_online_agents(self, agent_ids: list[str]) -> list[str]:
+        """Return only agent_ids that have status='online'."""
+        if not agent_ids:
+            return []
+        placeholders = ",".join("?" for _ in agent_ids)
+        async with self.db.execute(
+            f"SELECT agent_id FROM agent_cards WHERE agent_id IN ({placeholders}) AND status = 'online'",
+            agent_ids,
+        ) as cursor:
+            return [r[0] async for r in cursor]
 
     async def delete_agent_card(self, agent_id: str) -> None:
         await self._exec_write(

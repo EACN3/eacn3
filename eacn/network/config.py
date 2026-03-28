@@ -73,9 +73,16 @@ class PushConfig(BaseModel):
     offline_ttl_seconds: int = Field(default=86400, ge=0)
 
 
+class LivenessConfig(BaseModel):
+    """Agent liveness detection based on event-fetch activity."""
+    agent_offline_seconds: int = Field(default=120, ge=10)   # no fetch for 2 min → offline
+    scan_interval_seconds: int = Field(default=30, ge=5)     # check every 30s
+
+
 class TaskConfig(BaseModel):
     default_max_concurrent_bidders: int = Field(default=5, ge=1)
     default_max_depth: int = Field(default=10, ge=0)
+    max_deadline_days: int = Field(default=30, ge=1)  # absolute cap on task lifetime
 
 
 class APIConfig(BaseModel):
@@ -104,6 +111,7 @@ class NetworkConfig(BaseModel):
     task: TaskConfig = Field(default_factory=TaskConfig)
     api: APIConfig = Field(default_factory=APIConfig)
     cluster: ClusterConfig = Field(default_factory=ClusterConfig)
+    liveness: LivenessConfig = Field(default_factory=LivenessConfig)
 
 
 # ── Load / Save ──────────────────────────────────────────────────────
