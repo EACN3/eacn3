@@ -81,6 +81,18 @@ class Network:
         invited_agent_ids: list[str] | None = None,
     ) -> Task:
         """Publish a new task: freeze budget → create → discover → broadcast."""
+        # Cap deadline to max_deadline_days
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        max_days = self.config.task.max_deadline_days
+        max_deadline_dt = _dt.now(_tz.utc) + _td(days=max_days)
+        if deadline:
+            try:
+                dl_dt = _dt.fromisoformat(deadline.replace("Z", "+00:00"))
+                if dl_dt > max_deadline_dt:
+                    deadline = max_deadline_dt.isoformat()
+            except Exception:
+                pass  # unparseable deadline — let task creation validate
+
         await self.escrow.freeze_budget(initiator_id, task_id, budget)
         try:
             task = Task(
@@ -191,6 +203,10 @@ class Network:
         task_level = task.level.value if hasattr(task.level, "value") else str(task.level)
         is_invited = agent_id in task.invited_agent_ids
 
+        # Fallback: relax gates if task has no bids and is past half deadline
+        has_bids = len(task.bids) > 0
+        task_created_at = await self.db.get_task_created_at(task_id) if not has_bids else None
+
         check = self.matcher.check_bid(
             agent_id=agent_id,
             confidence=confidence,
@@ -202,6 +218,9 @@ class Network:
             agent_tier=agent_tier,
             task_level=task_level,
             is_invited=is_invited,
+            has_bids=has_bids,
+            task_deadline=task.deadline,
+            task_created_at=task_created_at,
         )
 
         if not check.passed:
@@ -572,6 +591,16 @@ class Network:
 
         if task.initiator_id != initiator_id:
             raise TaskError("Only the task initiator can update the deadline")
+
+        # Cap deadline
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        max_deadline_dt = _dt.now(_tz.utc) + _td(days=self.config.task.max_deadline_days)
+        try:
+            dl_dt = _dt.fromisoformat(deadline.replace("Z", "+00:00"))
+            if dl_dt > max_deadline_dt:
+                deadline = max_deadline_dt.isoformat()
+        except Exception:
+            pass
 
         task = self.task_manager.update_deadline(task_id, deadline)
         self._log_event("update_deadline", task_id=task_id)

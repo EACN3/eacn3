@@ -10,6 +10,8 @@ Design:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from eacn.core.models import Task, AgentCard
 
 
@@ -93,6 +95,31 @@ class GlobalMatcher:
 
     # ── Bid validation ───────────────────────────────────────────────
 
+    def _is_past_half_deadline(
+        self,
+        task_deadline: str | None,
+        task_created_at: str | None,
+    ) -> bool:
+        """Check if the task is past half its lifetime (fallback window).
+        Falls back to checking if <50% of time remains when created_at is unavailable."""
+        if not task_deadline:
+            return False
+        try:
+            now = datetime.now(timezone.utc)
+            deadline_dt = datetime.fromisoformat(task_deadline.replace("Z", "+00:00"))
+            if task_created_at:
+                created_dt = datetime.fromisoformat(task_created_at.replace("Z", "+00:00"))
+                total = (deadline_dt - created_dt).total_seconds()
+                elapsed = (now - created_dt).total_seconds()
+                return total > 0 and elapsed > total * 0.5
+            else:
+                # No created_at — check if less than half the remaining time
+                # Use a heuristic: if deadline is within 1 hour, treat as fallback
+                remaining = (deadline_dt - now).total_seconds()
+                return remaining < 3600
+        except Exception:
+            return False
+
     def check_bid(
         self,
         agent_id: str,
@@ -107,6 +134,9 @@ class GlobalMatcher:
         agent_tier: str | None = None,
         task_level: str | None = None,
         is_invited: bool = False,
+        has_bids: bool = True,
+        task_deadline: str | None = None,
+        task_created_at: str | None = None,
     ) -> BidCheckResult:
         """Validate bid: ability gate + price gate.
 
@@ -114,10 +144,20 @@ class GlobalMatcher:
         Price: price ≤ budget × (1 + tolerance + negotiation_gain)
                (skip price check for adjudication tasks)
 
+        Fallback: if the task has no bids and is past half its deadline,
+        ability and tier gates are relaxed — better to let someone try
+        than to let the task expire with no one.
+
         Returns BidCheckResult with pass/fail and reason.
         """
-        # Tier eligibility check (skip if invited)
-        if agent_tier and task_level and not is_invited:
+        # Fallback mode: task has no bids AND past half deadline → relax gates
+        fallback = (
+            not has_bids
+            and self._is_past_half_deadline(task_deadline, task_created_at)
+        )
+
+        # Tier eligibility check (skip if invited or fallback)
+        if agent_tier and task_level and not is_invited and not fallback:
             if not self.is_tier_eligible(agent_tier, task_level):
                 return BidCheckResult(
                     passed=False,
@@ -132,8 +172,8 @@ class GlobalMatcher:
         reputation = scores.get(agent_id, self._default_rep)
         ability = confidence * reputation
 
-        # Skip ability check if invited
-        if is_invited:
+        # Skip ability check if invited or fallback
+        if is_invited or fallback:
             # Still do price check below
             pass
         elif ability < threshold:

@@ -82,6 +82,7 @@ class LivenessConfig(BaseModel):
 class TaskConfig(BaseModel):
     default_max_concurrent_bidders: int = Field(default=5, ge=1)
     default_max_depth: int = Field(default=10, ge=0)
+    max_deadline_days: int = Field(default=30, ge=1)  # absolute cap on task lifetime
 
 
 class APIConfig(BaseModel):

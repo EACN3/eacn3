@@ -256,6 +256,13 @@ class Database:
             ),
         )
 
+    async def get_task_created_at(self, task_id: str) -> str | None:
+        async with self.db.execute(
+            "SELECT created_at FROM tasks WHERE id = ?", (task_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
     async def load_task(self, task_id: str) -> dict[str, Any] | None:
         async with self.db.execute(
             "SELECT data FROM tasks WHERE id = ?", (task_id,)
