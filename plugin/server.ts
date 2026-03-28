@@ -201,33 +201,18 @@ server.tool(
     // Start background heartbeat
     startHeartbeat();
 
-    // Re-register agents on network if needed; mark them for on-demand event fetching
-    for (const agent of Object.values(s.agents)) {
-      try {
-        await net.getAgentInfo(agent.agent_id);
-      } catch {
-        // Agent not found on network (e.g. server restarted with in-memory DB)
-        try { await net.registerAgent(agent); } catch { /* best-effort */ }
-      }
-      ws.connect(agent.agent_id);
-    }
-
-    const restoredAgents = Object.values(s.agents).map((a) => ({
-      agent_id: a.agent_id,
-      name: a.name,
-      domains: a.domains,
-      tier: a.tier,
-    }));
+    // List agents available on disk (from previous sessions) — do NOT auto-restore.
+    // Each session must explicitly claim an agent via eacn3_claim_agent.
+    const availableAgents = state.listAvailableAgents();
 
     return ok({
       connected: true,
       server_id: sid,
       network_endpoint: endpoint,
       fallback,
-      agents_online: restoredAgents.length,
-      restored_agents: restoredAgents,
-      hint: restoredAgents.length > 0
-        ? "You have previously registered agents restored and reconnected. You can use them directly without re-registering. Call eacn3_list_my_agents() for full details."
+      available_agents: availableAgents,
+      hint: availableAgents.length > 0
+        ? "Previous agents found on disk. Call eacn3_claim_agent(agent_id) to resume one, or eacn3_register_agent() to create a new one."
         : "No previous agents found. Register a new agent with eacn3_register_agent().",
       toolkit: {
         workflow: {
@@ -310,8 +295,56 @@ server.tool(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Agent Management (7)
+// Agent Management (8)
 // ═══════════════════════════════════════════════════════════════════════════
+
+// #4b eacn3_claim_agent
+server.tool(
+  "eacn3_claim_agent",
+  "Claim a previously registered agent from disk into this session. Use this to resume an agent listed in available_agents from eacn3_connect. The agent is re-registered on the network and event transport is started. Only one agent per session.",
+  {
+    agent_id: z.string().describe("ID of the agent to claim (from available_agents)"),
+  },
+  async (params) => {
+    logToolCall("eacn3_claim_agent", params);
+
+    if (state.listAgents().length > 0) {
+      return err("This session already has an agent. Only one agent per session.");
+    }
+
+    const agent = state.claimAgent(params.agent_id);
+    if (!agent) {
+      return err(`Agent ${params.agent_id} not found on disk. Use eacn3_register_agent to create a new one.`);
+    }
+
+    // Update server_id to current session's server
+    const s = state.getState();
+    if (s.server_card) {
+      agent.server_id = s.server_card.server_id;
+    }
+
+    // Re-register on network
+    try {
+      await net.registerAgent(agent);
+    } catch { /* best-effort — may already exist */ }
+
+    // Start event transport
+    ws.connect(agent.agent_id);
+
+    // Initialize reverse control
+    rc.configure(agent.agent_id);
+
+    state.save();
+    logToolResult("eacn3_claim_agent", true, agent.agent_id);
+    return ok({
+      claimed: true,
+      agent_id: agent.agent_id,
+      name: agent.name,
+      domains: agent.domains,
+      tier: agent.tier,
+    });
+  },
+);
 
 // #5 eacn3_register_agent
 // Inlines: adapter (AgentCard assembly) + registry (validate + persist + DHT)

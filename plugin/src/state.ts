@@ -232,21 +232,10 @@ function migrateLegacyState(): void {
 
 function assembleState(): EacnState {
   const server = loadServerData();
-  const allAgents = loadAllAgents();
-
+  // Only load server identity — agents are NOT loaded automatically.
+  // Each session must explicitly claim an agent via claimAgent().
   const s = createDefaultState(server.network_endpoint || undefined);
   s.server_card = server.server_card;
-
-  for (const [agentId, data] of Object.entries(allAgents)) {
-    s.agents[agentId] = data.agent;
-    Object.assign(s.local_tasks, data.local_tasks);
-    Object.assign(s.reputation_cache, data.reputation_cache);
-    if (!s.active_sessions) s.active_sessions = {};
-    Object.assign(s.active_sessions, data.active_sessions);
-    if (!s.teams) s.teams = {};
-    Object.assign(s.teams, data.teams);
-  }
-
   return s;
 }
 
@@ -310,6 +299,52 @@ export function setState(newState: EacnState): void {
 // ---------------------------------------------------------------------------
 // Convenience methods
 // ---------------------------------------------------------------------------
+
+/**
+ * List agents available on disk (from previous sessions).
+ * Does NOT load them into memory — just reads metadata for display.
+ */
+export function listAvailableAgents(): Array<{ agent_id: string; name: string; domains: string[]; tier: string }> {
+  const result: Array<{ agent_id: string; name: string; domains: string[]; tier: string }> = [];
+  if (!existsSync(AGENTS_DIR)) return result;
+  try {
+    for (const file of readdirSync(AGENTS_DIR)) {
+      if (!file.endsWith(".json")) continue;
+      const data = safeReadJSON<AgentData>(join(AGENTS_DIR, file));
+      if (data?.agent) {
+        result.push({
+          agent_id: data.agent.agent_id,
+          name: data.agent.name,
+          domains: data.agent.domains,
+          tier: data.agent.tier,
+        });
+      }
+    }
+  } catch { /* dir unreadable */ }
+  return result;
+}
+
+/**
+ * Claim an existing agent from disk into this session.
+ * Loads the agent's full data (tasks, sessions, teams) into memory and marks ownership.
+ * Returns the AgentCard, or null if not found.
+ */
+export function claimAgent(agentId: string): AgentCard | null {
+  const data = loadAgentData(agentId);
+  if (!data) return null;
+
+  const s = getState();
+  s.agents[agentId] = data.agent;
+  Object.assign(s.local_tasks, data.local_tasks);
+  Object.assign(s.reputation_cache, data.reputation_cache);
+  if (!s.active_sessions) s.active_sessions = {};
+  Object.assign(s.active_sessions, data.active_sessions);
+  if (!s.teams) s.teams = {};
+  Object.assign(s.teams, data.teams);
+
+  ownedAgentIds.add(agentId);
+  return data.agent;
+}
 
 export function addAgent(agent: AgentCard): void {
   getState().agents[agent.agent_id] = agent;
