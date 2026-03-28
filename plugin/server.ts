@@ -1840,6 +1840,11 @@ async function autoHandshakeRespond(agentId: string, event: import("./src/models
   // Record incoming handshake task
   state.recordAckIn(teamId, agentId, fromAgent, event.task_id);
 
+  // If this agent is the team initiator (has ack_out entries), DON'T auto-respond.
+  // The initiator replies later via replyPendingHandshakes (called by create_task)
+  // so it can include task details in the response.
+  if (Object.keys(team.ack_out).length > 0) return;
+
   // Auto-bid on the incoming task
   try {
     await net.submitBid(event.task_id, agentId, 0, 1);
@@ -1940,56 +1945,31 @@ async function autoHandshakeSelect(agentId: string, event: import("./src/models.
 
 /**
  * Reply to pending reverse handshakes when creating a team task.
- * Fetches any unprocessed handshake events, bids, and submits result
- * with both branch and task details.
+ * Uses ack_in (recorded by autoHandshakeRespond) to find task IDs
+ * that the initiator hasn't responded to yet. Bids and submits result
+ * with branch + task details.
  */
 async function replyPendingHandshakes(
   agentId: string,
   team: import("./src/models.js").TeamInfo,
   taskSummary: { task_id: string; description: string },
 ): Promise<void> {
-  // Fetch pending events to pick up reverse handshake task_broadcasts
-  const events = await ws.fetchEvents(agentId, 0);
-  const localEvents = state.drainEvents(agentId);
-  const all = [...events, ...localEvents];
-
-  for (const event of all) {
-    const payload = event.payload as Record<string, unknown>;
-    const domains = (payload?.domains as string[]) ?? [];
-    const desc = String(payload?.description ?? "");
-
-    if (event.type !== "task_broadcast") {
-      // Put non-handshake events back for the agent to process later
-      state.pushEvents(agentId, [event]);
-      continue;
-    }
-
-    if (!domains.includes("team-coordination") || !desc.startsWith("Team handshake:")) {
-      state.pushEvents(agentId, [event]);
-      continue;
-    }
-
-    // This is a reverse handshake — bid + submit with branch and task details
-    const fromMatch = desc.match(/^Team handshake:\s*(\S+)/);
-    const fromAgent = fromMatch?.[1] ?? "";
-
-    state.recordAckIn(team.team_id, agentId, fromAgent, event.task_id);
-
+  for (const [peerId, taskId] of Object.entries(team.ack_in)) {
+    // Bid on the reverse handshake task
     try {
-      await net.submitBid(event.task_id, agentId, 0, 1);
-    } catch { continue; }
+      await net.submitBid(taskId, agentId, 0, 1);
+    } catch { continue; /* already bid or task closed */ }
 
-    // We can't submit result until bid is accepted, but for the initiator
-    // replying at task-creation time, we try immediately — the bid on a
-    // 0-budget invited task is typically auto-accepted.
+    // Submit result with branch + task details
+    // On a 0-budget invited task, bid is typically auto-accepted
     try {
-      await net.submitResult(event.task_id, agentId, {
+      await net.submitResult(taskId, agentId, {
         _handshake_ack: true,
         team_id: team.team_id,
         branch: team.my_branch ?? `agent/${agentId}`,
         team_task: taskSummary,
       });
-    } catch { /* will be retried via autoHandshakeSubmit on bid_result */ }
+    } catch { /* non-critical — peer can retry via eacn3_team_retry_ack */ }
   }
 }
 
