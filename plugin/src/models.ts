@@ -547,6 +547,8 @@ export interface TeamInfo {
   ack_out: Record<string, string>;
   /** Incoming handshake tasks: peer_agent_id → task_id. "ACKs I received." */
   ack_in: Record<string, string>;
+  /** True only when this agent called eacn3_team_setup (not auto-respond). */
+  is_initiator?: boolean;
   /** "forming" until all peer branches are known, then "ready". */
   status: "forming" | "ready";
 }
