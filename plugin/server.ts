@@ -13,7 +13,7 @@ import { z } from "zod";
 import { type EacnState, type AgentCard, type PushEvent, type AgentTier, type TaskLevel, createDefaultState, EACN3_DEFAULT_NETWORK_ENDPOINT, isTierEligible, AGENT_TIER_HIERARCHY } from "./src/models.js";
 import * as state from "./src/state.js";
 import * as net from "./src/network-client.js";
-import * as ws from "./src/event-transport.js";
+import * as transport from "./src/event-transport.js";
 import * as a2a from "./src/a2a-server.js";
 import * as rc from "./src/reverse-control.js";
 
@@ -242,7 +242,7 @@ server.tool(
   {},
   async () => {
     stopHeartbeat();
-    ws.disconnectAll();
+    transport.disconnectAll();
 
     // Do NOT call unregisterServer — it cascade-deletes all agents on the network side.
     // We only go offline; identity is preserved for reconnection.
@@ -327,7 +327,7 @@ server.tool(
     }
 
     // Start event transport
-    ws.connect(agent.agent_id);
+    transport.connect(agent.agent_id);
 
     // Initialize reverse control
     rc.configure(agent.agent_id);
@@ -418,7 +418,7 @@ server.tool(
     state.addAgent(card);
 
     // Register agent for on-demand event fetching
-    ws.connect(agentId);
+    transport.connect(agentId);
 
     // Configure reverse control for this agent
     if (params.reverse_control?.enabled !== false) {
@@ -530,7 +530,7 @@ server.tool(
   },
   async (params) => {
     const res = await net.unregisterAgent(params.agent_id);
-    ws.disconnect(params.agent_id);
+    transport.disconnect(params.agent_id);
     rc.unconfigure(params.agent_id);
     state.removeAgent(params.agent_id);
 
@@ -556,8 +556,8 @@ server.tool(
         agent_id: a.agent_id,
         name: a.name,
         domains: a.domains,
-        connected: ws.isConnected(a.agent_id),
-        transport: ws.getTransportStatus(a.agent_id),
+        connected: transport.isConnected(a.agent_id),
+        transport: transport.getTransportStatus(a.agent_id),
       })),
     });
   },
@@ -1259,7 +1259,7 @@ server.tool(
   },
   async (params) => {
     const agentId = resolveAgentId(params.agent_id);
-    const networkEvents = await ws.fetchEvents(agentId, 0);
+    const networkEvents = await transport.fetchEvents(agentId, 0);
     const localEvents = state.drainEvents(agentId);
     const events = [...networkEvents, ...localEvents].filter((e) => !e._handled);
     return ok({
@@ -1291,7 +1291,7 @@ server.tool(
     }
 
     // Single long-poll to network with the agent's requested timeout
-    const networkEvents = await ws.fetchEvents(agentId, timeoutSec);
+    const networkEvents = await transport.fetchEvents(agentId, timeoutSec);
     const localAfter = drainMatchingEvents(agentId, filterTypes);
     const all = [...networkEvents, ...localAfter].filter((e) => !e._handled);
 
@@ -1416,7 +1416,7 @@ server.tool(
   async (params) => {
     const agentId = resolveAgentId(params.agent_id);
     // Fetch from network (non-blocking) + drain local synthetic events
-    const networkEvents = await ws.fetchEvents(agentId, 0);
+    const networkEvents = await transport.fetchEvents(agentId, 0);
     const localEvents = state.drainEvents(agentId);
     const events = [...networkEvents, ...localEvents].filter((e) => !e._handled);
 
@@ -1719,7 +1719,7 @@ function buildAwaitResponse(events: import("./src/models.js").PushEvent[]) {
 // ---------------------------------------------------------------------------
 
 function registerEventCallbacks(): void {
-  ws.setEventCallback((agentId, event) => {
+  transport.setEventCallback((agentId, event) => {
     // Skip if agent not claimed in this session — events are on-demand only,
     // but guard against edge cases.
     if (!state.getAgent(agentId)) return;
@@ -2078,6 +2078,18 @@ async function main() {
   // Must be called AFTER connect() so client capabilities are available.
   rc.init((server as any).server ?? server);
 }
+
+// ---------------------------------------------------------------------------
+// Global error handlers — keep process alive, log for debugging
+// ---------------------------------------------------------------------------
+
+process.on("uncaughtException", (err) => {
+  console.error("[EACN3] uncaughtException (kept alive):", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[EACN3] unhandledRejection (kept alive):", reason);
+});
 
 main().catch((e) => {
   console.error("EACN3 MCP server failed to start:", e);
