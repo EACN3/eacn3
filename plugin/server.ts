@@ -247,10 +247,9 @@ server.tool(
     // Do NOT call unregisterServer — it cascade-deletes all agents on the network side.
     // We only go offline; identity is preserved for reconnection.
     const s = state.getState();
-    if (s.server_card) {
-      s.server_card.status = "offline";
-    }
-    state.saveServerData();
+    // Don't write server.json — other sessions may still be using this server.
+    // Just clean up this session's in-memory state.
+    if (s.server_card) s.server_card.status = "offline";
 
     return ok({ disconnected: true });
   },
@@ -317,16 +316,15 @@ server.tool(
       return err(`Agent ${params.agent_id} not found on disk. Use eacn3_register_agent to create a new one.`);
     }
 
-    // Update server_id to current session's server
+    // Re-register on network with current session's server_id
     const s = state.getState();
-    if (s.server_card) {
-      agent.server_id = s.server_card.server_id;
-    }
-
-    // Re-register on network
+    const oldServerId = agent.server_id;
+    if (s.server_card) agent.server_id = s.server_card.server_id;
     try {
       await net.registerAgent(agent);
-    } catch { /* best-effort — may already exist */ }
+    } catch {
+      agent.server_id = oldServerId; // Revert on failure to stay consistent with network
+    }
 
     // Start event transport
     ws.connect(agent.agent_id);

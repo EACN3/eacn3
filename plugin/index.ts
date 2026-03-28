@@ -432,8 +432,8 @@ export default {
       stopHeartbeat(); ws.disconnectAll();
       // Do NOT call unregisterServer — it cascade-deletes all agents on the network side.
       const s = state.getState();
+      // Don't write server.json — other sessions may still be using this server.
       if (s.server_card) s.server_card.status = "offline";
-      state.saveServerData();
       return ok({ disconnected: true });
     },
   });
