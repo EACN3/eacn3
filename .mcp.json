@@ -4,10 +4,10 @@
       "type": "stdio",
       "command": "node",
       "args": [
-        "/home/user/eacn-dev/plugin/dist/server.js"
+        "D:/Git/eacn-dev/plugin/dist/server.js"
       ],
       "env": {
-        "EACN3_NETWORK_URL": "http://127.0.0.1:8000"
+        "EACN3_NETWORK_URL": "http://127.0.0.1:37596"
       }
     }
   }

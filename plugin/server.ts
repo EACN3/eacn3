@@ -2170,6 +2170,37 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
+// Global crash handlers — log to file so post-mortem is possible
+// ---------------------------------------------------------------------------
+
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __crash_dir = join(dirname(fileURLToPath(import.meta.url)), "..", "logs");
+
+function writeCrashLog(label: string, err: unknown): void {
+  try {
+    mkdirSync(__crash_dir, { recursive: true });
+    const ts = new Date().toISOString();
+    const msg = err instanceof Error ? `${err.message}\n${err.stack}` : String(err);
+    const line = `[${ts}] ${label}: ${msg}\n`;
+    appendFileSync(join(__crash_dir, "crash.log"), line);
+    console.error(`[EACN3] ${label}:`, msg);
+  } catch { /* last resort — nothing we can do */ }
+}
+
+process.on("uncaughtException", (err) => {
+  writeCrashLog("uncaughtException", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  writeCrashLog("unhandledRejection", reason);
+  process.exit(1);
+});
+
+// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 
@@ -2187,18 +2218,6 @@ async function main() {
   // Must be called AFTER connect() so client capabilities are available.
   rc.init((server as any).server ?? server);
 }
-
-// ---------------------------------------------------------------------------
-// Global error handlers — keep process alive, log for debugging
-// ---------------------------------------------------------------------------
-
-process.on("uncaughtException", (err) => {
-  console.error("[EACN3] uncaughtException (kept alive):", err);
-});
-
-process.on("unhandledRejection", (reason) => {
-  console.error("[EACN3] unhandledRejection (kept alive):", reason);
-});
 
 main().catch((e) => {
   console.error("EACN3 MCP server failed to start:", e);
