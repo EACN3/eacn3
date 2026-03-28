@@ -614,6 +614,25 @@ class Database:
             (agent_id,),
         )
 
+    async def touch_agents_by_server(self, server_id: str) -> int:
+        """Refresh last_fetch_at for ALL agents belonging to a server.
+
+        Called on server heartbeat — if the server is alive, its agents are
+        reachable. Prevents the liveness scanner from killing agents just
+        because the host LLM hasn't polled events recently (e.g. busy
+        executing a long-running task).
+
+        Returns the number of agents refreshed.
+        """
+        async with self._write_lock:
+            await self.db.execute(
+                "UPDATE agent_cards SET last_fetch_at = datetime('now'), status = 'online' WHERE server_id = ? AND status IN ('online', 'offline')",
+                (server_id,),
+            )
+            changed = self.db.total_changes
+            await self.db.commit()
+            return changed
+
     async def set_agent_status(self, agent_id: str, status: str) -> None:
         await self._exec_write(
             "UPDATE agent_cards SET status = ? WHERE agent_id = ?",
