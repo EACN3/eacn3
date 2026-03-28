@@ -203,8 +203,8 @@ class Network:
         task_level = task.level.value if hasattr(task.level, "value") else str(task.level)
         is_invited = agent_id in task.invited_agent_ids
 
-        # Fallback: relax gates if task has no bids and is past half deadline
-        has_bids = len(task.bids) > 0
+        # Fallback: relax gates if task has no active bids and is past half deadline
+        has_bids = any(b.status != BidStatus.REJECTED for b in task.bids)
         task_created_at = await self.db.get_task_created_at(task_id) if not has_bids else None
 
         check = self.matcher.check_bid(
@@ -687,6 +687,10 @@ class Network:
                 # Re-check with new budget
                 scores = self.reputation.get_scores([bid.agent_id])
                 neg_gain = self.reputation.negotiation_gain(bid.agent_id)
+                agent_card = await self.discovery.bootstrap.get_agent_card(bid.agent_id)
+                agent_tier = agent_card.get("tier", "general") if agent_card else "general"
+                task_level = task.level.value if hasattr(task.level, "value") else str(task.level)
+                active_bids = any(b.status != BidStatus.REJECTED for b in task.bids)
                 check = self.matcher.check_bid(
                     agent_id=bid.agent_id,
                     confidence=bid.confidence,
@@ -695,6 +699,12 @@ class Network:
                     scores=scores,
                     negotiation_gain=neg_gain,
                     is_adjudication=task.type == TaskType.ADJUDICATION,
+                    agent_tier=agent_tier,
+                    task_level=task_level,
+                    is_invited=bid.agent_id in task.invited_agent_ids,
+                    has_bids=active_bids,
+                    task_deadline=task.deadline,
+                    task_created_at=await self.db.get_task_created_at(task_id) if not active_bids else None,
                 )
                 if check.passed:
                     if not task.concurrent_slots_full:
@@ -732,6 +742,17 @@ class Network:
             raise TaskError(
                 f"Agent {initiator_id} is not a bidder on parent task {parent_task_id}"
             )
+
+        # Cap deadline
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        max_deadline_dt = _dt.now(_tz.utc) + _td(days=self.config.task.max_deadline_days)
+        if deadline:
+            try:
+                dl_dt = _dt.fromisoformat(deadline.replace("Z", "+00:00"))
+                if dl_dt > max_deadline_dt:
+                    deadline = max_deadline_dt.isoformat()
+            except Exception:
+                pass
 
         subtask = self.task_manager.create_subtask(
             parent_task_id=parent_task_id,
