@@ -2,7 +2,7 @@
  * Local state persistence — reads/writes ~/.eacn3/state.json.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, renameSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, renameSync, unlinkSync, openSync, closeSync, constants as fsConstants } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -15,6 +15,55 @@ import { type EacnState, type AgentCard, type LocalTaskInfo, type PushEvent, typ
 const EACN3_DIR = process.env.EACN3_STATE_DIR ?? join(homedir(), ".eacn3");
 const STATE_FILE = join(EACN3_DIR, "state.json");
 const STATE_BACKUP = join(EACN3_DIR, "state.json.bak");
+const STATE_LOCK = join(EACN3_DIR, "state.lock");
+
+// ---------------------------------------------------------------------------
+// Cross-process file lock — prevents multi-session races on state.json
+// ---------------------------------------------------------------------------
+
+const LOCK_RETRY_MS = 50;
+const LOCK_MAX_RETRIES = 20; // 50ms × 20 = 1s max wait
+const LOCK_STALE_MS = 10_000; // force-break locks older than 10s
+
+/**
+ * Acquire an exclusive lock file. Returns true on success.
+ * Uses O_CREAT | O_EXCL for atomic creation. Retries with backoff.
+ * Stale locks (>10s old) are force-removed to prevent deadlock from crashed processes.
+ */
+function acquireLock(): boolean {
+  mkdirSync(EACN3_DIR, { recursive: true });
+  for (let i = 0; i < LOCK_MAX_RETRIES; i++) {
+    try {
+      const fd = openSync(STATE_LOCK, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY);
+      // Write PID + timestamp for stale detection
+      writeFileSync(fd, `${process.pid}:${Date.now()}`);
+      closeSync(fd);
+      return true;
+    } catch {
+      // Lock exists — check if stale
+      try {
+        const raw = readFileSync(STATE_LOCK, "utf-8");
+        const ts = parseInt(raw.split(":")[1], 10);
+        if (Date.now() - ts > LOCK_STALE_MS) {
+          // Stale lock from crashed process — force remove
+          try { unlinkSync(STATE_LOCK); } catch { /* race with another cleaner */ }
+          continue;
+        }
+      } catch { /* lock file unreadable — retry */ }
+
+      // Busy-wait with small delay
+      const waitMs = LOCK_RETRY_MS + Math.random() * LOCK_RETRY_MS;
+      const start = Date.now();
+      while (Date.now() - start < waitMs) { /* spin */ }
+    }
+  }
+  console.error("[State] failed to acquire lock after retries — proceeding unlocked");
+  return false;
+}
+
+function releaseLock(): void {
+  try { unlinkSync(STATE_LOCK); } catch { /* already removed */ }
+}
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -23,29 +72,36 @@ const STATE_BACKUP = join(EACN3_DIR, "state.json.bak");
 let state: EacnState | null = null;
 
 /**
- * Load state from disk. Creates default if not exists.
+ * Read state from disk (no side effects on the singleton).
+ * Tries primary file, then backup, then returns default.
  */
-export function load(): EacnState {
+function readStateFromDisk(): EacnState {
   if (existsSync(STATE_FILE)) {
     try {
       const raw = readFileSync(STATE_FILE, "utf-8");
-      state = JSON.parse(raw) as EacnState;
-    } catch {
-      // Primary corrupted — try backup
-      if (existsSync(STATE_BACKUP)) {
-        try {
-          const bak = readFileSync(STATE_BACKUP, "utf-8");
-          state = JSON.parse(bak) as EacnState;
-        } catch {
-          state = createDefaultState();
-        }
-      } else {
-        state = createDefaultState();
-      }
-    }
-  } else {
-    state = createDefaultState();
+      return JSON.parse(raw) as EacnState;
+    } catch { /* primary corrupted */ }
   }
+  if (existsSync(STATE_BACKUP)) {
+    try {
+      const bak = readFileSync(STATE_BACKUP, "utf-8");
+      return JSON.parse(bak) as EacnState;
+    } catch { /* backup also corrupted */ }
+  }
+  return createDefaultState();
+}
+
+/**
+ * Load state from disk. Creates default if not exists.
+ */
+export function load(): EacnState {
+  acquireLock();
+  try {
+    state = readStateFromDisk();
+  } finally {
+    releaseLock();
+  }
+
   // Migrate pending_events from main state to per-agent files
   if (state.pending_events) {
     for (const [agentId, events] of Object.entries(state.pending_events)) {
@@ -57,6 +113,7 @@ export function load(): EacnState {
     state.pending_events = {};
   }
 
+  snapshotKnownIds();
   return state;
 }
 
@@ -67,15 +124,82 @@ let saveQueued = false;
 let saving = false;
 
 /**
- * Persist current state to disk using atomic write (#107).
- * Writes to a temp file first, then renames to avoid partial writes.
+ * Merge in-memory state onto a freshly-read disk state.
+ * This preserves changes made by OTHER processes (agents, tasks, sessions)
+ * while applying our in-memory mutations on top.
+ *
+ * Strategy: our in-memory state wins for keys we actively manage,
+ * but we pick up new agents/tasks/sessions that appeared on disk.
+ */
+function mergeWithDisk(mem: EacnState): EacnState {
+  let disk: EacnState;
+  try {
+    disk = readStateFromDisk();
+  } catch {
+    return mem; // can't read disk — just use memory
+  }
+
+  // Merge agents: keep all from disk, overwrite with ours
+  disk.agents = { ...disk.agents, ...mem.agents };
+  // Remove agents we explicitly deleted (not in mem but were in previous load)
+  for (const id of Object.keys(disk.agents)) {
+    if (!(id in mem.agents) && id in (lastKnownAgentIds)) {
+      delete disk.agents[id];
+    }
+  }
+
+  // Merge local_tasks: same strategy
+  disk.local_tasks = { ...disk.local_tasks, ...mem.local_tasks };
+  for (const id of Object.keys(disk.local_tasks)) {
+    if (!(id in mem.local_tasks) && id in lastKnownTaskIds) {
+      delete disk.local_tasks[id];
+    }
+  }
+
+  // Merge reputation_cache
+  disk.reputation_cache = { ...disk.reputation_cache, ...mem.reputation_cache };
+
+  // Merge active_sessions
+  disk.active_sessions = { ...(disk.active_sessions ?? {}), ...(mem.active_sessions ?? {}) };
+
+  // Merge teams
+  disk.teams = { ...(disk.teams ?? {}), ...(mem.teams ?? {}) };
+
+  // Use our server_card and network_endpoint (we own these)
+  disk.server_card = mem.server_card;
+  disk.network_endpoint = mem.network_endpoint;
+
+  return disk;
+}
+
+/** Track IDs from last load so we can detect intentional deletions. */
+let lastKnownAgentIds: Record<string, true> = {};
+let lastKnownTaskIds: Record<string, true> = {};
+
+function snapshotKnownIds(): void {
+  if (!state) return;
+  lastKnownAgentIds = {};
+  for (const id of Object.keys(state.agents)) lastKnownAgentIds[id] = true;
+  lastKnownTaskIds = {};
+  for (const id of Object.keys(state.local_tasks)) lastKnownTaskIds[id] = true;
+}
+
+/**
+ * Persist current state to disk using cross-process lock + atomic write.
+ * Re-reads disk state and merges to prevent lost updates from other processes.
  */
 export function save(): void {
   if (!state) return;
   if (saving) { saveQueued = true; return; }
   saving = true;
+  acquireLock();
   try {
     mkdirSync(EACN3_DIR, { recursive: true });
+
+    // Merge with disk to avoid overwriting other processes' changes
+    state = mergeWithDisk(state);
+    snapshotKnownIds();
+
     // Backup current file before overwriting
     if (existsSync(STATE_FILE)) {
       try { copyFileSync(STATE_FILE, STATE_BACKUP); } catch { /* best-effort */ }
@@ -85,6 +209,7 @@ export function save(): void {
     writeFileSync(tmpFile, JSON.stringify(state, null, 2));
     renameSync(tmpFile, STATE_FILE);
   } finally {
+    releaseLock();
     saving = false;
     if (saveQueued) {
       saveQueued = false;
@@ -203,6 +328,7 @@ function eventsFilePath(agentId: string): string {
 function loadAgentEvents(agentId: string): PushEvent[] {
   if (agentEvents.has(agentId)) return agentEvents.get(agentId)!;
   const filePath = eventsFilePath(agentId);
+  acquireEventsLock(agentId);
   try {
     if (existsSync(filePath)) {
       const raw = readFileSync(filePath, "utf-8");
@@ -211,12 +337,49 @@ function loadAgentEvents(agentId: string): PushEvent[] {
       return events;
     }
   } catch { /* corrupted — start fresh */ }
+  finally { releaseEventsLock(agentId); }
   agentEvents.set(agentId, []);
   return [];
 }
 
+/** Per-agent event lock file path. */
+function eventsLockPath(agentId: string): string {
+  return join(EACN3_DIR, `events-${agentId}.lock`);
+}
+
+function acquireEventsLock(agentId: string): boolean {
+  const lockPath = eventsLockPath(agentId);
+  mkdirSync(EACN3_DIR, { recursive: true });
+  for (let i = 0; i < LOCK_MAX_RETRIES; i++) {
+    try {
+      const fd = openSync(lockPath, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY);
+      writeFileSync(fd, `${process.pid}:${Date.now()}`);
+      closeSync(fd);
+      return true;
+    } catch {
+      try {
+        const raw = readFileSync(lockPath, "utf-8");
+        const ts = parseInt(raw.split(":")[1], 10);
+        if (Date.now() - ts > LOCK_STALE_MS) {
+          try { unlinkSync(lockPath); } catch { /* race */ }
+          continue;
+        }
+      } catch { /* retry */ }
+      const waitMs = LOCK_RETRY_MS + Math.random() * LOCK_RETRY_MS;
+      const start = Date.now();
+      while (Date.now() - start < waitMs) { /* spin */ }
+    }
+  }
+  return false;
+}
+
+function releaseEventsLock(agentId: string): void {
+  try { unlinkSync(eventsLockPath(agentId)); } catch { /* already removed */ }
+}
+
 function saveAgentEvents(agentId: string): void {
   const events = agentEvents.get(agentId) ?? [];
+  acquireEventsLock(agentId);
   try {
     mkdirSync(EACN3_DIR, { recursive: true });
     const filePath = eventsFilePath(agentId);
@@ -224,6 +387,7 @@ function saveAgentEvents(agentId: string): void {
     writeFileSync(tmpFile, JSON.stringify(events));
     renameSync(tmpFile, filePath);
   } catch { /* best-effort */ }
+  finally { releaseEventsLock(agentId); }
 }
 
 export function pushEvents(agentId: string, events: PushEvent[]): void {
