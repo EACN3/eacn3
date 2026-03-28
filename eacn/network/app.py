@@ -148,10 +148,11 @@ class Network:
         price: float,
         server_id: str | None = None,
     ) -> BidStatus:
-        # Reject bids from offline agents — they can't execute tasks
-        agent_card = await self.db.get_agent_card(agent_id)
-        if agent_card and agent_card.get("status") == "offline":
-            raise TaskError(f"Agent {agent_id} is offline and cannot bid")
+        # Bidding is proof of liveness — mark agent online if it was offline
+        try:
+            await self.db.touch_agent_fetch(agent_id)
+        except Exception:
+            pass  # best-effort
 
         task = self.task_manager.get(task_id)
 
