@@ -1598,7 +1598,11 @@ server.tool(
     const team = state.getTeam(params.team_id);
     if (!team) return err(`Team ${params.team_id} not found`);
     state.setTeamBranch(params.team_id, params.branch);
-    return ok({ team_id: params.team_id, branch: params.branch, message: "Branch recorded" });
+
+    // Flush any pending handshake actions now that branch is ready
+    await flushPendingHandshakes(team.my_agent_id, params.team_id);
+
+    return ok({ team_id: params.team_id, branch: params.branch, message: "Branch recorded. Pending handshakes triggered." });
   },
 );
 
@@ -1811,16 +1815,13 @@ function registerEventCallbacks(): void {
  * Auto-respond to an incoming handshake task_broadcast:
  * 1. Parse team info from description
  * 2. Create local team record if needed
- * 3. Auto-bid on the incoming task (price=0, confidence=1)
- * 4. Create outgoing handshake tasks to all peers we haven't ACKed yet
- *
- * Result submission happens later in autoHandshakeSubmit when bid is accepted.
+ * 3. If my_branch is set: auto-bid + create outgoing tasks
+ *    If not: just record — handshake will be triggered by eacn3_team_set_branch
  */
 async function autoHandshakeRespond(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
   const payload = event.payload as Record<string, unknown>;
   const desc = String(payload?.description ?? "");
 
-  // Parse: "Team handshake: agentA → agentB [team=team-xxx] [repo=...] [members=a,b,c]"
   const teamMatch = desc.match(/\[team=([^\]]+)\]/);
   const repoMatch = desc.match(/\[repo=([^\]]+)\]/);
   const membersMatch = desc.match(/\[members=([^\]]+)\]/);
@@ -1849,53 +1850,30 @@ async function autoHandshakeRespond(agentId: string, event: import("./src/models
     team = state.getTeamsForAgent(agentId).find((t) => t.team_id === teamId)!;
   }
 
-  // Record incoming handshake
+  // Record incoming handshake task
   state.recordAckIn(teamId, agentId, fromAgent, event.task_id);
 
-  // Auto-bid on the incoming task (result submitted after bid_result accepted)
+  // Only proceed if branch is ready
+  if (!team.my_branch) return; // Will be triggered later by eacn3_team_set_branch
+
+  // Auto-bid on the incoming task
   try {
     await net.submitBid(event.task_id, agentId, 0, 1);
-  } catch { /* bid failed — maybe already bid or task closed */ }
+  } catch { /* bid failed */ }
 
-  // Create outgoing handshake tasks to all peers we haven't ACKed yet
-  const peers = members.filter((id) => id !== agentId);
-  for (const peerId of peers) {
-    if (team.ack_out[peerId]) continue; // Already sent ACK to this peer
-    try {
-      const taskId = `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-      const handshakeDeadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-      const task = await net.createTask({
-        task_id: taskId,
-        initiator_id: agentId,
-        content: { description: `Team handshake: ${agentId} → ${peerId} [team=${teamId}] [repo=${gitRepo}] [members=${members.join(",")}]` },
-        domains: ["team-coordination"],
-        budget: 0,
-        deadline: handshakeDeadline,
-        max_concurrent_bidders: 1,
-        max_depth: 0,
-        invited_agent_ids: [peerId],
-      });
-      team.ack_out[peerId] = task.id;
-      state.addTeam(team); // persist updated ack_out
-    } catch { /* non-critical — retry via eacn3_team_retry_ack */ }
-  }
+  // Create outgoing tasks to peers we haven't ACKed yet
+  await createOutgoingHandshakes(team, agentId);
 }
 
 /**
  * Auto-submit result after handshake bid is accepted (bid_result event).
- * Looks up the task in ack_in to find team context, then submits branch.
+ * Refuses to submit if branch is not set.
  */
 async function autoHandshakeSubmit(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
   const taskId = event.task_id;
   const match = state.findTeamByHandshakeTask(taskId);
-  if (!match || match.direction !== "in") return; // Not an incoming handshake
-
-  // Ensure branch is set — use default if not yet configured
-  if (!match.team.my_branch) {
-    const defaultBranch = `agent/${agentId}`;
-    state.setTeamBranch(match.team.team_id, defaultBranch);
-    match.team.my_branch = defaultBranch;
-  }
+  if (!match || match.direction !== "in") return;
+  if (!match.team.my_branch) return; // Branch not ready — will be triggered by team_set_branch
 
   try {
     await net.submitResult(taskId, agentId, {
@@ -1904,6 +1882,52 @@ async function autoHandshakeSubmit(agentId: string, event: import("./src/models.
       branch: match.team.my_branch,
     });
   } catch { /* non-critical */ }
+}
+
+/**
+ * Create outgoing handshake tasks to all peers we haven't ACKed yet.
+ */
+async function createOutgoingHandshakes(team: import("./src/models.js").TeamInfo, agentId: string): Promise<void> {
+  const peers = team.agent_ids.filter((id) => id !== agentId);
+  for (const peerId of peers) {
+    if (team.ack_out[peerId]) continue;
+    try {
+      const taskId = `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const handshakeDeadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      const task = await net.createTask({
+        task_id: taskId,
+        initiator_id: agentId,
+        content: { description: `Team handshake: ${agentId} → ${peerId} [team=${team.team_id}] [repo=${team.git_repo}] [members=${team.agent_ids.join(",")}]` },
+        domains: ["team-coordination"],
+        budget: 0,
+        deadline: handshakeDeadline,
+        max_concurrent_bidders: 1,
+        max_depth: 0,
+        invited_agent_ids: [peerId],
+      });
+      team.ack_out[peerId] = task.id;
+      state.addTeam(team);
+    } catch { /* non-critical */ }
+  }
+}
+
+/**
+ * Flush all pending handshake actions for an agent after branch is set.
+ * Called by eacn3_team_set_branch.
+ */
+async function flushPendingHandshakes(agentId: string, teamId: string): Promise<void> {
+  const team = state.getTeamsForAgent(agentId).find((t) => t.team_id === teamId);
+  if (!team || !team.my_branch) return;
+
+  // Bid on any incoming handshake tasks we haven't bid on yet
+  for (const [, taskId] of Object.entries(team.ack_in)) {
+    try {
+      await net.submitBid(taskId, agentId, 0, 1);
+    } catch { /* already bid or task closed */ }
+  }
+
+  // Create outgoing tasks to peers we haven't ACKed yet
+  await createOutgoingHandshakes(team, agentId);
 }
 
 /**
