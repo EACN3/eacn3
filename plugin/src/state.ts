@@ -2,7 +2,7 @@
  * Local state persistence — reads/writes ~/.eacn3/state.json.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, renameSync, unlinkSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -46,6 +46,17 @@ export function load(): EacnState {
   } else {
     state = createDefaultState();
   }
+  // Migrate pending_events from main state to per-agent files
+  if (state.pending_events) {
+    for (const [agentId, events] of Object.entries(state.pending_events)) {
+      if (events.length > 0) {
+        agentEvents.set(agentId, events);
+        saveAgentEvents(agentId);
+      }
+    }
+    state.pending_events = {};
+  }
+
   return state;
 }
 
@@ -107,8 +118,45 @@ export function addAgent(agent: AgentCard): void {
 }
 
 export function removeAgent(agentId: string): void {
-  delete getState().agents[agentId];
+  const s = getState();
+
+  // Remove agent record
+  delete s.agents[agentId];
+
+  // Remove agent's local tasks
+  for (const [taskId, task] of Object.entries(s.local_tasks)) {
+    if (task.agent_id === agentId) {
+      delete s.local_tasks[taskId];
+    }
+  }
+
+  // Remove agent's reputation cache
+  delete s.reputation_cache[agentId];
+
+  // Remove agent's message sessions
+  if (s.active_sessions) {
+    for (const key of Object.keys(s.active_sessions)) {
+      if (key.startsWith(`${agentId}:`)) {
+        delete s.active_sessions[key];
+      }
+    }
+  }
+
+  // Remove agent's team records
+  if (s.teams) {
+    for (const [key, team] of Object.entries(s.teams)) {
+      if (team.my_agent_id === agentId) {
+        delete s.teams[key];
+      }
+    }
+  }
+
   save();
+
+  // Remove per-agent event file
+  agentEvents.delete(agentId);
+  const evtFile = eventsFilePath(agentId);
+  try { if (existsSync(evtFile)) unlinkSync(evtFile); } catch { /* best-effort */ }
 }
 
 export function getAgent(agentId: string): AgentCard | undefined {
@@ -141,30 +189,64 @@ export function getTask(taskId: string): import("./models.js").LocalTaskInfo | u
   return getState().local_tasks[taskId];
 }
 
+// ---------------------------------------------------------------------------
+// Per-agent event files — isolated from main state to avoid async contention
+// ---------------------------------------------------------------------------
+
+/** In-memory cache of per-agent events. */
+const agentEvents = new Map<string, PushEvent[]>();
+
+function eventsFilePath(agentId: string): string {
+  return join(EACN3_DIR, `events-${agentId}.json`);
+}
+
+function loadAgentEvents(agentId: string): PushEvent[] {
+  if (agentEvents.has(agentId)) return agentEvents.get(agentId)!;
+  const filePath = eventsFilePath(agentId);
+  try {
+    if (existsSync(filePath)) {
+      const raw = readFileSync(filePath, "utf-8");
+      const events = JSON.parse(raw) as PushEvent[];
+      agentEvents.set(agentId, events);
+      return events;
+    }
+  } catch { /* corrupted — start fresh */ }
+  agentEvents.set(agentId, []);
+  return [];
+}
+
+function saveAgentEvents(agentId: string): void {
+  const events = agentEvents.get(agentId) ?? [];
+  try {
+    mkdirSync(EACN3_DIR, { recursive: true });
+    const filePath = eventsFilePath(agentId);
+    const tmpFile = filePath + "." + randomBytes(4).toString("hex") + ".tmp";
+    writeFileSync(tmpFile, JSON.stringify(events));
+    renameSync(tmpFile, filePath);
+  } catch { /* best-effort */ }
+}
+
 export function pushEvents(agentId: string, events: PushEvent[]): void {
-  const s = getState();
-  if (!s.pending_events[agentId]) s.pending_events[agentId] = [];
-  s.pending_events[agentId].push(...events);
-  save();
+  const existing = loadAgentEvents(agentId);
+  existing.push(...events);
+  saveAgentEvents(agentId);
 }
 
 export function drainEvents(agentId: string): PushEvent[] {
-  const s = getState();
-  const events = s.pending_events[agentId] ?? [];
-  s.pending_events[agentId] = [];
-  save();
+  const events = loadAgentEvents(agentId);
+  agentEvents.set(agentId, []);
+  saveAgentEvents(agentId);
   return events;
 }
 
 /** Drain events for ALL agents at once (used by legacy callers). */
 export function drainAllEvents(): PushEvent[] {
-  const s = getState();
   const all: PushEvent[] = [];
-  for (const events of Object.values(s.pending_events)) {
+  for (const [agentId, events] of agentEvents) {
     all.push(...events);
+    agentEvents.set(agentId, []);
+    saveAgentEvents(agentId);
   }
-  s.pending_events = {};
-  save();
   return all;
 }
 
@@ -269,12 +351,11 @@ export function updateTeamPeerBranch(
   peerId: string,
   branch: string,
 ): void {
-  // Find all team entries with this team_id (one per local agent)
   const teams = ensureTeams();
   const entries = Object.values(teams).filter((t) => t.team_id === teamId);
   for (const team of entries) {
     team.peer_branches[peerId] = branch;
-    // Check if all peers have completed handshake
+    // Check if all peers have branches → team ready
     const peers = team.agent_ids.filter((id) => id !== team.my_agent_id);
     if (peers.every((id) => id in team.peer_branches)) {
       team.status = "ready";
@@ -284,7 +365,6 @@ export function updateTeamPeerBranch(
 }
 
 export function setTeamBranch(teamId: string, branch: string): void {
-  // Update my_branch for all entries of this team (all local agents)
   const teams = ensureTeams();
   let saved = false;
   for (const team of Object.values(teams)) {
@@ -296,14 +376,26 @@ export function setTeamBranch(teamId: string, branch: string): void {
   if (saved) save();
 }
 
-export function findTeamByHandshakeTask(taskId: string): { team: TeamInfo; direction: "in" | "out"; peerId: string } | undefined {
+/** Find team by handshake task ID (in either ack_out or ack_in). */
+export function findTeamByHandshakeTask(taskId: string): { team: TeamInfo; direction: "out" | "in"; peerId: string } | undefined {
   for (const team of Object.values(ensureTeams())) {
-    for (const [peerId, tid] of Object.entries(team.handshake_out)) {
+    for (const [peerId, tid] of Object.entries(team.ack_out)) {
       if (tid === taskId) return { team, direction: "out", peerId };
     }
-    for (const [peerId, tid] of Object.entries(team.handshake_in)) {
+    for (const [peerId, tid] of Object.entries(team.ack_in)) {
       if (tid === taskId) return { team, direction: "in", peerId };
     }
   }
   return undefined;
+}
+
+/** Record an incoming handshake task for a team. */
+export function recordAckIn(teamId: string, agentId: string, peerId: string, taskId: string): void {
+  const team = Object.values(ensureTeams()).find(
+    (t) => t.team_id === teamId && t.my_agent_id === agentId,
+  );
+  if (team) {
+    team.ack_in[peerId] = taskId;
+    save();
+  }
 }

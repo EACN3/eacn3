@@ -201,7 +201,7 @@ server.tool(
     // Start background heartbeat
     startHeartbeat();
 
-    // Reconnect WS for all existing agents; re-register if network lost them
+    // Re-register agents on network if needed; mark them for on-demand event fetching
     for (const agent of Object.values(s.agents)) {
       try {
         await net.getAgentInfo(agent.agent_id);
@@ -235,9 +235,8 @@ server.tool(
           eacn3_get_events: "Drain all pending events at once (bulk alternative to next).",
         },
         team: {
-          eacn3_team_setup: "Form a team of agents around a shared git repo. Creates handshake tasks between all pairs.",
-          eacn3_team_status: "Check team formation progress — which handshakes are done, which peer branches are known.",
-          eacn3_team_set_branch: "Record your git branch name for a team after creating it.",
+          eacn3_team_setup: "Form a team of agents around a shared git repo via ACK message exchange.",
+          eacn3_team_status: "Check team formation progress — which ACKs are exchanged, which peer branches are known.",
         },
         task: {
           eacn3_create_task: "Publish a task (supports team_id to auto-inject team preamble).",
@@ -254,7 +253,7 @@ server.tool(
 // #2 eacn3_disconnect
 server.tool(
   "eacn3_disconnect",
-  "Disconnect from the EACN3 network and stop event polling. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
+  "Disconnect from the EACN3 network. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
   {},
   async () => {
     stopHeartbeat();
@@ -387,7 +386,7 @@ server.tool(
     // Persist locally
     state.addAgent(card);
 
-    // Start polling for push events
+    // Register agent for on-demand event fetching
     ws.connect(agentId);
 
     // Configure reverse control for this agent
@@ -423,9 +422,8 @@ server.tool(
           eacn3_get_events: "Drain all pending events at once (bulk alternative to next).",
         },
         team: {
-          eacn3_team_setup: "Form a team of agents around a shared git repo. Creates handshake tasks between all pairs.",
-          eacn3_team_status: "Check team formation progress — which handshakes are done, which peer branches are known.",
-          eacn3_team_set_branch: "Record your git branch name for a team after creating it.",
+          eacn3_team_setup: "Form a team of agents around a shared git repo via ACK message exchange.",
+          eacn3_team_status: "Check team formation progress — which ACKs are exchanged, which peer branches are known.",
         },
         task: {
           eacn3_create_task: "Publish a task (supports team_id to auto-inject team preamble).",
@@ -495,7 +493,7 @@ server.tool(
 // #8 eacn3_unregister_agent
 server.tool(
   "eacn3_unregister_agent",
-  "Remove an agent from the network and stop its event polling. Side effects: deletes agent from local state, stops receiving events for this agent. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
+  "Remove an agent from the network. Side effects: deletes agent from local state. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
   {
     agent_id: z.string(),
   },
@@ -517,7 +515,7 @@ server.tool(
 // #9 eacn3_list_my_agents
 server.tool(
   "eacn3_list_my_agents",
-  "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and polling_active (event polling status). No network call — reads local state only. Use to check which agents are active and receiving events.",
+  "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and registered status. No network call — reads local state only. Use to check which agents are active.",
   {},
   async () => {
     const agents = state.listAgents();
@@ -734,6 +732,12 @@ server.tool(
       created_at: new Date().toISOString(),
     });
 
+    // If team task: reply to pending reverse handshakes with branch + task details
+    if (activeTeam) {
+      const taskSummary = { task_id: taskId, description: params.description.slice(0, 500) };
+      await replyPendingHandshakes(initiatorId, activeTeam, taskSummary);
+    }
+
     return ok({
       task_id: taskId,
       status: task.status,
@@ -770,28 +774,6 @@ server.tool(
   async (params) => {
     const initiatorId = resolveAgentId(params.initiator_id);
     const res = await net.selectResult(params.task_id, initiatorId, params.agent_id);
-
-    // If this was a team handshake task, extract peer branch and update local team state
-    const teams = state.getTeamsForAgent(initiatorId);
-    for (const team of teams) {
-      const handshakeTarget = Object.entries(team.handshake_out).find(
-        ([, taskId]) => taskId === params.task_id,
-      );
-      if (handshakeTarget) {
-        // Fetch the result to get the branch name
-        try {
-          const taskData = await net.getTask(params.task_id);
-          const results = (taskData as any)?.results ?? [];
-          const winnerResult = results.find((r: any) => r.agent_id === params.agent_id);
-          const branch = winnerResult?.content?.branch;
-          if (branch) {
-            state.updateTeamPeerBranch(team.team_id, handshakeTarget[0], branch);
-          }
-        } catch { /* best effort */ }
-        break;
-      }
-    }
-
     return ok(res);
   },
 );
@@ -1240,13 +1222,15 @@ server.tool(
 // #34 eacn3_get_events
 server.tool(
   "eacn3_get_events",
-  "Drain the in-memory event buffer for a specific agent, returning its pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details. Call periodically in your main loop.",
+  "Fetch pending events from the network for a specific agent, plus any locally buffered synthetic events. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details.",
   {
     agent_id: z.string().optional().describe("Agent ID to drain events for (auto-injected if omitted)"),
   },
   async (params) => {
     const agentId = resolveAgentId(params.agent_id);
-    const events = state.drainEvents(agentId);
+    const networkEvents = await ws.fetchEvents(agentId, 0);
+    const localEvents = state.drainEvents(agentId);
+    const events = [...networkEvents, ...localEvents].filter((e) => !e._handled);
     return ok({
       count: events.length,
       events,
@@ -1255,10 +1239,10 @@ server.tool(
   },
 );
 
-// #39 eacn3_await_events — long-polling reverse control
+// #39 eacn3_await_events — on-demand long-polling
 server.tool(
   "eacn3_await_events",
-  "Block until a network event arrives or timeout expires, then return with the event AND a suggested action. This is the reverse-control mechanism when MCP sampling is unavailable (e.g. OpenClaw). Instead of polling eacn3_get_events in a loop, call this — it waits for the network to push something, then tells you exactly what to do. Returns {event, suggested_action, suggested_tool, suggested_params, urgency} per event, or {timeout: true}. Prefer this over eacn3_get_events for reactive agent loops.",
+  "Fetch events from the network with a configurable wait time. First checks locally buffered synthetic events, then does a single long-poll to the network. Returns {event, suggested_action, suggested_tool, suggested_params, urgency} per event, or {timeout: true}. Prefer this over eacn3_get_events for reactive agent loops.",
   {
     agent_id: z.string().optional().describe("Agent ID to await events for (auto-injected if omitted)"),
     timeout_seconds: z.number().optional().describe("Max seconds to wait (1-120). Default 30."),
@@ -1269,26 +1253,32 @@ server.tool(
     const timeoutSec = Math.min(Math.max(params.timeout_seconds ?? 30, 1), 120);
     const filterTypes = params.event_types;
 
-    // Check immediate buffered events
-    const immediate = drainMatchingEvents(agentId, filterTypes);
+    // Check locally buffered synthetic events first
+    const immediate = drainMatchingEvents(agentId, filterTypes).filter((e) => !e._handled);
     if (immediate.length > 0) {
       return ok(buildAwaitResponse(immediate));
     }
 
-    // Long-poll
-    const result = await new Promise<import("./src/models.js").PushEvent[]>((resolve) => {
-      const deadline = setTimeout(() => { cleanup(); resolve([]); }, timeoutSec * 1000);
-      const poll = setInterval(() => {
-        const events = drainMatchingEvents(agentId, filterTypes);
-        if (events.length > 0) { cleanup(); resolve(events); }
-      }, 500);
-      function cleanup() { clearTimeout(deadline); clearInterval(poll); }
-    });
+    // Single long-poll to network with the agent's requested timeout
+    const networkEvents = await ws.fetchEvents(agentId, timeoutSec);
+    const localAfter = drainMatchingEvents(agentId, filterTypes);
+    const all = [...networkEvents, ...localAfter].filter((e) => !e._handled);
 
-    if (result.length === 0) {
+    // Filter by event types if specified
+    const filtered = filterTypes && filterTypes.length > 0
+      ? all.filter((e) => filterTypes.includes(e.type))
+      : all;
+
+    // Put back non-matching events
+    if (filterTypes && filterTypes.length > 0) {
+      const remaining = all.filter((e) => !filterTypes.includes(e.type));
+      if (remaining.length > 0) state.pushEvents(agentId, remaining);
+    }
+
+    if (filtered.length === 0) {
       return ok({ timeout: true, waited_seconds: timeoutSec, hint: "No events arrived. Call again to keep waiting, or proceed with other work." });
     }
-    return ok(buildAwaitResponse(result));
+    return ok(buildAwaitResponse(filtered));
   },
 );
 
@@ -1310,22 +1300,6 @@ function buildNextAction(event: import("./src/models.js").PushEvent) {
   const payload = event.payload as Record<string, unknown>;
   switch (event.type) {
     case "task_broadcast": {
-      // Detect team handshake tasks
-      const desc = String((payload as any)?.description ?? "");
-      if (desc.startsWith("Team handshake:") || (payload as any)?.budget === 0) {
-        // Check if this looks like a handshake (0-budget, team-coordination domain)
-        const domains = (payload.domains as string[]) ?? [];
-        if (domains.includes("team-coordination")) {
-          return {
-            action: "handshake",
-            description: `Team handshake from another agent on task ${event.task_id}. ` +
-              `Bid with price=0 confidence=1, then submit_result with your branch name: ` +
-              `{branch: "agent/your-id", _handshake_ack: true, team_id: "..."}.`,
-            tool: "eacn3_submit_bid",
-            params: { task_id: event.task_id, confidence: 1, price: 0 },
-          };
-        }
-      }
       return {
         action: "bid",
         description: `New task [${((payload.domains as string[]) ?? []).join(", ")}] budget=${payload.budget ?? "?"}. Evaluate and bid.`,
@@ -1410,7 +1384,10 @@ server.tool(
   },
   async (params) => {
     const agentId = resolveAgentId(params.agent_id);
-    const events = state.drainEvents(agentId);
+    // Fetch from network (non-blocking) + drain local synthetic events
+    const networkEvents = await ws.fetchEvents(agentId, 0);
+    const localEvents = state.drainEvents(agentId);
+    const events = [...networkEvents, ...localEvents].filter((e) => !e._handled);
 
     if (events.length === 0) {
       // Build context-aware prompts based on agent's current task state
@@ -1488,127 +1465,91 @@ server.tool(
   },
 );
 
-// #42 eacn3_team_setup — human-facing team coordination toolkit
+// #42 eacn3_team_setup — task-based team handshake (fully automatic)
 server.tool(
   "eacn3_team_setup",
-  "Human-facing toolkit: form a team of agents around a shared git repo. " +
-  "Creates 0-budget handshake tasks between every pair of agents (both directions). " +
-  "Each agent creates its own operation branch and learns peers' branches through handshake responses. " +
-  "Set peers_running_next=true if other agents already have next loops — this agent will notify them via messages first.",
+  "Form a team of agents around a shared git repo. " +
+  "Creates handshake tasks (0-budget, 5-min deadline) to exchange branch info with each peer. " +
+  "Peers auto-bid and auto-reply; handshake is purely for branch exchange. " +
+  "After team is ready, use eacn3_create_task with team_id to publish work for the team.",
   {
     agent_ids: z.array(z.string()).min(2).describe("Agent IDs to form a team"),
     git_repo: z.string().describe("Git repo URL for recording operations"),
-    peers_running_next: z.boolean().optional().describe("If true, notify peers via messages before handshakes"),
+    my_branch: z.string().describe("This agent's operation branch name"),
   },
   async (params) => {
-    const localAgents = state.listAgents();
-    const localIds = new Set(localAgents.map((a) => a.agent_id));
-
-    // Find which of the requested agents are local
-    const myAgents = params.agent_ids.filter((id) => localIds.has(id));
-    if (myAgents.length === 0) {
-      return err("None of the specified agent_ids are registered on this server");
+    // Only the calling agent creates outgoing handshakes — peers join via autoHandshakeRespond
+    const myId = resolveAgentId(undefined);
+    if (!state.getAgent(myId)) {
+      return err(`Agent ${myId} is not registered on this server`);
+    }
+    if (!params.agent_ids.includes(myId)) {
+      return err(`Your agent ID ${myId} must be included in agent_ids`);
     }
 
     const teamId = `team-${Date.now().toString(36)}`;
-    const results: Array<{ agent_id: string; handshakes_created: string[] }> = [];
+    const peers = params.agent_ids.filter((id) => id !== myId);
 
-    for (const myId of myAgents) {
-      const peers = params.agent_ids.filter((id) => id !== myId);
+    const teamInfo: import("./src/models.js").TeamInfo = {
+      team_id: teamId,
+      git_repo: params.git_repo,
+      agent_ids: params.agent_ids,
+      my_agent_id: myId,
+      my_branch: params.my_branch,
+      peer_branches: {},
+      ack_out: {},
+      ack_in: {},
+      status: "forming",
+    };
 
-      // Save team info
-      const teamInfo: import("./src/models.js").TeamInfo = {
-        team_id: teamId,
-        git_repo: params.git_repo,
-        agent_ids: params.agent_ids,
-        my_agent_id: myId,
-        peer_branches: {},
-        handshake_out: {},
-        handshake_in: {},
-        status: "forming",
-      };
+    const tasksCreated: string[] = [];
+    const failed: string[] = [];
+    for (const peerId of peers) {
+      try {
+        const taskId = `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+        const handshakeDeadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+        const task = await net.createTask({
+          task_id: taskId,
+          initiator_id: myId,
+          content: { description: `Team handshake: ${myId} → ${peerId} [team=${teamId}] [repo=${params.git_repo}] [members=${params.agent_ids.join(",")}]` },
+          domains: ["team-coordination"],
+          budget: 0,
+          deadline: handshakeDeadline,
+          max_concurrent_bidders: 1,
+          max_depth: 0,
+          invited_agent_ids: [peerId],
+        });
 
-      // If peers are running next loops, notify them first
-      if (params.peers_running_next) {
-        for (const peerId of peers) {
-          try {
-            const msg = JSON.stringify({
-              _team_notify: true,
-              team_id: teamId,
-              git_repo: params.git_repo,
-              team_members: params.agent_ids,
-              message: `Team setup initiated. You will receive handshake tasks shortly. Create your branch in ${params.git_repo} and respond with your branch name.`,
-            });
-            await net.relayMessage({
-              to: { network_id: "", server_id: "", agent_id: peerId },
-              from: { network_id: "", server_id: state.getServerId() ?? "", agent_id: myId },
-              content: msg,
-            });
-          } catch { /* best-effort notification */ }
-        }
+        teamInfo.ack_out[peerId] = task.id;
+        tasksCreated.push(task.id);
+
+        state.updateTask({
+          task_id: task.id,
+          agent_id: myId,
+          role: "initiator",
+          status: task.status,
+          domains: ["team-coordination"],
+          description_summary: `Handshake → ${peerId}`,
+          created_at: new Date().toISOString(),
+        });
+      } catch (e: any) {
+        failed.push(`${peerId}: ${e.message ?? e}`);
       }
-
-      // Create 0-budget handshake task for each peer
-      const handshakesCreated: string[] = [];
-      for (const peerId of peers) {
-        try {
-          const taskId = `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-          const content = {
-            _handshake: true,
-            team_id: teamId,
-            git_repo: params.git_repo,
-            from_agent: myId,
-            team_members: params.agent_ids,
-          };
-          const task = await net.createTask({
-            task_id: taskId,
-            initiator_id: myId,
-            content: { description: `Team handshake: ${myId} → ${peerId}` },
-            domains: ["team-coordination"],
-            budget: 0,
-            max_concurrent_bidders: 1,
-            max_depth: 0,
-            invited_agent_ids: [peerId],
-          });
-
-          // Update task content with handshake marker via discussions
-          try {
-            await net.updateDiscussions(task.id, myId, JSON.stringify(content));
-          } catch { /* content is in description as fallback */ }
-
-          teamInfo.handshake_out[peerId] = task.id;
-          handshakesCreated.push(task.id);
-
-          state.updateTask({
-            task_id: task.id,
-            agent_id: myId,
-            role: "initiator",
-            status: task.status,
-            domains: ["team-coordination"],
-            description_summary: `Handshake → ${peerId}`,
-            created_at: new Date().toISOString(),
-          });
-        } catch (e: any) {
-          handshakesCreated.push(`FAILED(${peerId}): ${e.message ?? e}`);
-        }
-      }
-
-      state.addTeam(teamInfo);
-      results.push({ agent_id: myId, handshakes_created: handshakesCreated });
     }
+
+    state.addTeam(teamInfo);
 
     return ok({
       team_id: teamId,
       git_repo: params.git_repo,
       agent_ids: params.agent_ids,
-      local_agents: myAgents,
-      results,
+      my_agent_id: myId,
+      my_branch: params.my_branch,
+      tasks_created: tasksCreated,
+      failed,
       next_steps: [
-        "Each agent should now create their operation branch in the git repo.",
-        "When receiving handshake tasks (task_broadcast with _handshake marker), " +
-        "bid with price=0 and confidence=1, then submit_result with {branch: 'your-branch-name', _handshake_ack: true, team_id: '...'}.",
-        "When your handshake tasks get results, select_result to complete the handshake.",
-        "Team is ready when all peer branches are known.",
+        "Handshake tasks are auto-processed — peers auto-bid and reply, results are auto-selected.",
+        "Call eacn3_team_status to check progress. Use eacn3_team_retry_ack if a peer is unresponsive.",
       ],
     });
   },
@@ -1617,7 +1558,7 @@ server.tool(
 // #43 eacn3_team_status — check team formation progress
 server.tool(
   "eacn3_team_status",
-  "Check the current status of a team: which handshakes are complete, which peer branches are known, and whether the team is ready.",
+  "Check team formation progress: which handshake tasks are complete, which peer branches are known, and whether the team is ready. If peers are unresponsive, use eacn3_team_retry_ack.",
   {
     team_id: z.string().describe("Team ID from eacn3_team_setup"),
   },
@@ -1626,8 +1567,8 @@ server.tool(
     if (!team) return err(`Team ${params.team_id} not found`);
 
     const peers = team.agent_ids.filter((id) => id !== team.my_agent_id);
-    const handshakes_complete = peers.filter((id) => id in team.peer_branches);
-    const handshakes_pending = peers.filter((id) => !(id in team.peer_branches));
+    const connected = peers.filter((id) => id in team.peer_branches);
+    const pending = peers.filter((id) => !(id in team.peer_branches));
 
     return ok({
       team_id: team.team_id,
@@ -1636,26 +1577,50 @@ server.tool(
       my_agent_id: team.my_agent_id,
       my_branch: team.my_branch ?? null,
       peer_branches: team.peer_branches,
-      handshakes_complete: handshakes_complete,
-      handshakes_pending: handshakes_pending,
+      ack_out: team.ack_out,
+      ack_in: team.ack_in,
+      connected,
+      pending,
       ready: team.status === "ready",
     });
   },
 );
 
-// #44 eacn3_team_set_branch — record this agent's operation branch
+// #45 eacn3_team_retry_ack — re-create handshake task for unresponsive peer
 server.tool(
-  "eacn3_team_set_branch",
-  "Record this agent's git branch name for a team. Call after creating your branch in the git repo.",
+  "eacn3_team_retry_ack",
+  "Re-create a handshake task for a specific peer who hasn't responded. Use when eacn3_team_status shows a peer in 'pending'.",
   {
     team_id: z.string().describe("Team ID"),
-    branch: z.string().describe("Branch name (e.g. 'agent/my-agent-id')"),
+    peer_id: z.string().describe("Agent ID of the unresponsive peer"),
   },
   async (params) => {
     const team = state.getTeam(params.team_id);
     if (!team) return err(`Team ${params.team_id} not found`);
-    state.setTeamBranch(params.team_id, params.branch);
-    return ok({ team_id: params.team_id, branch: params.branch, message: "Branch recorded" });
+    if (!team.agent_ids.includes(params.peer_id)) {
+      return err(`${params.peer_id} is not a member of team ${params.team_id}`);
+    }
+
+    try {
+      const taskId = `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const handshakeDeadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      const task = await net.createTask({
+        task_id: taskId,
+        initiator_id: team.my_agent_id,
+        content: { description: `Team handshake: ${team.my_agent_id} → ${params.peer_id} [team=${team.team_id}] [repo=${team.git_repo}] [members=${team.agent_ids.join(",")}]` },
+        domains: ["team-coordination"],
+        budget: 0,
+        deadline: handshakeDeadline,
+        max_concurrent_bidders: 1,
+        max_depth: 0,
+        invited_agent_ids: [params.peer_id],
+      });
+      team.ack_out[params.peer_id] = task.id;
+      state.addTeam(team); // persist updated ack_out
+      return ok({ team_id: team.team_id, peer_id: params.peer_id, task_id: task.id, message: "Handshake task re-created" });
+    } catch (e: any) {
+      return err(`Failed to create handshake task for ${params.peer_id}: ${e.message ?? e}`);
+    }
   },
 );
 
@@ -1769,13 +1734,41 @@ function registerEventCallbacks(): void {
         // The event stays in the buffer for /eacn3-bounty to surface
         break;
 
-      case "task_broadcast":
-        // New task available — auto-evaluate bid if agent has matching domains
-        autoBidEvaluate(agentId, event).catch(() => { /* non-critical */ });
+      case "task_broadcast": {
+        const bPayload = event.payload as Record<string, unknown>;
+        const bDomains = (bPayload?.domains as string[]) ?? [];
+        const bDesc = String(bPayload?.description ?? "");
+        if (bDomains.includes("team-coordination") && bDesc.startsWith("Team handshake:")) {
+          event._handled = true;
+          autoHandshakeRespond(agentId, event).catch(() => { /* non-critical */ });
+        } else {
+          autoBidEvaluate(agentId, event).catch(() => { /* non-critical */ });
+        }
         break;
+      }
+
+      case "bid_result": {
+        const brPayload = event.payload as Record<string, unknown>;
+        if ((brPayload as any)?.accepted) {
+          const match = state.findTeamByHandshakeTask(event.task_id);
+          if (match && match.direction === "in") {
+            event._handled = true;
+            autoHandshakeSubmit(agentId, event).catch(() => { /* non-critical */ });
+          }
+        }
+        break;
+      }
+
+      case "result_submitted": {
+        const match = state.findTeamByHandshakeTask(event.task_id);
+        if (match && match.direction === "out") {
+          event._handled = true;
+          autoHandshakeSelect(agentId, event).catch(() => { /* non-critical */ });
+        }
+        break;
+      }
 
       case "direct_message": {
-        // Another agent sent a direct message — store in session
         const payload = event.payload as Record<string, unknown>;
         const from = payload?.from as string | undefined;
         const content = payload?.content;
@@ -1792,6 +1785,192 @@ function registerEventCallbacks(): void {
       }
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Team handshake auto-handling
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-respond to an incoming handshake task_broadcast:
+ * 1. Parse team info from description
+ * 2. Create local team record if needed, auto-set branch to agent/{id}
+ * 3. Auto-bid on the incoming task
+ * 4. Create outgoing handshake tasks to all peers we haven't ACKed yet
+ */
+async function autoHandshakeRespond(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
+  const payload = event.payload as Record<string, unknown>;
+  const desc = String(payload?.description ?? "");
+
+  const teamMatch = desc.match(/\[team=([^\]]+)\]/);
+  const repoMatch = desc.match(/\[repo=([^\]]+)\]/);
+  const membersMatch = desc.match(/\[members=([^\]]+)\]/);
+  const fromMatch = desc.match(/^Team handshake:\s*(\S+)/);
+
+  if (!teamMatch) return;
+  const teamId = teamMatch[1];
+  const gitRepo = repoMatch?.[1] ?? "";
+  const members = membersMatch?.[1]?.split(",") ?? [];
+  const fromAgent = fromMatch?.[1] ?? "";
+
+  // Ensure local team record exists
+  let team = state.getTeamsForAgent(agentId).find((t) => t.team_id === teamId);
+  if (!team) {
+    const teamInfo: import("./src/models.js").TeamInfo = {
+      team_id: teamId,
+      git_repo: gitRepo,
+      agent_ids: members,
+      my_agent_id: agentId,
+      my_branch: `agent/${agentId}`,
+      peer_branches: {},
+      ack_out: {},
+      ack_in: {},
+      status: "forming",
+    };
+    state.addTeam(teamInfo);
+    team = state.getTeamsForAgent(agentId).find((t) => t.team_id === teamId)!;
+  }
+
+  // Auto-set branch if not yet set
+  if (!team.my_branch) {
+    state.setTeamBranch(teamId, `agent/${agentId}`);
+    team.my_branch = `agent/${agentId}`;
+  }
+
+  // Record incoming handshake task
+  state.recordAckIn(teamId, agentId, fromAgent, event.task_id);
+
+  // If this agent is the team initiator (has ack_out entries), DON'T auto-respond.
+  // The initiator replies later via replyPendingHandshakes (called by create_task)
+  // so it can include task details in the response.
+  if (Object.keys(team.ack_out).length > 0) return;
+
+  // Auto-bid on the incoming task
+  try {
+    await net.submitBid(event.task_id, agentId, 0, 1);
+  } catch { /* bid failed */ }
+
+  // Create outgoing tasks to peers we haven't ACKed yet
+  await createOutgoingHandshakes(team, agentId);
+}
+
+/**
+ * Auto-submit result after handshake bid is accepted (bid_result event).
+ * Refuses to submit if branch is not set.
+ */
+async function autoHandshakeSubmit(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
+  const taskId = event.task_id;
+  const match = state.findTeamByHandshakeTask(taskId);
+  if (!match || match.direction !== "in") return;
+
+  try {
+    await net.submitResult(taskId, agentId, {
+      _handshake_ack: true,
+      team_id: match.team.team_id,
+      branch: match.team.my_branch ?? `agent/${agentId}`,
+    });
+  } catch { /* non-critical */ }
+}
+
+/**
+ * Create outgoing handshake tasks to all peers we haven't ACKed yet.
+ */
+async function createOutgoingHandshakes(team: import("./src/models.js").TeamInfo, agentId: string): Promise<void> {
+  const peers = team.agent_ids.filter((id) => id !== agentId);
+  for (const peerId of peers) {
+    if (team.ack_out[peerId]) continue;
+    try {
+      const taskId = `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const handshakeDeadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      const task = await net.createTask({
+        task_id: taskId,
+        initiator_id: agentId,
+        content: { description: `Team handshake: ${agentId} → ${peerId} [team=${team.team_id}] [repo=${team.git_repo}] [members=${team.agent_ids.join(",")}]` },
+        domains: ["team-coordination"],
+        budget: 0,
+        deadline: handshakeDeadline,
+        max_concurrent_bidders: 1,
+        max_depth: 0,
+        invited_agent_ids: [peerId],
+      });
+      team.ack_out[peerId] = task.id;
+      state.addTeam(team);
+    } catch { /* non-critical */ }
+  }
+}
+
+/**
+ * Auto-select result for handshake tasks when a result is submitted.
+ * Only acts on tasks in our ack_out (i.e., tasks we created as initiator).
+ */
+async function autoHandshakeSelect(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
+  const taskId = event.task_id;
+  const match = state.findTeamByHandshakeTask(taskId);
+  if (!match || match.direction !== "out") return; // Not our outgoing handshake
+
+  const payload = event.payload as Record<string, unknown>;
+  const resultAgentId = payload?.agent_id as string | undefined;
+  if (!resultAgentId) return;
+
+  // Auto-select the result
+  try {
+    await net.selectResult(taskId, agentId, resultAgentId);
+  } catch { /* non-critical */ }
+
+  // Extract branch from the result
+  try {
+    const taskData = await net.getTask(taskId);
+    const results = (taskData as any)?.results ?? [];
+    const result = results.find((r: any) => r.agent_id === resultAgentId);
+    const branch = result?.content?.branch;
+    if (branch) {
+      state.updateTeamPeerBranch(match.team.team_id, match.peerId, branch);
+    }
+    // If the reply carries a team task, buffer it as a synthetic event for the agent
+    const teamTask = result?.content?.team_task;
+    if (teamTask && teamTask.task_id) {
+      state.pushEvents(agentId, [{
+        msg_id: crypto.randomUUID().replace(/-/g, ""),
+        type: "direct_message",
+        task_id: teamTask.task_id,
+        payload: {
+          from: match.peerId,
+          content: JSON.stringify({ _team_task: true, ...teamTask }),
+        },
+        received_at: Date.now(),
+      }]);
+    }
+  } catch { /* non-critical */ }
+}
+
+/**
+ * Reply to pending reverse handshakes when creating a team task.
+ * Uses ack_in (recorded by autoHandshakeRespond) to find task IDs
+ * that the initiator hasn't responded to yet. Bids and submits result
+ * with branch + task details.
+ */
+async function replyPendingHandshakes(
+  agentId: string,
+  team: import("./src/models.js").TeamInfo,
+  taskSummary: { task_id: string; description: string },
+): Promise<void> {
+  for (const [peerId, taskId] of Object.entries(team.ack_in)) {
+    // Bid on the reverse handshake task
+    try {
+      await net.submitBid(taskId, agentId, 0, 1);
+    } catch { continue; /* already bid or task closed */ }
+
+    // Submit result with branch + task details
+    // On a 0-budget invited task, bid is typically auto-accepted
+    try {
+      await net.submitResult(taskId, agentId, {
+        _handshake_ack: true,
+        team_id: team.team_id,
+        branch: team.my_branch ?? `agent/${agentId}`,
+        team_task: taskSummary,
+      });
+    } catch { /* non-critical — peer can retry via eacn3_team_retry_ack */ }
+  }
 }
 
 // ---------------------------------------------------------------------------

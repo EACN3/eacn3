@@ -166,7 +166,7 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
-// Long-polling helpers for eacn3_await_events
+// Event helpers for eacn3_await_events
 // ---------------------------------------------------------------------------
 
 /**
@@ -410,7 +410,7 @@ export default {
       state.save();
       startHeartbeat();
 
-      // Reconnect WS for all existing agents; re-register if network lost them
+      // Re-register agents on network if needed; mark them for on-demand event fetching
       for (const agent of Object.values(s.agents)) {
         try { await net.getAgentInfo(agent.agent_id); } catch {
           try { await net.registerAgent(agent); } catch { /* best-effort */ }
@@ -435,7 +435,7 @@ export default {
   // #2 eacn3_disconnect
   api.registerTool({
     name: "eacn3_disconnect",
-    description: "Disconnect from the EACN3 network and stop event polling. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
+    description: "Disconnect from the EACN3 network. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
     parameters: { type: "object", properties: {} },
     async execute() {
       stopHeartbeat(); ws.disconnectAll();
@@ -509,7 +509,7 @@ export default {
   // #5 eacn3_register_agent
   api.registerTool({
     name: "eacn3_register_agent",
-    description: "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and starts polling for push events (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
+    description: "Create and register an agent identity on the EACN3 network. Requires: eacn3_connect first. Assembles an AgentCard, registers it with the network, persists it locally, and registers it for on-demand event fetching (task_broadcast, subtask_completed, etc.). Returns {agent_id, seeds, domains}. Domains control which task broadcasts you receive — be specific (e.g. 'python-coding' not 'coding').",
     parameters: {
       type: "object",
       properties: {
@@ -566,7 +566,7 @@ export default {
           enabled: true,
           sampling_available: false,
           mode: "openclaw",
-          hint: "Use eacn3_await_events for reactive event handling (long-polling). Directive injection is active on all tool responses.",
+          hint: "Use eacn3_await_events for reactive event handling. Directive injection is active on all tool responses.",
         },
       });
     },
@@ -616,7 +616,7 @@ export default {
   // #8 eacn3_unregister_agent
   api.registerTool({
     name: "eacn3_unregister_agent",
-    description: "Remove an agent from the network and stop its event polling. Side effects: deletes agent from local state, stops receiving events for this agent. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
+    description: "Remove an agent from the network. Side effects: deletes agent from local state. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
     parameters: { type: "object", properties: { agent_id: { type: "string" } }, required: ["agent_id"] },
     async execute(_id: string, params: any) {
       const res = await net.unregisterAgent(params.agent_id);
@@ -632,11 +632,11 @@ export default {
   // #9 eacn3_list_my_agents
   api.registerTool({
     name: "eacn3_list_my_agents",
-    description: "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and polling_active (event polling status). No network call — reads local state only. Use to check which agents are active and receiving events.",
+    description: "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and registered status. No network call — reads local state only. Use to check which agents are active.",
     parameters: { type: "object", properties: {} },
     async execute() {
       const agents = state.listAgents();
-      return ok({ count: agents.length, agents: agents.map((a) => ({ agent_id: a.agent_id, name: a.name, domains: a.domains, tier: a.tier, polling_active: ws.isConnected(a.agent_id) })) });
+      return ok({ count: agents.length, agents: agents.map((a) => ({ agent_id: a.agent_id, name: a.name, domains: a.domains, tier: a.tier, registered: ws.isConnected(a.agent_id) })) });
     },
   });
 
@@ -1045,19 +1045,21 @@ export default {
   // #32 eacn3_get_events
   api.registerTool({
     name: "eacn3_get_events",
-    description: "Drain the in-memory event buffer for a specific agent, returning its pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. Call periodically in your main loop. Events arrive via HTTP polling and accumulate until drained — missing events means missed tasks and messages.",
+    description: "Fetch pending events from the network for a specific agent, plus any locally buffered synthetic events. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message.",
     parameters: { type: "object", properties: { agent_id: { type: "string", description: "Agent ID to drain events for (auto-injected if omitted)" } } },
     async execute(_id: string, params: any) {
       const agentId = resolveAgentId(params.agent_id);
-      const events = state.drainEvents(agentId);
+      const networkEvents = await ws.fetchEvents(agentId, 0);
+      const localEvents = state.drainEvents(agentId);
+      const events = [...networkEvents, ...localEvents].filter((e) => !e._handled);
       return ok({ count: events.length, events, reverse_control: rc.getStatus() });
     },
   });
 
-  // #39 eacn3_await_events — long-polling reverse control for OpenClaw
+  // #39 eacn3_await_events — on-demand event fetching
   api.registerTool({
     name: "eacn3_await_events",
-    description: "Block until a network event arrives or timeout expires, then return with the event AND a suggested action. This is the primary reverse-control mechanism for OpenClaw (where MCP sampling is unavailable). Instead of polling eacn3_get_events in a loop, call this tool — it waits for the network to push something, then tells you exactly what to do. Returns {event, suggested_action, params} or {timeout: true} if nothing happened. Prefer this over eacn3_get_events for reactive agent loops.",
+    description: "Fetch events from the network with a configurable wait time. First checks locally buffered synthetic events, then does a single long-poll to the network. Returns {event, suggested_action, params} or {timeout: true} if nothing happened. Prefer this over eacn3_get_events for reactive agent loops.",
     parameters: {
       type: "object",
       properties: {
@@ -1071,40 +1073,33 @@ export default {
       const timeoutSec = Math.min(Math.max(params.timeout_seconds ?? 30, 1), 120);
       const filterTypes = params.event_types as string[] | undefined;
 
-      // Check if there are already buffered events
-      const immediate = drainMatchingEvents(agentId, filterTypes);
+      // Check locally buffered synthetic events first
+      const immediate = drainMatchingEvents(agentId, filterTypes).filter((e: PushEvent) => !e._handled);
       if (immediate.length > 0) {
         return ok(buildAwaitResponse(immediate));
       }
 
-      // Long-poll: wait for new events via a Promise that resolves
-      // when event-transport pushes an event or timeout expires.
-      const result = await new Promise<PushEvent[]>((resolve) => {
-        const deadline = setTimeout(() => {
-          cleanup();
-          resolve([]);
-        }, timeoutSec * 1000);
+      // Single long-poll to network with the agent's requested timeout
+      const networkEvents = await ws.fetchEvents(agentId, timeoutSec);
+      const localAfter = drainMatchingEvents(agentId, filterTypes);
+      const all = [...networkEvents, ...localAfter].filter((e: PushEvent) => !e._handled);
 
-        // Check periodically (every 500ms) if new events have been buffered
-        const poll = setInterval(() => {
-          const events = drainMatchingEvents(agentId, filterTypes);
-          if (events.length > 0) {
-            cleanup();
-            resolve(events);
-          }
-        }, 500);
+      // Filter by event types if specified
+      const filtered = filterTypes && filterTypes.length > 0
+        ? all.filter((e: PushEvent) => filterTypes.includes(e.type))
+        : all;
 
-        function cleanup() {
-          clearTimeout(deadline);
-          clearInterval(poll);
-        }
-      });
+      // Put back non-matching events
+      if (filterTypes && filterTypes.length > 0) {
+        const remaining = all.filter((e: PushEvent) => !filterTypes.includes(e.type));
+        if (remaining.length > 0) state.pushEvents(agentId, remaining);
+      }
 
-      if (result.length === 0) {
+      if (filtered.length === 0) {
         return ok({ timeout: true, waited_seconds: timeoutSec, hint: "No events arrived. Call again to keep waiting, or proceed with other work." });
       }
 
-      return ok(buildAwaitResponse(result));
+      return ok(buildAwaitResponse(filtered));
     },
   });
 

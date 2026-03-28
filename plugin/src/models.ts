@@ -328,6 +328,8 @@ export interface PushEvent {
   received_at: number;
   /** True if this message was delivered from offline cache on reconnect. */
   _offline?: boolean;
+  /** True if this event was already auto-handled by a callback (e.g. handshake). Consumers should skip it. */
+  _handled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -539,19 +541,19 @@ export interface TeamInfo {
   my_agent_id: string;
   /** This agent's operation branch (set after creation). */
   my_branch?: string;
-  /** Peer agent branches learned through handshakes. agent_id → branch name. */
+  /** Peer agent branches learned through handshake task results. agent_id → branch name. */
   peer_branches: Record<string, string>;
-  /** Outgoing handshake task IDs. target_agent_id → task_id. */
-  handshake_out: Record<string, string>;
-  /** Incoming handshake task IDs. source_agent_id → task_id. */
-  handshake_in: Record<string, string>;
-  /** "forming" until all handshakes complete, then "ready". */
+  /** Outgoing handshake tasks: peer_agent_id → task_id. "ACKs I sent." */
+  ack_out: Record<string, string>;
+  /** Incoming handshake tasks: peer_agent_id → task_id. "ACKs I received." */
+  ack_in: Record<string, string>;
+  /** "forming" until all peer branches are known, then "ready". */
   status: "forming" | "ready";
 }
 
 /**
- * Content marker for handshake tasks. Presence of `_handshake: true`
- * distinguishes team handshakes from normal tasks.
+ * Content embedded in handshake task descriptions.
+ * Presence of `_handshake: true` distinguishes team handshakes from normal tasks.
  */
 export interface HandshakeContent {
   _handshake: true;
