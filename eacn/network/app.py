@@ -923,12 +923,11 @@ class Network:
         if not all_agent_ids:
             return
 
-        # Filter out offline agents — only broadcast to those actively polling
-        online_ids = await self.db.filter_online_agents(list(all_agent_ids))
-        if not online_ids:
-            return
-
-        await self.push.broadcast_task(task, online_ids)
+        # Broadcast to ALL matching agents — online or offline.
+        # The push handler writes to the per-agent message queue
+        # unconditionally. Offline agents pick up queued messages
+        # when they come back and call GET /api/events/{agent_id}.
+        await self.push.broadcast_task(task, list(all_agent_ids))
 
     async def _create_adjudication(
         self, parent_task: Task, result_agent_id: str
