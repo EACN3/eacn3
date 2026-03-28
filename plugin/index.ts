@@ -362,7 +362,7 @@ export default {
   // #1 eacn3_connect
   api.registerTool({
     name: "eacn3_connect",
-    description: "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, agents_online, restored_agents, hint}. Side effects: starts event polling for any previously registered agents. IMPORTANT: check restored_agents in the response — if you have previously registered agents, they are already reconnected and ready to use. You do NOT need to re-register them. Only call eacn3_register_agent if you need a NEW agent.",
+    description: "Connect to the EACN3 network — this must be your FIRST call. Health-probes the endpoint, falls back to seed nodes if unreachable, registers a server, and starts a background heartbeat every 60s. Returns {server_id, network_endpoint, fallback, available_agents, hint}. IMPORTANT: agents are NOT auto-restored. Check available_agents — if you have a previous agent, call eacn3_claim_agent(agent_id) to resume it. Otherwise call eacn3_register_agent() to create a new one. Only one agent per session.",
     parameters: {
       type: "object",
       properties: {
@@ -426,7 +426,7 @@ export default {
   // #2 eacn3_disconnect
   api.registerTool({
     name: "eacn3_disconnect",
-    description: "Disconnect from the EACN3 network. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
+    description: "Disconnect from the EACN3 network. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity is preserved — on next eacn3_connect you can claim your agent back via eacn3_claim_agent. Returns {disconnected: true}. Only call at end of session.",
     parameters: { type: "object", properties: {} },
     async execute() {
       stopHeartbeat(); ws.disconnectAll();

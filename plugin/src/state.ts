@@ -147,20 +147,6 @@ function saveAgentData(agentId: string): void {
   atomicWrite(agentFilePath(agentId), JSON.stringify(data, null, 2));
 }
 
-function loadAllAgents(): Record<string, AgentData> {
-  const result: Record<string, AgentData> = {};
-  if (!existsSync(AGENTS_DIR)) return result;
-  try {
-    for (const file of readdirSync(AGENTS_DIR)) {
-      if (!file.endsWith(".json")) continue;
-      const agentId = file.slice(0, -5); // strip .json
-      const data = loadAgentData(agentId);
-      if (data) result[agentId] = data;
-    }
-  } catch { /* dir unreadable */ }
-  return result;
-}
-
 function removeAgentFile(agentId: string): void {
   const filePath = agentFilePath(agentId);
   try { if (existsSync(filePath)) unlinkSync(filePath); } catch { /* best-effort */ }
@@ -173,19 +159,26 @@ function removeAgentFile(agentId: string): void {
 function migrateLegacyState(): void {
   if (!existsSync(LEGACY_STATE_FILE)) return;
 
+  // Rename first (atomic on all platforms) — prevents concurrent migration.
+  // If another process already renamed it, this throws and we skip.
+  const migratedPath = LEGACY_STATE_FILE + ".migrated";
+  try { renameSync(LEGACY_STATE_FILE, migratedPath); } catch { return; }
+
   let legacy: EacnState;
   try {
-    legacy = JSON.parse(readFileSync(LEGACY_STATE_FILE, "utf-8")) as EacnState;
+    legacy = JSON.parse(readFileSync(migratedPath, "utf-8")) as EacnState;
   } catch { return; }
 
-  // Write server data
-  const serverData: ServerData = {
-    server_card: legacy.server_card,
-    network_endpoint: legacy.network_endpoint,
-  };
-  atomicWrite(SERVER_FILE, JSON.stringify(serverData, null, 2));
+  // Only write server.json if it doesn't already exist — don't overwrite newer data
+  if (!existsSync(SERVER_FILE)) {
+    const serverData: ServerData = {
+      server_card: legacy.server_card,
+      network_endpoint: legacy.network_endpoint,
+    };
+    atomicWrite(SERVER_FILE, JSON.stringify(serverData, null, 2));
+  }
 
-  // Write per-agent data
+  // Write per-agent data (only if agent file doesn't exist)
   for (const [agentId, agent] of Object.entries(legacy.agents ?? {})) {
     const prefix = `${agentId}:`;
     const tasks: Record<string, LocalTaskInfo> = {};
@@ -208,7 +201,10 @@ function migrateLegacyState(): void {
       active_sessions: sessions,
       teams,
     };
-    atomicWrite(agentFilePath(agentId), JSON.stringify(data, null, 2));
+    // Only write if agent file doesn't exist — don't overwrite newer data
+    if (!existsSync(agentFilePath(agentId))) {
+      atomicWrite(agentFilePath(agentId), JSON.stringify(data, null, 2));
+    }
   }
 
   // Migrate per-agent pending_events to event files
@@ -221,8 +217,6 @@ function migrateLegacyState(): void {
     }
   }
 
-  // Rename legacy file so we don't re-migrate
-  try { renameSync(LEGACY_STATE_FILE, LEGACY_STATE_FILE + ".migrated"); } catch { /* best-effort */ }
   console.error("[State] migrated legacy state.json to per-agent files");
 }
 
@@ -268,9 +262,12 @@ export function save(): void {
   if (saving) { saveQueued = true; return; }
   saving = true;
   try {
-    // Only write files for agents owned by THIS session
     for (const agentId of ownedAgentIds) {
-      if (state.agents[agentId]) saveAgentData(agentId);
+      if (state.agents[agentId]) {
+        saveAgentData(agentId);
+        // Refresh claim lock timestamp so other sessions know we're still alive
+        try { writeFileSync(claimLockPath(agentId), `${process.pid}:${Date.now()}`); } catch { /* best-effort */ }
+      }
     }
   } finally {
     saving = false;
@@ -309,7 +306,17 @@ export function listAvailableAgents(): Array<{ agent_id: string; name: string; d
   if (!existsSync(AGENTS_DIR)) return result;
   try {
     for (const file of readdirSync(AGENTS_DIR)) {
-      if (!file.endsWith(".json")) continue;
+      if (!file.endsWith(".json") || file.startsWith(".")) continue;
+      const agentId = file.slice(0, -5);
+      // Skip agents already claimed by another session (lock file exists and is fresh)
+      const lockPath = claimLockPath(agentId);
+      if (existsSync(lockPath)) {
+        try {
+          const raw = readFileSync(lockPath, "utf-8");
+          const ts = parseInt(raw.split(":")[1], 10);
+          if (Date.now() - ts < 60_000) continue; // Active claim — skip
+        } catch { /* unreadable lock — show agent */ }
+      }
       const data = safeReadJSON<AgentData>(join(AGENTS_DIR, file));
       if (data?.agent) {
         result.push({
@@ -324,14 +331,43 @@ export function listAvailableAgents(): Array<{ agent_id: string; name: string; d
   return result;
 }
 
+/** Lock file path for an agent claim — prevents two sessions claiming the same agent. */
+function claimLockPath(agentId: string): string {
+  return join(AGENTS_DIR, `.${agentId}.lock`);
+}
+
 /**
  * Claim an existing agent from disk into this session.
  * Loads the agent's full data (tasks, sessions, teams) into memory and marks ownership.
- * Returns the AgentCard, or null if not found.
+ * Uses an exclusive lock file to prevent two sessions from claiming the same agent.
+ * Returns the AgentCard, or null if not found or already claimed by another session.
  */
 export function claimAgent(agentId: string): AgentCard | null {
   const data = loadAgentData(agentId);
   if (!data) return null;
+
+  // Acquire exclusive claim lock — prevents two sessions from claiming the same agent.
+  // Lock file contains PID so stale locks from crashed processes can be detected.
+  mkdirSync(AGENTS_DIR, { recursive: true });
+  const lockPath = claimLockPath(agentId);
+  try {
+    writeFileSync(lockPath, `${process.pid}:${Date.now()}`, { flag: "wx" }); // O_CREAT | O_EXCL
+  } catch {
+    // Lock exists — check if stale (process crashed)
+    try {
+      const raw = readFileSync(lockPath, "utf-8");
+      const ts = parseInt(raw.split(":")[1], 10);
+      if (Date.now() - ts > 60_000) {
+        // Stale lock (>60s old) — force remove and retry once
+        unlinkSync(lockPath);
+        try {
+          writeFileSync(lockPath, `${process.pid}:${Date.now()}`, { flag: "wx" });
+        } catch { return null; } // Still can't lock — another session grabbed it
+      } else {
+        return null; // Active lock from another session
+      }
+    } catch { return null; }
+  }
 
   const s = getState();
   s.agents[agentId] = data.agent;
@@ -349,6 +385,9 @@ export function claimAgent(agentId: string): AgentCard | null {
 export function addAgent(agent: AgentCard): void {
   getState().agents[agent.agent_id] = agent;
   ownedAgentIds.add(agent.agent_id);
+  // Write claim lock for new agent
+  mkdirSync(AGENTS_DIR, { recursive: true });
+  try { writeFileSync(claimLockPath(agent.agent_id), `${process.pid}:${Date.now()}`, { flag: "wx" }); } catch { /* may already own */ }
   save();
 }
 
@@ -386,9 +425,10 @@ export function removeAgent(agentId: string): void {
     }
   }
 
-  // Remove per-agent files and ownership
+  // Remove per-agent files, ownership and claim lock
   ownedAgentIds.delete(agentId);
   removeAgentFile(agentId);
+  try { unlinkSync(claimLockPath(agentId)); } catch { /* best-effort */ }
   agentEvents.delete(agentId);
   const evtFile = eventsFilePath(agentId);
   try { if (existsSync(evtFile)) unlinkSync(evtFile); } catch { /* best-effort */ }
