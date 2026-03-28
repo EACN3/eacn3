@@ -165,6 +165,27 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 return JSONResponse({"detail": "Server starting up"}, status_code=503)
         return await call_next(request)
 
+    @app.middleware("http")
+    async def liveness_touch(request: Request, call_next):
+        """Any API call with x-server-id is proof of liveness.
+
+        The agent is doing work (bidding, submitting results, creating
+        tasks, etc.) — it's alive. Refresh the liveness timestamp for
+        all agents on this server so the scanner doesn't kill them.
+        """
+        response = await call_next(request)
+        # Only touch on successful mutating requests (POST/PUT/DELETE)
+        if request.method in ("POST", "PUT", "DELETE") and response.status_code < 400:
+            server_id = request.headers.get("x-server-id")
+            if server_id:
+                try:
+                    db = getattr(request.app.state, "db", None)
+                    if db:
+                        await db.touch_agents_by_server(server_id)
+                except Exception:
+                    pass  # best-effort
+        return response
+
     # Read from env var if not explicitly provided; fall back to file-based default
     resolved_db_path = db_path or os.environ.get("EACN3_DB_PATH", "eacn3.db")
     # Validate path has no traversal (#48)

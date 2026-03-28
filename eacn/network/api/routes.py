@@ -47,6 +47,7 @@ def _net():
     return _network
 
 
+
 def _task_to_response(task) -> TaskResponse:
     return TaskResponse(**task.model_dump())
 
@@ -54,6 +55,7 @@ def _task_to_response(task) -> TaskResponse:
 
 @router.post("/tasks", response_model=TaskResponse, status_code=201)
 async def create_task(req: CreateTaskRequest):
+
     try:
         from eacn.core.models import HumanContact
         human_contact = None
@@ -158,6 +160,7 @@ async def list_tasks(
 
 @router.post("/tasks/{task_id}/bid", response_model=BidResponse)
 async def submit_bid(task_id: str, req: SubmitBidRequest):
+
     net = _net()
     # Cluster: check if task is on a remote node
     if not net.cluster.router.is_local(task_id):
@@ -190,6 +193,7 @@ async def submit_bid(task_id: str, req: SubmitBidRequest):
 @router.post("/tasks/{task_id}/invite", response_model=InviteAgentResponse)
 async def invite_agent(task_id: str, req: InviteAgentRequest):
     """Invite an agent to bid on a task (skips ability check)."""
+
     try:
         await _net().invite_agent(
             task_id=task_id,
@@ -208,6 +212,7 @@ async def invite_agent(task_id: str, req: InviteAgentRequest):
 @router.post("/tasks/{task_id}/reject", response_model=OkResponse)
 async def reject_task(task_id: str, req: RejectTaskRequest):
     """Agent rejects/withdraws from an assigned task for re-allocation."""
+
     net = _net()
     if not net.cluster.router.is_local(task_id):
         try:
@@ -229,6 +234,7 @@ async def reject_task(task_id: str, req: RejectTaskRequest):
 
 @router.post("/tasks/{task_id}/result", response_model=OkResponse)
 async def submit_result(task_id: str, req: SubmitResultRequest):
+
     net = _net()
     if not net.cluster.router.is_local(task_id):
         try:
@@ -249,6 +255,7 @@ async def submit_result(task_id: str, req: SubmitResultRequest):
 
 @router.post("/tasks/{task_id}/select", response_model=OkResponse)
 async def select_result(task_id: str, req: SelectResultRequest):
+
     try:
         await _net().select_result(
             task_id=task_id,
@@ -305,6 +312,7 @@ async def get_task_results(task_id: str, initiator_id: str):
 
 @router.post("/tasks/{task_id}/close", response_model=TaskResponse)
 async def close_task(task_id: str, req: CloseTaskRequest):
+
     try:
         task = await _net().close_task(task_id, initiator_id=req.initiator_id)
         return _task_to_response(task)
@@ -325,6 +333,7 @@ async def update_deadline(task_id: str, req: UpdateDeadlineRequest):
 
 @router.post("/tasks/{task_id}/discussions", response_model=TaskResponse)
 async def update_discussions(task_id: str, req: UpdateDiscussionsRequest):
+
     try:
         task = await _net().update_discussions(
             task_id, req.message, initiator_id=req.initiator_id,
@@ -336,6 +345,7 @@ async def update_discussions(task_id: str, req: UpdateDiscussionsRequest):
 
 @router.post("/tasks/{task_id}/confirm-budget", response_model=OkResponse)
 async def confirm_budget(task_id: str, req: ConfirmBudgetRequest):
+
     try:
         await _net().confirm_budget(
             task_id,
@@ -351,6 +361,7 @@ async def confirm_budget(task_id: str, req: ConfirmBudgetRequest):
 
 @router.post("/tasks/{task_id}/subtask", response_model=TaskResponse, status_code=201)
 async def create_subtask(task_id: str, req: CreateSubtaskRequest):
+
     net = _net()
     if not net.cluster.router.is_local(task_id):
         try:
