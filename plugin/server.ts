@@ -2009,18 +2009,6 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
-// Global error handlers — prevent crashes from unhandled errors (#cross-process)
-// ---------------------------------------------------------------------------
-
-process.on("uncaughtException", (err) => {
-  console.error("[EACN3] uncaughtException (kept alive):", err?.message ?? err);
-});
-
-process.on("unhandledRejection", (reason) => {
-  console.error("[EACN3] unhandledRejection (kept alive):", (reason as Error)?.message ?? reason);
-});
-
-// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 
