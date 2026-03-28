@@ -269,12 +269,11 @@ export function updateTeamPeerBranch(
   peerId: string,
   branch: string,
 ): void {
-  // Find all team entries with this team_id (one per local agent)
   const teams = ensureTeams();
   const entries = Object.values(teams).filter((t) => t.team_id === teamId);
   for (const team of entries) {
     team.peer_branches[peerId] = branch;
-    // Check if all peers have completed handshake
+    // Check if all peers have completed ACK exchange
     const peers = team.agent_ids.filter((id) => id !== team.my_agent_id);
     if (peers.every((id) => id in team.peer_branches)) {
       team.status = "ready";
@@ -283,8 +282,29 @@ export function updateTeamPeerBranch(
   }
 }
 
+export function recordAckSent(teamId: string, peerId: string): void {
+  const teams = ensureTeams();
+  const entries = Object.values(teams).filter((t) => t.team_id === teamId);
+  for (const team of entries) {
+    if (!team.ack_sent.includes(peerId)) {
+      team.ack_sent.push(peerId);
+      save();
+    }
+  }
+}
+
+export function recordAckReceived(teamId: string, peerId: string): void {
+  const teams = ensureTeams();
+  const entries = Object.values(teams).filter((t) => t.team_id === teamId);
+  for (const team of entries) {
+    if (!team.ack_received.includes(peerId)) {
+      team.ack_received.push(peerId);
+      save();
+    }
+  }
+}
+
 export function setTeamBranch(teamId: string, branch: string): void {
-  // Update my_branch for all entries of this team (all local agents)
   const teams = ensureTeams();
   let saved = false;
   for (const team of Object.values(teams)) {
@@ -296,14 +316,9 @@ export function setTeamBranch(teamId: string, branch: string): void {
   if (saved) save();
 }
 
-export function findTeamByHandshakeTask(taskId: string): { team: TeamInfo; direction: "in" | "out"; peerId: string } | undefined {
-  for (const team of Object.values(ensureTeams())) {
-    for (const [peerId, tid] of Object.entries(team.handshake_out)) {
-      if (tid === taskId) return { team, direction: "out", peerId };
-    }
-    for (const [peerId, tid] of Object.entries(team.handshake_in)) {
-      if (tid === taskId) return { team, direction: "in", peerId };
-    }
-  }
-  return undefined;
+/** Find a team by team_id for a specific agent. */
+export function findTeamForAgent(teamId: string, agentId: string): TeamInfo | undefined {
+  return Object.values(ensureTeams()).find(
+    (t) => t.team_id === teamId && t.my_agent_id === agentId,
+  );
 }

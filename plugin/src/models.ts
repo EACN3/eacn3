@@ -539,26 +539,29 @@ export interface TeamInfo {
   my_agent_id: string;
   /** This agent's operation branch (set after creation). */
   my_branch?: string;
-  /** Peer agent branches learned through handshakes. agent_id → branch name. */
+  /** Peer agent branches learned through ACK exchanges. agent_id → branch name. */
   peer_branches: Record<string, string>;
-  /** Outgoing handshake task IDs. target_agent_id → task_id. */
-  handshake_out: Record<string, string>;
-  /** Incoming handshake task IDs. source_agent_id → task_id. */
-  handshake_in: Record<string, string>;
-  /** "forming" until all handshakes complete, then "ready". */
+  /** Peers we have sent an ACK to (set of agent_ids). */
+  ack_sent: string[];
+  /** Peers who have replied to our ACK (set of agent_ids). */
+  ack_received: string[];
+  /** "forming" until all ACKs are exchanged, then "ready". */
   status: "forming" | "ready";
 }
 
 /**
- * Content marker for handshake tasks. Presence of `_handshake: true`
- * distinguishes team handshakes from normal tasks.
+ * ACK message payload for team handshake.
+ * Sent as a direct_message via relayMessage.
  */
-export interface HandshakeContent {
-  _handshake: true;
+export interface TeamAck {
+  _team_ack: true;
   team_id: string;
   git_repo: string;
   from_agent: string;
+  branch?: string;
   team_members: string[];
+  /** true if this is a reply to a received ACK. */
+  is_reply?: boolean;
 }
 
 /** Plugin-local state. Holds all in-memory data for the current session; reset on disconnect. */

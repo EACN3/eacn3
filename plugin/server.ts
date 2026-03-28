@@ -235,8 +235,8 @@ server.tool(
           eacn3_get_events: "Drain all pending events at once (bulk alternative to next).",
         },
         team: {
-          eacn3_team_setup: "Form a team of agents around a shared git repo. Creates handshake tasks between all pairs.",
-          eacn3_team_status: "Check team formation progress — which handshakes are done, which peer branches are known.",
+          eacn3_team_setup: "Form a team of agents around a shared git repo via ACK message exchange.",
+          eacn3_team_status: "Check team formation progress — which ACKs are exchanged, which peer branches are known.",
           eacn3_team_set_branch: "Record your git branch name for a team after creating it.",
         },
         task: {
@@ -423,8 +423,8 @@ server.tool(
           eacn3_get_events: "Drain all pending events at once (bulk alternative to next).",
         },
         team: {
-          eacn3_team_setup: "Form a team of agents around a shared git repo. Creates handshake tasks between all pairs.",
-          eacn3_team_status: "Check team formation progress — which handshakes are done, which peer branches are known.",
+          eacn3_team_setup: "Form a team of agents around a shared git repo via ACK message exchange.",
+          eacn3_team_status: "Check team formation progress — which ACKs are exchanged, which peer branches are known.",
           eacn3_team_set_branch: "Record your git branch name for a team after creating it.",
         },
         task: {
@@ -770,28 +770,6 @@ server.tool(
   async (params) => {
     const initiatorId = resolveAgentId(params.initiator_id);
     const res = await net.selectResult(params.task_id, initiatorId, params.agent_id);
-
-    // If this was a team handshake task, extract peer branch and update local team state
-    const teams = state.getTeamsForAgent(initiatorId);
-    for (const team of teams) {
-      const handshakeTarget = Object.entries(team.handshake_out).find(
-        ([, taskId]) => taskId === params.task_id,
-      );
-      if (handshakeTarget) {
-        // Fetch the result to get the branch name
-        try {
-          const taskData = await net.getTask(params.task_id);
-          const results = (taskData as any)?.results ?? [];
-          const winnerResult = results.find((r: any) => r.agent_id === params.agent_id);
-          const branch = winnerResult?.content?.branch;
-          if (branch) {
-            state.updateTeamPeerBranch(team.team_id, handshakeTarget[0], branch);
-          }
-        } catch { /* best effort */ }
-        break;
-      }
-    }
-
     return ok(res);
   },
 );
@@ -1319,22 +1297,6 @@ function buildNextAction(event: import("./src/models.js").PushEvent) {
   const payload = event.payload as Record<string, unknown>;
   switch (event.type) {
     case "task_broadcast": {
-      // Detect team handshake tasks
-      const desc = String((payload as any)?.description ?? "");
-      if (desc.startsWith("Team handshake:") || (payload as any)?.budget === 0) {
-        // Check if this looks like a handshake (0-budget, team-coordination domain)
-        const domains = (payload.domains as string[]) ?? [];
-        if (domains.includes("team-coordination")) {
-          return {
-            action: "handshake",
-            description: `Team handshake from another agent on task ${event.task_id}. ` +
-              `Bid with price=0 confidence=1, then submit_result with your branch name: ` +
-              `{branch: "agent/your-id", _handshake_ack: true, team_id: "..."}.`,
-            tool: "eacn3_submit_bid",
-            params: { task_id: event.task_id, confidence: 1, price: 0 },
-          };
-        }
-      }
       return {
         action: "bid",
         description: `New task [${((payload.domains as string[]) ?? []).join(", ")}] budget=${payload.budget ?? "?"}. Evaluate and bid.`,
@@ -1500,116 +1462,72 @@ server.tool(
   },
 );
 
-// #42 eacn3_team_setup — human-facing team coordination toolkit
+// #42 eacn3_team_setup — message-based team handshake
 server.tool(
   "eacn3_team_setup",
-  "Human-facing toolkit: form a team of agents around a shared git repo. " +
-  "Creates 0-budget handshake tasks between every pair of agents (both directions). " +
-  "Each agent creates its own operation branch and learns peers' branches through handshake responses. " +
-  "Set peers_running_next=true if other agents already have next loops — this agent will notify them via messages first.",
+  "Form a team of agents around a shared git repo. " +
+  "Step 1: Notifies all peers that we are a team, then sends an ACK message to each peer with this agent's info. " +
+  "Step 2: Each peer replies to the ACK (handled automatically on receiving). " +
+  "When all ACKs are exchanged, team is ready. Use eacn3_team_status to check progress, eacn3_team_retry_ack to poke unresponsive peers.",
   {
     agent_ids: z.array(z.string()).min(2).describe("Agent IDs to form a team"),
     git_repo: z.string().describe("Git repo URL for recording operations"),
-    peers_running_next: z.boolean().optional().describe("If true, notify peers via messages before handshakes"),
+    my_branch: z.string().optional().describe("This agent's branch name (if already created)"),
   },
   async (params) => {
     const localAgents = state.listAgents();
     const localIds = new Set(localAgents.map((a) => a.agent_id));
 
-    // Find which of the requested agents are local
     const myAgents = params.agent_ids.filter((id) => localIds.has(id));
     if (myAgents.length === 0) {
       return err("None of the specified agent_ids are registered on this server");
     }
 
     const teamId = `team-${Date.now().toString(36)}`;
-    const results: Array<{ agent_id: string; handshakes_created: string[] }> = [];
+    const results: Array<{ agent_id: string; ack_sent_to: string[]; failed: string[] }> = [];
 
     for (const myId of myAgents) {
       const peers = params.agent_ids.filter((id) => id !== myId);
 
-      // Save team info
       const teamInfo: import("./src/models.js").TeamInfo = {
         team_id: teamId,
         git_repo: params.git_repo,
         agent_ids: params.agent_ids,
         my_agent_id: myId,
+        my_branch: params.my_branch,
         peer_branches: {},
-        handshake_out: {},
-        handshake_in: {},
+        ack_sent: [],
+        ack_received: [],
         status: "forming",
       };
 
-      // If peers are running next loops, notify them first
-      if (params.peers_running_next) {
-        for (const peerId of peers) {
-          try {
-            const msg = JSON.stringify({
-              _team_notify: true,
-              team_id: teamId,
-              git_repo: params.git_repo,
-              team_members: params.agent_ids,
-              message: `Team setup initiated. You will receive handshake tasks shortly. Create your branch in ${params.git_repo} and respond with your branch name.`,
-            });
-            await net.relayMessage({
-              to: { network_id: "", server_id: "", agent_id: peerId },
-              from: { network_id: "", server_id: state.getServerId() ?? "", agent_id: myId },
-              content: msg,
-            });
-          } catch { /* best-effort notification */ }
-        }
-      }
-
-      // Create 0-budget handshake task for each peer
-      const handshakesCreated: string[] = [];
+      // Send ACK to each peer
+      const ackSentTo: string[] = [];
+      const failed: string[] = [];
       for (const peerId of peers) {
         try {
-          const taskId = `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-          const content = {
-            _handshake: true,
+          const ack: import("./src/models.js").TeamAck = {
+            _team_ack: true,
             team_id: teamId,
             git_repo: params.git_repo,
             from_agent: myId,
+            branch: params.my_branch,
             team_members: params.agent_ids,
           };
-          // Network-side: auto-set 5-minute deadline for handshake tasks
-          const handshakeDeadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-          const task = await net.createTask({
-            task_id: taskId,
-            initiator_id: myId,
-            content: { description: `Team handshake: ${myId} → ${peerId}` },
-            domains: ["team-coordination"],
-            budget: 0,
-            deadline: handshakeDeadline,
-            max_concurrent_bidders: 1,
-            max_depth: 0,
-            invited_agent_ids: [peerId],
+          await net.relayMessage({
+            to: { network_id: "", server_id: "", agent_id: peerId },
+            from: { network_id: "", server_id: state.getServerId() ?? "", agent_id: myId },
+            content: JSON.stringify(ack),
           });
-
-          // Update task content with handshake marker via discussions
-          try {
-            await net.updateDiscussions(task.id, myId, JSON.stringify(content));
-          } catch { /* content is in description as fallback */ }
-
-          teamInfo.handshake_out[peerId] = task.id;
-          handshakesCreated.push(task.id);
-
-          state.updateTask({
-            task_id: task.id,
-            agent_id: myId,
-            role: "initiator",
-            status: task.status,
-            domains: ["team-coordination"],
-            description_summary: `Handshake → ${peerId}`,
-            created_at: new Date().toISOString(),
-          });
+          teamInfo.ack_sent.push(peerId);
+          ackSentTo.push(peerId);
         } catch (e: any) {
-          handshakesCreated.push(`FAILED(${peerId}): ${e.message ?? e}`);
+          failed.push(`${peerId}: ${e.message ?? e}`);
         }
       }
 
       state.addTeam(teamInfo);
-      results.push({ agent_id: myId, handshakes_created: handshakesCreated });
+      results.push({ agent_id: myId, ack_sent_to: ackSentTo, failed });
     }
 
     return ok({
@@ -1619,11 +1537,10 @@ server.tool(
       local_agents: myAgents,
       results,
       next_steps: [
-        "Each agent should now create their operation branch in the git repo.",
-        "When receiving handshake tasks (task_broadcast with _handshake marker), " +
-        "bid with price=0 and confidence=1, then submit_result with {branch: 'your-branch-name', _handshake_ack: true, team_id: '...'}.",
-        "When your handshake tasks get results, select_result to complete the handshake.",
-        "Team is ready when all peer branches are known.",
+        "Create your operation branch in the git repo if you haven't already.",
+        "Call eacn3_team_set_branch to record your branch name.",
+        "Peers will receive your ACK and auto-reply. Call eacn3_team_status to check progress.",
+        "If a peer is unresponsive, use eacn3_team_retry_ack to re-send.",
       ],
     });
   },
@@ -1632,7 +1549,7 @@ server.tool(
 // #43 eacn3_team_status — check team formation progress
 server.tool(
   "eacn3_team_status",
-  "Check the current status of a team: which handshakes are complete, which peer branches are known, and whether the team is ready.",
+  "Check team formation progress: which ACKs have been sent/received, which peer branches are known, and whether the team is ready. If peers are unresponsive, use eacn3_team_retry_ack.",
   {
     team_id: z.string().describe("Team ID from eacn3_team_setup"),
   },
@@ -1641,8 +1558,8 @@ server.tool(
     if (!team) return err(`Team ${params.team_id} not found`);
 
     const peers = team.agent_ids.filter((id) => id !== team.my_agent_id);
-    const handshakes_complete = peers.filter((id) => id in team.peer_branches);
-    const handshakes_pending = peers.filter((id) => !(id in team.peer_branches));
+    const connected = peers.filter((id) => id in team.peer_branches);
+    const pending = peers.filter((id) => !(id in team.peer_branches));
 
     return ok({
       team_id: team.team_id,
@@ -1651,8 +1568,10 @@ server.tool(
       my_agent_id: team.my_agent_id,
       my_branch: team.my_branch ?? null,
       peer_branches: team.peer_branches,
-      handshakes_complete: handshakes_complete,
-      handshakes_pending: handshakes_pending,
+      ack_sent: team.ack_sent,
+      ack_received: team.ack_received,
+      connected,
+      pending,
       ready: team.status === "ready",
     });
   },
@@ -1671,6 +1590,43 @@ server.tool(
     if (!team) return err(`Team ${params.team_id} not found`);
     state.setTeamBranch(params.team_id, params.branch);
     return ok({ team_id: params.team_id, branch: params.branch, message: "Branch recorded" });
+  },
+);
+
+// #45 eacn3_team_retry_ack — re-send ACK to unresponsive peer
+server.tool(
+  "eacn3_team_retry_ack",
+  "Re-send an ACK to a specific peer who hasn't responded yet. Use when eacn3_team_status shows a peer in 'pending'.",
+  {
+    team_id: z.string().describe("Team ID"),
+    peer_id: z.string().describe("Agent ID of the unresponsive peer"),
+  },
+  async (params) => {
+    const team = state.getTeam(params.team_id);
+    if (!team) return err(`Team ${params.team_id} not found`);
+    if (!team.agent_ids.includes(params.peer_id)) {
+      return err(`${params.peer_id} is not a member of team ${params.team_id}`);
+    }
+
+    try {
+      const ack: import("./src/models.js").TeamAck = {
+        _team_ack: true,
+        team_id: team.team_id,
+        git_repo: team.git_repo,
+        from_agent: team.my_agent_id,
+        branch: team.my_branch,
+        team_members: team.agent_ids,
+      };
+      await net.relayMessage({
+        to: { network_id: "", server_id: "", agent_id: params.peer_id },
+        from: { network_id: "", server_id: state.getServerId() ?? "", agent_id: team.my_agent_id },
+        content: JSON.stringify(ack),
+      });
+      state.recordAckSent(team.team_id, params.peer_id);
+      return ok({ team_id: team.team_id, peer_id: params.peer_id, message: "ACK re-sent" });
+    } catch (e: any) {
+      return err(`Failed to send ACK to ${params.peer_id}: ${e.message ?? e}`);
+    }
   },
 );
 
@@ -1790,10 +1746,11 @@ function registerEventCallbacks(): void {
         break;
 
       case "direct_message": {
-        // Another agent sent a direct message — store in session
         const payload = event.payload as Record<string, unknown>;
         const from = payload?.from as string | undefined;
         const content = payload?.content;
+
+        // Store in session
         if (from && content !== undefined) {
           state.addMessage(agentId, {
             from,
@@ -1803,10 +1760,79 @@ function registerEventCallbacks(): void {
             direction: "in",
           });
         }
+
+        // Handle team ACK messages
+        if (from && content) {
+          handleTeamAck(agentId, from, content).catch(() => { /* non-critical */ });
+        }
         break;
       }
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Team ACK handling — auto-reply to incoming ACKs, record peer branches
+// ---------------------------------------------------------------------------
+
+async function handleTeamAck(agentId: string, from: string, rawContent: unknown): Promise<void> {
+  let ack: import("./src/models.js").TeamAck;
+  try {
+    const parsed = typeof rawContent === "string" ? JSON.parse(rawContent) : rawContent;
+    if (!parsed?._team_ack) return; // Not a team ACK
+    ack = parsed as import("./src/models.js").TeamAck;
+  } catch {
+    return; // Not JSON or not an ACK
+  }
+
+  // Record peer's branch if provided
+  if (ack.branch) {
+    state.updateTeamPeerBranch(ack.team_id, from, ack.branch);
+  }
+
+  if (ack.is_reply) {
+    // This is a reply to our ACK — just record it
+    state.recordAckReceived(ack.team_id, from);
+    return;
+  }
+
+  // This is an incoming ACK — we need to reply
+  // First, ensure we have a local team record; create one if this is the first ACK we've seen
+  let team = state.findTeamForAgent(ack.team_id, agentId);
+  if (!team) {
+    const teamInfo: import("./src/models.js").TeamInfo = {
+      team_id: ack.team_id,
+      git_repo: ack.git_repo,
+      agent_ids: ack.team_members,
+      my_agent_id: agentId,
+      peer_branches: {},
+      ack_sent: [],
+      ack_received: [],
+      status: "forming",
+    };
+    if (ack.branch) teamInfo.peer_branches[from] = ack.branch;
+    state.addTeam(teamInfo);
+    team = state.findTeamForAgent(ack.team_id, agentId);
+  }
+
+  // Send reply ACK with our branch info
+  try {
+    const reply: import("./src/models.js").TeamAck = {
+      _team_ack: true,
+      team_id: ack.team_id,
+      git_repo: ack.git_repo,
+      from_agent: agentId,
+      branch: team?.my_branch,
+      team_members: ack.team_members,
+      is_reply: true,
+    };
+    await net.relayMessage({
+      to: { network_id: "", server_id: "", agent_id: from },
+      from: { network_id: "", server_id: state.getServerId() ?? "", agent_id: agentId },
+      content: JSON.stringify(reply),
+    });
+    state.recordAckSent(ack.team_id, from);
+  } catch { /* best-effort reply */ }
 }
 
 // ---------------------------------------------------------------------------
