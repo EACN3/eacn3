@@ -71,6 +71,9 @@ function safeReadJSON<T>(filePath: string): T | null {
 
 let state: EacnState | null = null;
 
+/** Agents owned by THIS process (registered or restored in this session). */
+const ownedAgentIds = new Set<string>();
+
 // ---------------------------------------------------------------------------
 // Server data (shared, rarely written)
 // ---------------------------------------------------------------------------
@@ -276,8 +279,9 @@ export function save(): void {
   if (saving) { saveQueued = true; return; }
   saving = true;
   try {
-    for (const agentId of Object.keys(state.agents)) {
-      saveAgentData(agentId);
+    // Only write files for agents owned by THIS session
+    for (const agentId of ownedAgentIds) {
+      if (state.agents[agentId]) saveAgentData(agentId);
     }
   } finally {
     saving = false;
@@ -309,6 +313,7 @@ export function setState(newState: EacnState): void {
 
 export function addAgent(agent: AgentCard): void {
   getState().agents[agent.agent_id] = agent;
+  ownedAgentIds.add(agent.agent_id);
   save();
 }
 
@@ -346,7 +351,8 @@ export function removeAgent(agentId: string): void {
     }
   }
 
-  // Remove per-agent files
+  // Remove per-agent files and ownership
+  ownedAgentIds.delete(agentId);
   removeAgentFile(agentId);
   agentEvents.delete(agentId);
   const evtFile = eventsFilePath(agentId);
