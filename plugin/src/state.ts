@@ -75,26 +75,21 @@ let state: EacnState | null = null;
 // Server data (shared, rarely written)
 // ---------------------------------------------------------------------------
 
-/** Snapshot of last-written server data, to skip redundant writes. */
-let lastServerJSON = "";
-
 function loadServerData(): ServerData {
-  const data = safeReadJSON<ServerData>(SERVER_FILE) ?? { server_card: null, network_endpoint: "" };
-  lastServerJSON = JSON.stringify(data);
-  return data;
+  return safeReadJSON<ServerData>(SERVER_FILE) ?? { server_card: null, network_endpoint: "" };
 }
 
-function saveServerData(): void {
+/**
+ * Persist server identity to disk. Only call this from eacn3_connect —
+ * server_card and network_endpoint don't change outside of connect.
+ */
+export function saveServerData(): void {
   if (!state) return;
   const data: ServerData = {
     server_card: state.server_card,
     network_endpoint: state.network_endpoint,
   };
-  const json = JSON.stringify(data, null, 2);
-  // Skip write if unchanged — avoids cross-process EBUSY on Windows
-  if (JSON.stringify(data) === lastServerJSON) return;
-  atomicWrite(SERVER_FILE, json);
-  lastServerJSON = JSON.stringify(data);
+  atomicWrite(SERVER_FILE, JSON.stringify(data, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +276,6 @@ export function save(): void {
   if (saving) { saveQueued = true; return; }
   saving = true;
   try {
-    saveServerData();
     for (const agentId of Object.keys(state.agents)) {
       saveAgentData(agentId);
     }

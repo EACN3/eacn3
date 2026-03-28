@@ -407,7 +407,7 @@ export default {
         sid = res.server_id;
         s.server_card = { server_id: sid, version: "0.5.0", endpoint: "plugin://local", owner: "plugin-user", status: "online" };
       }
-      state.save();
+      state.saveServerData();
       startHeartbeat();
 
       // Re-register agents on network if needed; mark them for on-demand event fetching
@@ -442,7 +442,7 @@ export default {
       // Do NOT call unregisterServer — it cascade-deletes all agents on the network side.
       const s = state.getState();
       if (s.server_card) s.server_card.status = "offline";
-      state.save();
+      state.saveServerData();
       return ok({ disconnected: true });
     },
   });

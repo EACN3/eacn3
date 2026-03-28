@@ -196,7 +196,7 @@ server.tool(
         status: "online",
       };
     }
-    state.save();
+    state.saveServerData();
 
     // Start background heartbeat
     startHeartbeat();
@@ -265,7 +265,7 @@ server.tool(
     if (s.server_card) {
       s.server_card.status = "offline";
     }
-    state.save();
+    state.saveServerData();
 
     return ok({ disconnected: true });
   },
