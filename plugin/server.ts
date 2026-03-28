@@ -1463,9 +1463,9 @@ server.tool(
 server.tool(
   "eacn3_team_setup",
   "Form a team of agents around a shared git repo. " +
-  "Creates a 0-budget handshake task (5-min deadline) for each peer. " +
-  "Peers auto-bid and auto-reply with their branch name; results are auto-selected. " +
-  "No manual steps needed — just call eacn3_team_status to check progress, or eacn3_team_retry_ack to poke unresponsive peers.",
+  "Creates handshake tasks (0-budget, 5-min deadline) to exchange branch info with each peer. " +
+  "Peers auto-bid and auto-reply; handshake is purely for branch exchange. " +
+  "After team is ready, use eacn3_create_task with team_id to publish work for the team.",
   {
     agent_ids: z.array(z.string()).min(2).describe("Agent IDs to form a team"),
     git_repo: z.string().describe("Git repo URL for recording operations"),
