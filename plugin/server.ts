@@ -201,7 +201,7 @@ server.tool(
     // Start background heartbeat
     startHeartbeat();
 
-    // Reconnect WS for all existing agents; re-register if network lost them
+    // Re-register agents on network if needed; mark them for on-demand event fetching
     for (const agent of Object.values(s.agents)) {
       try {
         await net.getAgentInfo(agent.agent_id);
@@ -254,7 +254,7 @@ server.tool(
 // #2 eacn3_disconnect
 server.tool(
   "eacn3_disconnect",
-  "Disconnect from the EACN3 network and stop event polling. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
+  "Disconnect from the EACN3 network. Requires: eacn3_connect first. Side effects: active tasks will timeout and hurt reputation. Server identity and agent registrations are preserved — on next eacn3_connect they will be automatically reconnected. Returns {disconnected: true}. Only call at end of session.",
   {},
   async () => {
     stopHeartbeat();
@@ -387,7 +387,7 @@ server.tool(
     // Persist locally
     state.addAgent(card);
 
-    // Start polling for push events
+    // Register agent for on-demand event fetching
     ws.connect(agentId);
 
     // Configure reverse control for this agent
@@ -495,7 +495,7 @@ server.tool(
 // #8 eacn3_unregister_agent
 server.tool(
   "eacn3_unregister_agent",
-  "Remove an agent from the network and stop its event polling. Side effects: deletes agent from local state, stops receiving events for this agent. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
+  "Remove an agent from the network. Side effects: deletes agent from local state. Active tasks assigned to this agent will timeout and hurt reputation. Returns {unregistered: true, agent_id}.",
   {
     agent_id: z.string(),
   },
@@ -517,7 +517,7 @@ server.tool(
 // #9 eacn3_list_my_agents
 server.tool(
   "eacn3_list_my_agents",
-  "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and polling_active (event polling status). No network call — reads local state only. Use to check which agents are active and receiving events.",
+  "List all agents registered on this local server instance. Returns {count, agents[]} where each agent includes agent_id, name, domains, tier, and registered status. No network call — reads local state only. Use to check which agents are active.",
   {},
   async () => {
     const agents = state.listAgents();
@@ -1240,13 +1240,16 @@ server.tool(
 // #34 eacn3_get_events
 server.tool(
   "eacn3_get_events",
-  "Drain the in-memory event buffer for a specific agent, returning its pending events and clearing them. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details. Call periodically in your main loop.",
+  "Fetch pending events from the network for a specific agent, plus any locally buffered synthetic events. Returns {count, events[], reverse_control} where event types include: task_broadcast, bid_request_confirmation, bid_result, discussion_update, subtask_completed, task_collected, task_timeout, adjudication_task, direct_message. With reverse_control enabled, high-priority events may already have been handled via LLM sampling — check reverse_control.status for details.",
   {
     agent_id: z.string().optional().describe("Agent ID to drain events for (auto-injected if omitted)"),
   },
   async (params) => {
     const agentId = resolveAgentId(params.agent_id);
-    const events = state.drainEvents(agentId);
+    // Fetch from network (non-blocking) + drain local synthetic events
+    const networkEvents = await ws.fetchEvents(agentId, 0);
+    const localEvents = state.drainEvents(agentId);
+    const events = [...networkEvents, ...localEvents];
     return ok({
       count: events.length,
       events,
@@ -1255,10 +1258,10 @@ server.tool(
   },
 );
 
-// #39 eacn3_await_events — long-polling reverse control
+// #39 eacn3_await_events — on-demand long-polling
 server.tool(
   "eacn3_await_events",
-  "Block until a network event arrives or timeout expires, then return with the event AND a suggested action. This is the reverse-control mechanism when MCP sampling is unavailable (e.g. OpenClaw). Instead of polling eacn3_get_events in a loop, call this — it waits for the network to push something, then tells you exactly what to do. Returns {event, suggested_action, suggested_tool, suggested_params, urgency} per event, or {timeout: true}. Prefer this over eacn3_get_events for reactive agent loops.",
+  "Fetch events from the network with a configurable wait time. First checks locally buffered synthetic events, then does a single long-poll to the network. Returns {event, suggested_action, suggested_tool, suggested_params, urgency} per event, or {timeout: true}. Prefer this over eacn3_get_events for reactive agent loops.",
   {
     agent_id: z.string().optional().describe("Agent ID to await events for (auto-injected if omitted)"),
     timeout_seconds: z.number().optional().describe("Max seconds to wait (1-120). Default 30."),
@@ -1269,26 +1272,32 @@ server.tool(
     const timeoutSec = Math.min(Math.max(params.timeout_seconds ?? 30, 1), 120);
     const filterTypes = params.event_types;
 
-    // Check immediate buffered events
+    // Check locally buffered synthetic events first
     const immediate = drainMatchingEvents(agentId, filterTypes);
     if (immediate.length > 0) {
       return ok(buildAwaitResponse(immediate));
     }
 
-    // Long-poll
-    const result = await new Promise<import("./src/models.js").PushEvent[]>((resolve) => {
-      const deadline = setTimeout(() => { cleanup(); resolve([]); }, timeoutSec * 1000);
-      const poll = setInterval(() => {
-        const events = drainMatchingEvents(agentId, filterTypes);
-        if (events.length > 0) { cleanup(); resolve(events); }
-      }, 500);
-      function cleanup() { clearTimeout(deadline); clearInterval(poll); }
-    });
+    // Single long-poll to network with the agent's requested timeout
+    const networkEvents = await ws.fetchEvents(agentId, timeoutSec);
+    const localAfter = drainMatchingEvents(agentId, filterTypes);
+    const all = [...networkEvents, ...localAfter];
 
-    if (result.length === 0) {
+    // Filter by event types if specified
+    const filtered = filterTypes && filterTypes.length > 0
+      ? all.filter((e) => filterTypes.includes(e.type))
+      : all;
+
+    // Put back non-matching events
+    if (filterTypes && filterTypes.length > 0) {
+      const remaining = all.filter((e) => !filterTypes.includes(e.type));
+      if (remaining.length > 0) state.pushEvents(agentId, remaining);
+    }
+
+    if (filtered.length === 0) {
       return ok({ timeout: true, waited_seconds: timeoutSec, hint: "No events arrived. Call again to keep waiting, or proceed with other work." });
     }
-    return ok(buildAwaitResponse(result));
+    return ok(buildAwaitResponse(filtered));
   },
 );
 
@@ -1410,7 +1419,10 @@ server.tool(
   },
   async (params) => {
     const agentId = resolveAgentId(params.agent_id);
-    const events = state.drainEvents(agentId);
+    // Fetch from network (non-blocking) + drain local synthetic events
+    const networkEvents = await ws.fetchEvents(agentId, 0);
+    const localEvents = state.drainEvents(agentId);
+    const events = [...networkEvents, ...localEvents];
 
     if (events.length === 0) {
       // Build context-aware prompts based on agent's current task state
