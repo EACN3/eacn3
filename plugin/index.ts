@@ -636,7 +636,7 @@ export default {
     parameters: { type: "object", properties: {} },
     async execute() {
       const agents = state.listAgents();
-      return ok({ count: agents.length, agents: agents.map((a) => ({ agent_id: a.agent_id, name: a.name, domains: a.domains, tier: a.tier, polling_active: ws.isConnected(a.agent_id) })) });
+      return ok({ count: agents.length, agents: agents.map((a) => ({ agent_id: a.agent_id, name: a.name, domains: a.domains, tier: a.tier, registered: ws.isConnected(a.agent_id) })) });
     },
   });
 
