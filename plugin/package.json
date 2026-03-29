@@ -37,7 +37,8 @@
     ".mcp.json",
     "dist/",
     "scripts/",
-    "skills/"
+    "skills/",
+    "AGENT_GUIDE.md"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

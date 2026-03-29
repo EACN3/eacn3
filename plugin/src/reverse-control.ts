@@ -169,7 +169,7 @@ export async function handleEvent(agentId: string, event: PushEvent): Promise<bo
       return await handleViaSampling(agentId, event);
 
     case "notification":
-      return handleViaNotification(agentId, event);
+      return await handleViaNotification(agentId, event);
 
     case "auto_action":
       return await handleViaAutoAction(agentId, event, policy.autoAction);
@@ -508,14 +508,14 @@ async function executeDecision(
 // Notifications
 // ---------------------------------------------------------------------------
 
-function handleViaNotification(agentId: string, event: PushEvent): boolean {
+async function handleViaNotification(agentId: string, event: PushEvent): Promise<boolean> {
   if (!mcpServer) return false;
 
   try {
     markProcessed(event.msg_id);
 
     // Send a custom notification to the client
-    (mcpServer as any).notification({
+    await (mcpServer as any).notification({
       method: "notifications/message",
       params: {
         level: event.type === "task_timeout" ? "warning" : "info",

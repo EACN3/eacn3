@@ -13,6 +13,8 @@ const os = require('os');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
 const PLUGIN_ID = 'eacn3';
+const IS_WIN = process.platform === 'win32';
+const NPX_CMD = IS_WIN ? 'npx.cmd' : 'npx';
 const EXT_DIR = path.join(os.homedir(), '.openclaw', 'extensions', PLUGIN_ID);
 const CONFIG_PATH = path.join(os.homedir(), '.openclaw', 'openclaw.json');
 
@@ -314,7 +316,7 @@ function setupOpenclaw() {
     source: 'path',
     sourcePath: PKG_ROOT,
     installPath: EXT_DIR,
-    version: pkg.version || '0.5.0',
+    version: pkg.version || '0.5.1',
     installedAt: new Date().toISOString()
   };
   ok('plugins.installs: metadata recorded');
@@ -345,7 +347,7 @@ function setupOpenclaw() {
 
 function setupClaudeCode(scope) {
   console.log('\neacn3 setup — Claude Code\n');
-  const serverJs = ensureBuild();
+  ensureBuild();
 
   let configPath;
   if (scope === 'global') {
@@ -358,8 +360,8 @@ function setupClaudeCode(scope) {
   if (!config.mcpServers) config.mcpServers = {};
   config.mcpServers.eacn3 = {
     type: 'stdio',
-    command: 'node',
-    args: [serverJs],
+    command: NPX_CMD,
+    args: ['eacn3', 'serve'],
   };
 
   writeJSON(configPath, config);
@@ -381,7 +383,7 @@ function setupClaudeCode(scope) {
 
 function setupCursor(scope) {
   console.log('\neacn3 setup — Cursor\n');
-  const serverJs = ensureBuild();
+  ensureBuild();
 
   let configPath;
   if (scope === 'global') {
@@ -393,8 +395,8 @@ function setupCursor(scope) {
   const config = readJSON(configPath);
   if (!config.mcpServers) config.mcpServers = {};
   config.mcpServers.eacn3 = {
-    command: 'node',
-    args: [serverJs],
+    command: NPX_CMD,
+    args: ['eacn3', 'serve'],
   };
 
   writeJSON(configPath, config);
@@ -415,7 +417,7 @@ function setupCursor(scope) {
 
 function setupCodex(scope) {
   console.log('\neacn3 setup — Codex\n');
-  const serverJs = ensureBuild();
+  ensureBuild();
 
   let configPath;
   if (scope === 'global') {
@@ -437,8 +439,8 @@ function setupCodex(scope) {
   const block = [
     '',
     '[mcp_servers.eacn3]',
-    `command = "node"`,
-    `args = [${JSON.stringify(serverJs)}]`,
+    `command = "${NPX_CMD}"`,
+    `args = ["eacn3", "serve"]`,
     'enabled = true',
     '',
   ].join('\n');
@@ -547,12 +549,13 @@ async function clusterStatus(endpoint) {
 
 function showHelp() {
   console.log(`
-eacn3 — EACN3 network plugin CLI (v${readJSON(path.join(PKG_ROOT, 'package.json')).version || '0.5.0'})
+eacn3 — EACN3 network plugin CLI (v${readJSON(path.join(PKG_ROOT, 'package.json')).version || '0.5.1'})
 
 Usage:
   eacn3 <command> [target] [options]
 
 Commands:
+  serve                Start the MCP stdio server (used by client configs)
   setup [target]       Install plugin for a specific client
   diagnose | doctor    Run full diagnostics on plugin installation
   health [endpoint]    Probe a network node's /health endpoint
@@ -584,6 +587,20 @@ const DEFAULT_ENDPOINT = process.env.EACN3_NETWORK_URL || 'https://network.eacn3
 const cmd = process.argv[2];
 
 switch (cmd) {
+  case 'serve':
+  case 'server':
+  case 'start': {
+    // Launch the MCP stdio server — used by MCP client configs
+    const serverJs = path.join(PKG_ROOT, 'dist', 'server.js');
+    if (!fs.existsSync(serverJs)) {
+      console.error('dist/server.js not found — run "npm run build" first');
+      process.exit(1);
+    }
+    const { execFileSync: run } = require('child_process');
+    try { run(process.execPath, [serverJs], { stdio: 'inherit' }); }
+    catch (e) { process.exit(e.status || 1); }
+    break;
+  }
   case 'setup':
     setupRouter();
     break;

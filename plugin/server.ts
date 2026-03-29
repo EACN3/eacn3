@@ -16,6 +16,26 @@ import * as net from "./src/network-client.js";
 import * as transport from "./src/event-transport.js";
 import * as a2a from "./src/a2a-server.js";
 import * as rc from "./src/reverse-control.js";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// ---------------------------------------------------------------------------
+// Activity log — file-based traceability
+// ---------------------------------------------------------------------------
+
+const __log_dir = join(dirname(fileURLToPath(import.meta.url)), "..", "logs");
+let __activity_log: string | null = null;
+
+function _writeActivityLog(line: string) {
+  try {
+    if (!__activity_log) {
+      mkdirSync(__log_dir, { recursive: true });
+      __activity_log = join(__log_dir, "activity.log");
+    }
+    appendFileSync(__activity_log, line + "\n");
+  } catch {}
+}
 
 // ---------------------------------------------------------------------------
 // Helper: MCP text result
@@ -41,16 +61,20 @@ function err(message: string) {
   return { content: [{ type: "text" as const, text: JSON.stringify({ error: message }) }] };
 }
 
-/** Log MCP tool calls to stderr for traceability. */
+/** Log MCP tool calls to stderr AND activity.log for traceability. */
 function logToolCall(toolName: string, params: Record<string, unknown>) {
   const ts = new Date().toISOString();
-  console.error(`[MCP] ${ts} CALL ${toolName} params=${JSON.stringify(params)}`);
+  const line = `[MCP] ${ts} CALL ${toolName} params=${JSON.stringify(params)}`;
+  console.error(line);
+  _writeActivityLog(line);
 }
 
 function logToolResult(toolName: string, success: boolean, detail?: string) {
   const ts = new Date().toISOString();
   const tag = success ? "OK" : "ERR";
-  console.error(`[MCP] ${ts} ${tag}  ${toolName}${detail ? ` ${detail}` : ""}`);
+  const line = `[MCP] ${ts} ${tag}  ${toolName}${detail ? ` ${detail}` : ""}`;
+  console.error(line);
+  _writeActivityLog(line);
 }
 
 /**
@@ -130,11 +154,11 @@ async function autoReconnect(): Promise<void> {
     } catch { /* still failing */ }
 
     // Re-register server
-    const res = await net.registerServer("0.5.0", "plugin://local", "plugin-user");
+    const res = await net.registerServer("0.5.1", "plugin://local", "plugin-user");
     const newSid = res.server_id;
     s.server_card = {
       server_id: newSid,
-      version: "0.5.0",
+      version: "0.5.1",
       endpoint: "plugin://local",
       owner: "plugin-user",
       status: "online",
@@ -198,7 +222,9 @@ function stopHeartbeat(): void {
 // MCP Server
 // ---------------------------------------------------------------------------
 
-const server = new McpServer({ name: "eacn3", version: "0.5.0" });
+const server = new McpServer({ name: "eacn3", version: "0.5.1" }, {
+  capabilities: { logging: {} },
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Health / Cluster (2)
@@ -212,11 +238,14 @@ server.tool(
     endpoint: z.string().optional().describe("Node URL to probe. Defaults to configured network endpoint."),
   },
   async (params) => {
+    logToolCall("eacn3_health", params as Record<string, unknown>);
     const target = params.endpoint ?? state.getState().network_endpoint;
     try {
       const health = await net.checkHealth(target);
+      logToolResult("eacn3_health", true);
       return ok({ endpoint: target, ...health });
     } catch (e) {
+      logToolResult("eacn3_health", false, (e as Error).message);
       return err(`Health check failed for ${target}: ${(e as Error).message}`);
     }
   },
@@ -278,11 +307,11 @@ server.tool(
         s.server_card.status = "online";
       } catch {
         // Server no longer known to network — re-register
-        const res = await net.registerServer("0.5.0", "plugin://local", "plugin-user");
+        const res = await net.registerServer("0.5.1", "plugin://local", "plugin-user");
         sid = res.server_id;
         s.server_card = {
           server_id: sid,
-          version: "0.5.0",
+          version: "0.5.1",
           endpoint: "plugin://local",
           owner: "plugin-user",
           status: "online",
@@ -294,11 +323,11 @@ server.tool(
         }
       }
     } else {
-      const res = await net.registerServer("0.5.0", "plugin://local", "plugin-user");
+      const res = await net.registerServer("0.5.1", "plugin://local", "plugin-user");
       sid = res.server_id;
       s.server_card = {
         server_id: sid,
-        version: "0.5.0",
+        version: "0.5.1",
         endpoint: "plugin://local",
         owner: "plugin-user",
         status: "online",
@@ -2172,10 +2201,6 @@ async function autoBidEvaluate(agentId: string, event: PushEvent): Promise<void>
 // ---------------------------------------------------------------------------
 // Global crash handlers — log to file so post-mortem is possible
 // ---------------------------------------------------------------------------
-
-import { appendFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 
 const __crash_dir = join(dirname(fileURLToPath(import.meta.url)), "..", "logs");
 
