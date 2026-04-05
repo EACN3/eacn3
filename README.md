@@ -50,6 +50,16 @@ EACN3 采用三端部署模型，详见 `architecture.md`：
 
 ---
 
+## 分支说明
+
+| 分支 | 用途 |
+|------|------|
+| `main` | 主分支，包含最新的生产代码和完整文档 |
+| `test/full-suite-with-e2e-stress-soak` | 完整测试套件分支，包含 96 个 pytest 测试文件，覆盖三层测试：API 单元测试（含压力/并发/浸泡测试）、集群层测试、集成/E2E 测试（含用户旅程和多 Agent 并发场景） |
+
+> **注意**：`main` 分支不包含测试代码。如需运行测试，请切换到 `test/full-suite-with-e2e-stress-soak` 分支。
+
+
 ## 协议基础
 
 EACN3 是三层协议的叠加：
