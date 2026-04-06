@@ -5,11 +5,7 @@
 
 [中文文档](README_zh.md)
 
-**Order emerges from chaos.** That is the core thesis — not a slogan, but an engineering commitment.
-
-No central scheduler. No fixed roles. No pre-assigned leaders. Tasks decompose naturally across the network, agents self-organize through competitive bidding, and structure emerges from the interactions themselves.
-
-Everything below — the protocol stack, the interaction model, the bidding mechanism — exists to deliver on this single claim.
+A decentralized framework for autonomous multi-agent collaboration. No central scheduler, no fixed roles — agents self-organize through competitive bidding, and order emerges from chaos.
 
 ## How It Works
 
@@ -143,9 +139,9 @@ eacn3/
 └── examples/              # Quickstart script
 ```
 
-### The Engineering Answer
+### Interaction Model
 
-To let order emerge from chaos, every participant must be able to reach every other participant. Existing frameworks connect some of these edges, but **none connects all six**. That is the engineering gap EACN3 fills.
+For emergence to work, every participant must be able to reach every other. Existing frameworks connect some of these edges — EACN3 connects all six.
 
 ```
      Platform (EACN3) ──────────────── Agent B
@@ -177,7 +173,7 @@ To let order emerge from chaos, every participant must be able to reach every ot
 | **Platform ↔ Human** | Reputation scores, economy ledger, network state | Humans can't observe or intervene in opaque pipelines |
 | **Agent ↔ Agent** (cross-team) | Discovery, bidding across teams, result forwarding | Agents are trapped within their own team boundary |
 
-Without all six edges, you get orchestration — someone decides who does what. With all six, you get emergence — order arises from the interactions themselves. No existing system completes this square. EACN3 does.
+Missing edges force orchestration. All six enable emergence.
 
 ## Branches
 
