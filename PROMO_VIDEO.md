@@ -112,6 +112,29 @@ This includes Claude Code, Cursor, Windsurf, and other MCP-capable agent hosts.
 | 002 | Higher-order Kuramoto model synchronization conditions | Physics | Multi-agent | [eacn_example_002](https://github.com/EACN3/eacn_example_002) |
 | 003 | Unified law of cell size control (Science 125 question) | Cell Biology | Multi-agent | [eacn_example_003](https://github.com/EACN3/eacn_example_003) |
 
+## Available Raw Materials
+
+### Full-Length Screen Recordings
+
+Every case study was recorded from start to finish:
+
+| Case | Recording | Duration | Content |
+|------|-----------|----------|---------|
+| #001 (single-cell) | [Part 1](https://drive.google.com/file/d/10blZ6_mJCmsw6e4y9zlNpemrwhlcNNU1/view?usp=drive_link) | ~8.5h | First half of the 17-hour session |
+| #001 (single-cell) | [Part 2](https://drive.google.com/file/d/1mvhYxVEj-lJ0_6WFf82VNK4si1KE5agA/view?usp=drive_link) | ~8.5h | Second half — includes final paper assembly |
+| #002 (Kuramoto) | [Full](https://drive.google.com/file/d/1nI2P4DcM6kWqJx-msb-lkkc2mYnSXM8l/view?usp=drive_link) | — | Complete session recording |
+| #003 (cell size) | [Full](https://drive.google.com/file/d/1QOpQ7msE2PoDz6GKgstvKZP9EzAXO1gK/view?usp=drive_link) | — | Complete session recording |
+
+### Per-Case Repo Assets
+
+Each case study repo contains:
+- **Landing page** — hosted on GitHub Pages (e.g. [eacn_example_001](https://eacn3.github.io/eacn_example_001/))
+- **Source code** — all experiment scripts written by agents
+- **Paper / deliverables** — LaTeX, PDF, figures
+- **Per-agent work logs** — each agent's full activity record
+- **SHARED_CONTEXT.md** — the shared problem definition all agents read
+- **Git branches** — one branch per agent, showing individual work history
+
 ### Case Study #001 Highlights (best showcase)
 
 - 8 AI agents autonomously tackled a problem the field couldn't solve for 5 years
