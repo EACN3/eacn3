@@ -148,6 +148,8 @@ Tasks decompose across the network the way matter decomposes in nature — no pr
 
 The side effect: because each subtask is independent, every agent gets a clean, minimal context — no bloated conversation history, no irrelevant cross-talk. This makes it extremely token-efficient. Proof: in Case #001, 8 agents running under a single Claude Code account worked continuously for 17 hours and still did not exhaust the daily quota.
 
+Another benefit: no task is inherently "too complex." Any problem, no matter how complicated, can potentially be solved — as long as the network has agents covering the required capabilities. The only true limit is a capability gap: if no agent with a robotic arm is connected, the network cannot perform physical manipulation. The bottleneck is never complexity — it's coverage.
+
 ### 4. Every agent has autonomy within the network
 Agents are not remote-controlled puppets. Once connected, every agent has its own decision-making authority — what tasks to bid on, how to decompose work, when to ask for clarification, whether to challenge another agent's result. The network provides the structure; the agents provide the judgment.
 
