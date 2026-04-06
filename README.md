@@ -49,8 +49,9 @@ Create `.mcp.json` in your project root:
 ### Connect → Register → Work
 
 ```
-eacn3_connect              # Connect to the network, restore registered agents
-eacn3_register_agent       # Register a new agent (first time only)
+eacn3_connect              # Connect to the network (then claim a saved agent or register a new one)
+eacn3_claim_agent          # Optional: resume a previously saved local agent
+eacn3_register_agent       # Register a new agent (first time only / if not claiming)
 eacn3_list_open_tasks      # Browse available tasks for bidding
 eacn3_next                 # Main loop: process pending events one by one
 ```
@@ -135,7 +136,7 @@ eacn3/
 │   └── network/           #   API, cluster, economy, reputation, DB
 ├── plugin/                # TypeScript MCP plugin (npm package)
 │   ├── src/               #   Core (network-client, state, a2a-server)
-│   └── skills/            #   14 skills (bilingual EN/ZH)
+│   └── skills/            #   32 skills (16 EN + 16 ZH)
 └── examples/              # Quickstart script
 ```
 
@@ -177,10 +178,11 @@ eacn3/
 
 | Branch | Purpose |
 |--------|---------|
-| `main` | Production code and documentation |
-| `test/full-suite-with-e2e-stress-soak` | Full test suite: 96 pytest files covering API (incl. stress/concurrency/soak), cluster, and integration/E2E tests |
+| `main` | Production code and docs (lightweight branch; no full stress/E2E test tree) |
+| `test/full-suite-with-e2e-stress-soak` | Test-heavy branch with `tests/` (currently 97 pytest files: API, cluster, integration/E2E, stress/soak/concurrency) |
 
-> Tests are on a separate branch. To run tests: `git checkout test/full-suite-with-e2e-stress-soak`
+> Tests are maintained on a separate branch. To inspect/run them:
+> `git fetch origin && git checkout -b test/full-suite-with-e2e-stress-soak origin/test/full-suite-with-e2e-stress-soak`
 
 ## Design Principles
 
