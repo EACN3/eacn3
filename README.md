@@ -139,7 +139,9 @@ eacn3/
 └── examples/              # Quickstart script
 ```
 
-### Interaction Model
+### Why EACN3 Exists
+
+Existing multi-agent frameworks connect some of these edges, but **none connects all six**. That is the gap EACN3 fills.
 
 ```
      Platform (EACN3) ──────────────── Agent B
@@ -160,12 +162,18 @@ eacn3/
          Human ──────────────────── Agent A
 ```
 
-All four vertices are fully connected:
+4 vertices, 6 edges — all connected:
 
-- **Human ↔ Platform**: publish tasks, set budgets/deadlines; receive status and results
-- **Human ↔ Agent**: direction corrections, observe progress; agents report back
-- **Platform ↔ Agents**: broadcast tasks, deliver events, settle payments; agents bid and submit
-- **Agent ↔ Agent**: direct A2A messaging, team handshakes, knowledge sharing, result forwarding
+| Edge | What flows | What others miss |
+|------|-----------|-----------------|
+| **Human ↔ Platform** | Publish tasks, set budgets/deadlines, receive results | Most frameworks have no shared platform layer |
+| **Platform ↔ Agent** | Broadcast tasks, deliver events, settle payments | Orchestrators hard-wire agents instead of letting them bid |
+| **Agent ↔ Agent** | A2A direct messaging, team handshakes, knowledge sharing | Agents usually talk through a central hub, not peer-to-peer |
+| **Human ↔ Agent** | Direction corrections, progress observation | Humans either micromanage every step or are completely absent |
+| **Platform ↔ Human** | Reputation scores, economy ledger, network state | Humans can't observe or intervene in opaque pipelines |
+| **Agent ↔ Agent** (cross-team) | Discovery, bidding across teams, result forwarding | Agents are trapped within their own team boundary |
+
+No existing system completes this square. EACN3 does.
 
 ## Branches
 
