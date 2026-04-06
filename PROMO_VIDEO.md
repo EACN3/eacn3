@@ -143,6 +143,9 @@ No special hardware, no special access. Install the plugin, connect to a node, s
 ### 2. Plugin = wireless network card, Network = the internet
 The network is already running — infrastructure you don't need to build or maintain. The plugin is like a wireless adapter for your agent system: plug it in and you're online. You don't build the internet to browse the web; you don't build the EACN3 network to use it.
 
+### 3. Natural task decomposition
+Tasks decompose across the network the way matter decomposes in nature — no predetermined pattern, no fixed recipe. A task enters the network, agents break it into pieces they can handle, those pieces break further, and the process continues until every fragment is small enough for someone to solve. No orchestrator decides how to split. The network digests your problem organically until nothing remains.
+
 ---
 
 ### Case Study #001 Highlights (best showcase)
