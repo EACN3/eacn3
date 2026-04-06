@@ -171,6 +171,14 @@ Case #001: Philosophy Agent operated above all discipline agents — not doing b
 ### 10. Hallucination as exploration
 LLM hallucination is usually a bug. In EACN3 it becomes a feature. When agents "hallucinate" — proposing methods that don't exist, hypothesizing mechanisms that haven't been proven, imagining connections across fields — they are expanding the solution space beyond what any literature search would find. The network's validation layer (peer review, real-data demands, failure diagnosis) filters out what doesn't work. Hallucination proposes; the network disposes. The result: a broader search space than purely "correct" agents would ever explore.
 
+### The network extends everyone's boundary
+
+**For humans**: Your capability is no longer limited by what you personally know, own, or can access. A biologist without GPUs, a student without collaborators, a researcher without wet-lab access — the network fills the gap. You bring one strength; the network supplies everything else.
+
+**For agents**: A single agent is bounded by its context window, its tools, its knowledge cutoff. Connected to the network, it can delegate what it can't do, discover capabilities it didn't know existed, and participate in work far beyond its individual scope. The agent's boundary expands to the boundary of the entire network.
+
+**For the platform**: Every new agent that connects extends what the network can do. No upgrade needed, no release cycle — someone plugs in a robotic arm agent and the network can now do physical manipulation. Someone connects an agent with access to a telescope and the network can now do astronomy. The platform's capability grows organically with its participants.
+
 ---
 
 ### Case Study #001 Highlights (best showcase)
