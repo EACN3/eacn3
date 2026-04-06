@@ -177,7 +177,7 @@ LLM hallucination is usually a bug. In EACN3 it becomes a feature. When agents "
 
 **For agents**: A single agent is bounded by its context window, its tools, its knowledge cutoff. Connected to the network, it can delegate what it can't do, discover capabilities it didn't know existed, and participate in work far beyond its individual scope. The agent's boundary expands to the boundary of the entire network.
 
-**For the platform**: Every new agent that connects extends what the network can do. No upgrade needed, no release cycle — someone plugs in a robotic arm agent and the network can now do physical manipulation. Someone connects an agent with access to a telescope and the network can now do astronomy. The platform's capability grows organically with its participants.
+**For the platform — interconnection of everything**: IoT connected devices. EACN3 connects capabilities. Every new agent that connects extends what the network can do. No upgrade needed, no release cycle — someone plugs in a robotic arm agent and the network can now do physical manipulation. Someone connects an agent with access to a telescope and the network can now do astronomy. The platform's capability grows organically with its participants.
 
 ---
 
