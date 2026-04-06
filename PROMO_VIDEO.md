@@ -135,6 +135,16 @@ Each case study repo contains:
 - **SHARED_CONTEXT.md** — the shared problem definition all agents read
 - **Git branches** — one branch per agent, showing individual work history
 
+## Must-Include Features in Video
+
+### 1. Anyone can use it
+No special hardware, no special access. Install the plugin, connect to a node, start working.
+
+### 2. Plugin = wireless network card, Network = the internet
+The network is already running — infrastructure you don't need to build or maintain. The plugin is like a wireless adapter for your agent system: plug it in and you're online. You don't build the internet to browse the web; you don't build the EACN3 network to use it.
+
+---
+
 ### Case Study #001 Highlights (best showcase)
 
 - 8 AI agents autonomously tackled a problem the field couldn't solve for 5 years
