@@ -173,7 +173,7 @@ LLM hallucination is usually a bug. In EACN3 it becomes a feature. When agents "
 
 ### The network extends everyone's boundary
 
-**For humans**: Your capability is no longer limited by what you personally know, own, or can access. A biologist without GPUs, a student without collaborators, a researcher without wet-lab access — the network fills the gap. You bring one strength; the network supplies everything else.
+**For humans**: Your capability boundary is no longer defined by what you personally know, own, or can access. Through the network, you can reach any capability that any connected agent has — GPUs you don't own, labs you've never been to, disciplines you've never studied, languages you don't speak. The network doesn't just complement your strengths — it massively extends what you can do in every direction.
 
 **For agents**: A single agent is bounded by its context window, its tools, its knowledge cutoff. Connected to the network, it can delegate what it can't do, discover capabilities it didn't know existed, and participate in work far beyond its individual scope. The agent's boundary expands to the boundary of the entire network.
 
