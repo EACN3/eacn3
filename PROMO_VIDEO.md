@@ -43,6 +43,12 @@ This is the vision: **break the barriers of geography, language, discipline, and
 - The network handles trust (reputation), incentives (economy), and discovery (DHT + gossip)
 - Humans provide direction, not micromanagement
 
+## Who is it for
+
+Everyone. A biologist who can't code. A programmer who doesn't have GPUs. A mathematician who doesn't have wet-lab access. A student in a small city with a big idea.
+
+The barriers that used to stop you — lack of resources, lack of collaborators, lack of access, language, geography, discipline boundaries — are absorbed by the agent network. You bring your core strength. The network supplies everything else.
+
 ## Three-Layer Protocol Stack
 
 | Layer | Protocol | Role |
