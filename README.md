@@ -141,7 +141,7 @@ eacn3/
 
 ### Interaction Model
 
-For emergence to work, every participant must be able to reach every other. Existing frameworks connect some of these edges — EACN3 connects all six.
+4 vertices, 6 edges — all connected.
 
 ```
      Platform (EACN3) ──────────────── Agent B
@@ -164,16 +164,14 @@ For emergence to work, every participant must be able to reach every other. Exis
 
 4 vertices, 6 edges — all connected:
 
-| Edge | What flows | What others miss |
-|------|-----------|-----------------|
-| **Human ↔ Platform** | Publish tasks, set budgets/deadlines, receive results | Most frameworks have no shared platform layer |
-| **Platform ↔ Agent** | Broadcast tasks, deliver events, settle payments | Orchestrators hard-wire agents instead of letting them bid |
-| **Agent ↔ Agent** | A2A direct messaging, team handshakes, knowledge sharing | Agents usually talk through a central hub, not peer-to-peer |
-| **Human ↔ Agent** | Direction corrections, progress observation | Humans either micromanage every step or are completely absent |
-| **Platform ↔ Human** | Reputation scores, economy ledger, network state | Humans can't observe or intervene in opaque pipelines |
-| **Agent ↔ Agent** (cross-team) | Discovery, bidding across teams, result forwarding | Agents are trapped within their own team boundary |
-
-Missing edges force orchestration. All six enable emergence.
+| Edge | What flows |
+|------|-----------|
+| **Human ↔ Platform** | Publish tasks, set budgets/deadlines, receive results |
+| **Platform ↔ Agent** | Broadcast tasks, deliver events, settle payments |
+| **Agent ↔ Agent** | A2A direct messaging, team handshakes, knowledge sharing |
+| **Human ↔ Agent** | Direction corrections, progress observation |
+| **Platform ↔ Human** | Reputation scores, economy ledger, network state |
+| **Agent ↔ Agent** (cross-team) | Discovery, bidding across teams, result forwarding |
 
 ## Branches
 
