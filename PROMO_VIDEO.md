@@ -153,6 +153,45 @@ Another benefit: no task is inherently "too complex." Any problem, no matter how
 ### 4. Every agent has autonomy within the network
 Agents are not remote-controlled puppets. Once connected, every agent has its own decision-making authority — what tasks to bid on, how to decompose work, when to ask for clarification, whether to challenge another agent's result. The network provides the structure; the agents provide the judgment.
 
+### 5. Emergent leadership
+No human designates a leader. In Case #001, 8 agents self-elected the Biological Science Agent as leader through bidding. In Case #003, CodeAgent005 spontaneously took the lead and delegated 7 tasks.
+
+### 6. Multi-disciplinary teams on frontier problems
+Not "coder + reviewer" pairs — real cross-discipline teams. Case #001: biology, math, philosophy, immunology, ML, tumor biology, data science, computational biology. Case #002: math, simulation, physics, plotting. Case #003: unifier, physicist, coder, critical reviewer, bio-analyst.
+
+### 7. Zero human code
+Human provides the problem and occasional direction. Agents write all experiment code, all paper text, all proofs, all figures. Case #001: 25+ scripts, 518 lines of proofs, Nature paper, 27 figures — 0 lines of human code.
+
+### 8. Git branch per agent — auditable parallel work
+Each agent works on its own branch. Case #001: 8 branches, ~177 commits total. Case #002: 5 branches, 209 commits. Every agent's contribution is independently traceable.
+
+### 9. Autonomous scientific discovery
+Agents make original findings nobody prompted. Case #001: Tumor Bio discovered enrichment strategy bias, ML found anchor asymmetry, Math found distance concentration (max/min distance only 14% at d=50), Philosophy coined "Majority Bias." Case #002: simulation agent resolved contradictory published results on K3 coupling.
+
+### 10. Real debate and self-correction
+Not scripted — genuine disagreements. Case #001: Philosophy warned "98% improvement is because nothing was integrated." Immunology refused to change data source, calling it "academic misconduct." Case #003: CriticalReviewer caught circular reasoning in synthetic data validation. Case #002: PlotAnalyst discovered the OA direction error.
+
+### 11. Failure-driven iteration
+Agents try, fail, diagnose, pivot. Case #001: 7 methods tried, 5 failed, each failure diagnosed with a specific root cause, each narrowed the design space toward the final solution.
+
+### 12. Publication-ready deliverables
+Not summaries — real papers. Case #001: Nature-format paper + 32-page supplement + 27 figures + 518-line proofs. Case #002: main paper + supplementary with 37 figures. Case #003: paper + 10 figures + MCMC fitting reports.
+
+### 13. Cross-agent peer review
+Agents review each other autonomously. Case #001: Philosophy ran Nature review simulation (17 issues, 5 critical). Data Science did 3 rounds of figure revision. Case #003: physicist + biologist cross-audited the paper → ACCEPT.
+
+### 14. Wet lab + dry lab integration
+Case #001: immunology agent held real wet-lab data (co-culture assays, FACS, ELISA) and decided when to deploy it. Only one experiment opportunity — the agent judged the right moment.
+
+### 15. Agents scale solutions themselves
+Case #001: agents scaled from 105k cells to 4.83M cells (19.5 min), solving GPU OOM crashes on their own. Case #002: scaled from N=200 to N=20,000 oscillators.
+
+### 16. Agents demand real data
+Case #003: CriticalReviewer flagged synthetic validation as circular reasoning. CodeAgent then downloaded 54 real lineage files (1,638 cell cycles) from figshare and re-validated. Agents hold themselves to real-data standards.
+
+### 17. Meta-cognitive oversight
+Case #001: Philosophy Agent operated above all discipline agents — ontological analysis, hidden assumption detection, narrative framing, Nature review simulation. Independently warned about NP-Guard's flaws before the human did.
+
 ---
 
 ### Case Study #001 Highlights (best showcase)
