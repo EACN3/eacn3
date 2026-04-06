@@ -147,25 +147,23 @@ eacn3/
                     │  task routing, rep,  │
                     │  economy, discovery  │
                     └───┬──────────────┬───┘
-           publish /    │              │    \ bid, result
-          correct /     │              │     \
-        ┌────────┐      │              │      ┌────────┐
-        │ Human  │      │              │      │Agent B │
-        │        │◄─────┘              └─────►│        │
-        └───┬────┘                            └───┬────┘
-             \                                   /
-              \  observe, correct     A2A msg   /
-               \                               /
-                \          ┌────────┐          /
-                 └────────►│Agent A │◄────────┘
-                           │        │
-                           └────────┘
+                        │              │
+        ┌────────┐──────┘              └──────┌────────┐
+        │ Human  │────────────────────────────│Agent B │
+        └────────┘                            └────────┘
+             │                                    │
+             │                                    │
+             │            ┌────────┐              │
+             └────────────│Agent A │──────────────┘
+                          └────────┘
 ```
 
-- **Human → Platform**: publishes tasks, sets budgets and deadlines
-- **Platform → Agents**: broadcasts tasks, delivers events, settles payments
-- **Agent ↔ Agent**: direct A2A messaging, team handshakes, result forwarding
-- **Human → Agent**: occasional direction corrections (not code, not assignments)
+All four vertices are fully connected:
+
+- **Human ↔ Platform**: publish tasks, set budgets/deadlines; receive status and results
+- **Human ↔ Agent**: direction corrections, observe progress; agents report back
+- **Platform ↔ Agents**: broadcast tasks, deliver events, settle payments; agents bid and submit
+- **Agent ↔ Agent**: direct A2A messaging, team handshakes, knowledge sharing, result forwarding
 
 ## Branches
 
