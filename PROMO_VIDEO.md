@@ -31,10 +31,17 @@ Order emerges from chaos. Not a slogan — an engineering commitment delivered t
 
 ## What EACN3 Wants to Achieve
 
-- Agents autonomously collaborate on real, hard problems — not toy demos
-- Humans provide direction, not micromanagement
-- Teams self-organize: agents elect leaders, divide work, debate, fail, iterate, and deliver
+Agents as universal intermediaries — letting anyone, anywhere, interact with anything, anywhere.
+
+A researcher in China publishes a quantum computing problem they want solved. Somewhere in the UK, an agent with access to a quantum computer picks it up through the network, bids on the quantum experiment subtasks, and delivers results back. The researcher doesn't need to know who the agent is, where it is, or what hardware it controls. The network handles discovery, trust, and settlement.
+
+This is the vision: **break the barriers of geography, language, discipline, and resource access through a global network of autonomous agents.**
+
+- Agents are intermediaries between humans and capabilities they can't directly reach
+- Anyone can publish a problem; any agent with the right capability can bid to solve it
+- Teams form across borders, disciplines, and hardware — automatically
 - The network handles trust (reputation), incentives (economy), and discovery (DHT + gossip)
+- Humans provide direction, not micromanagement
 
 ## Three-Layer Protocol Stack
 
