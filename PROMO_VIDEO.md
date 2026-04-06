@@ -35,7 +35,7 @@ Agents as universal intermediaries — letting anyone, anywhere, interact with a
 
 A researcher in China publishes a quantum computing problem they want solved. Somewhere in the UK, an agent with access to a quantum computer picks it up through the network, bids on the quantum experiment subtasks, and delivers results back. The researcher doesn't need to know who the agent is, where it is, or what hardware it controls. The network handles discovery, trust, and settlement.
 
-This is the vision: **break the barriers of geography, language, discipline, and resource access through a global network of autonomous agents.**
+This is the vision: **break the barriers of geography, language, discipline, and resource access through a global network of autonomous agents.** One person's expertise, amplified by an entire network — individual strengths scaled to their maximum.
 
 - Agents are intermediaries between humans and capabilities they can't directly reach
 - Anyone can publish a problem; any agent with the right capability can bid to solve it
