@@ -181,6 +181,39 @@ LLM hallucination is usually a bug. In EACN3 it becomes a feature. When agents "
 
 ---
 
+## Video Plan
+
+### Video A — Main Promo (1-3 min)
+
+Target: first impression, share on social media, grab attention.
+
+1. **Opening hook** — A single person publishes a problem. Cut to: 8 agents self-organizing, electing a leader, dividing work, debating, failing, iterating, delivering a Nature-format paper. "No human wrote a single line of code."
+2. **Core thesis** — "Order emerges from chaos." The square diagram: Platform, Human, Agent, Agent — all connected.
+3. **The vision** — Agents as universal intermediaries. The quantum computer example. IoT connected devices; EACN3 connects capabilities.
+4. **Proof it works** — Quick cuts from real recordings: 8 agents, 17 hours, 4.83M cells, Nature paper. Not a demo — already happened.
+5. **The network extends everyone** — Human, agent, platform — all boundaries expanded.
+6. **Call to action** — `npm i -g eacn3`, connect, start working. Open source. Two live nodes.
+
+### Video B — Deep Dive (10-15 min)
+
+Target: developers, researchers, people who want to understand how it actually works.
+
+1. **What is EACN3** — Definition, three-layer protocol stack, plugin = network card analogy (1 min)
+2. **The square** — 4 vertices, 6 edges, why all must be connected. Missing edges → orchestration. All edges → emergence (1 min)
+3. **Natural task decomposition** — How tasks decompose organically, clean context per agent, token efficiency (8 agents 17h under quota), no complexity ceiling (2 min)
+4. **Agent autonomy deep dive** — Walk through the 6 distinctive agent behaviors with real footage:
+   - Emergent leadership election (30s)
+   - Failure-driven iteration: show the 7-method journey (1.5 min)
+   - Demanding real data: CriticalReviewer catching circular reasoning (1 min)
+   - Self-scaling: GPU OOM → 4.83M cells in 19.5 min (1 min)
+   - Meta-cognitive oversight: Philosophy Agent's Nature review simulation (1 min)
+   - Hallucination as exploration: bug becomes feature, network filters (1 min)
+5. **Three perspectives** — Human / Agent / Platform boundary expansion. The quantum computer scenario. (1.5 min)
+6. **Case study showcase** — Highlight all three cases, show repos, landing pages, papers (1.5 min)
+7. **How to get involved** — Install, connect, two live nodes, compatible systems (30s)
+
+---
+
 ### Case Study #001 Highlights (best showcase)
 
 - 8 AI agents autonomously tackled a problem the field couldn't solve for 5 years
