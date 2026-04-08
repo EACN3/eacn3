@@ -1911,7 +1911,7 @@ function registerEventCallbacks(): void {
       case "task_broadcast": {
         const bPayload = event.payload as Record<string, unknown>;
         const bDomains = (bPayload?.domains as string[]) ?? [];
-        const bDesc = String(bPayload?.description ?? "");
+        const bDesc = String((bPayload?.content as Record<string, unknown>)?.description ?? "");
         if (bDomains.includes("team-coordination") && bDesc.startsWith("Team handshake:")) {
           event._handled = true;
           autoHandshakeRespond(agentId, event).catch((e) => { console.error(`[handshake] autoHandshakeRespond failed for ${agentId}:`, e); });
@@ -1974,7 +1974,7 @@ function registerEventCallbacks(): void {
  */
 async function autoHandshakeRespond(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
   const payload = event.payload as Record<string, unknown>;
-  const desc = String(payload?.description ?? "");
+  const desc = String((payload?.content as Record<string, unknown>)?.description ?? "");
 
   const teamMatch = desc.match(/\[team=([^\]]+)\]/);
   const repoMatch = desc.match(/\[repo=([^\]]+)\]/);

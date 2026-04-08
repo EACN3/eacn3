@@ -208,6 +208,7 @@ async def peer_task_broadcast(req: TaskBroadcastRequest):
     all_agent_ids: set[str] = set()
     for domain in req.domains:
         all_agent_ids.update(await net.discovery.discover(domain))
+    all_agent_ids.update(req.invited_agent_ids)
 
     if all_agent_ids:
         from eacn.core.models import Task, TaskType, TaskLevel

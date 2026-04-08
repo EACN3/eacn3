@@ -919,6 +919,7 @@ class Network:
         for domain in task.domains:
             ids = await self.discovery.discover(domain)
             all_agent_ids.update(ids)
+        all_agent_ids.update(task.invited_agent_ids)
 
         if not all_agent_ids:
             return
