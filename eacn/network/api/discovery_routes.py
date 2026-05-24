@@ -152,6 +152,7 @@ async def register_agent(req: RegisterAgentRequest):
         "server_id": req.server_id,
         "description": req.description,
         "tier": req.tier,
+        "teams": [t.model_dump() for t in req.teams],
     }
     seeds = await _net().discovery.register_agent(card)
 
@@ -209,6 +210,8 @@ async def update_agent(agent_id: str, req: UpdateAgentRequest):
         card["description"] = req.description
     if req.tier is not None:
         card["tier"] = req.tier
+    if req.teams is not None:
+        card["teams"] = [t.model_dump() for t in req.teams]
 
     # Persist updated card
     await _net().discovery.bootstrap._db.save_agent_card(card)
@@ -275,10 +278,11 @@ async def discover_agents(
 async def list_agents_by_domain(
     domain: str | None = None,
     server_id: str | None = None,
+    team_id: str | None = None,
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
 ):
-    """List agents, optionally filtered by domain or server_id."""
+    """List agents, optionally filtered by domain, server_id, or team_id."""
     if domain:
         # Use DHT for domain lookup, then fetch cards
         agent_ids = await _net().discovery.dht.lookup(domain)
@@ -288,7 +292,15 @@ async def list_agents_by_domain(
             if card:
                 if server_id and card.get("server_id") != server_id:
                     continue
+                if team_id and not any(
+                    t.get("team_id") == team_id for t in card.get("teams", [])
+                ):
+                    continue
                 cards.append(card)
+    elif team_id:
+        cards = await _net().discovery.bootstrap._db.query_agent_cards_by_team(team_id)
+        if server_id:
+            cards = [c for c in cards if c.get("server_id") == server_id]
     elif server_id:
         agent_ids = await _net().discovery.bootstrap.get_agent_ids_by_server(server_id)
         cards = []
@@ -297,7 +309,7 @@ async def list_agents_by_domain(
             if card:
                 cards.append(card)
     else:
-        raise HTTPException(400, "At least one of 'domain' or 'server_id' is required")
+        raise HTTPException(400, "At least one of 'domain', 'server_id', or 'team_id' is required")
 
     cards = cards[offset: offset + limit]
     return [AgentCardResponse(**c) for c in cards]

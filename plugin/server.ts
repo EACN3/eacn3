@@ -942,6 +942,24 @@ server.tool(
   async (params) => {
     const initiatorId = resolveAgentId(params.initiator_id);
     const res = await net.selectResult(params.task_id, initiatorId, params.agent_id);
+
+    // If this is a team handshake the human is selecting manually, mirror the
+    // autoHandshakeSelect side-effect so peer_branches gets populated.
+    const match = state.findTeamByHandshakeTask(params.task_id, initiatorId);
+    if (match && match.direction === "out") {
+      try {
+        const taskData = await net.getTask(params.task_id);
+        const results = (taskData as any)?.results ?? [];
+        const result = results.find((r: any) => r.agent_id === params.agent_id);
+        const branch = result?.content?.branch;
+        if (branch) {
+          state.updateTeamPeerBranch(match.team.team_id, match.peerId, branch);
+        }
+      } catch (e) {
+        console.error(`[team] manual-select branch extraction failed for ${params.task_id}:`, e);
+      }
+    }
+
     return ok(res);
   },
 );
@@ -1645,10 +1663,11 @@ server.tool(
     agent_ids: z.array(z.string()).min(2).describe("Agent IDs to form a team"),
     git_repo: z.string().describe("Git repo URL for recording operations"),
     my_branch: z.string().describe("This agent's operation branch name"),
+    agent_id: z.string().optional().describe("Your agent_id. Required only if multiple agents are registered in this plugin session; auto-detected when there is exactly one."),
   },
   async (params) => {
     // Only the calling agent creates outgoing handshakes — peers join via autoHandshakeRespond
-    const myId = resolveAgentId(undefined);
+    const myId = resolveAgentId(params.agent_id);
     if (!state.getAgent(myId)) {
       return err(`Agent ${myId} is not registered on this server`);
     }
@@ -1709,6 +1728,9 @@ server.tool(
 
     state.addTeam(teamInfo);
 
+    // Publish my membership to the network so peers (and the matcher) can see it
+    await declareTeamMembership(myId, teamId, "initiator");
+
     return ok({
       team_id: teamId,
       git_repo: params.git_repo,
@@ -1736,9 +1758,41 @@ server.tool(
     const team = state.getTeam(params.team_id);
     if (!team) return err(`Team ${params.team_id} not found`);
 
+    // Reconcile peer_branches from the network for any outgoing handshake task
+    // that has a completed result we haven't recorded locally (covers the case
+    // where the user manually selected results before the auto-handler ran).
+    for (const [peerId, taskId] of Object.entries(team.ack_out)) {
+      if (team.peer_branches[peerId]) continue;
+      try {
+        const taskData = await net.getTask(taskId);
+        const results = (taskData as any)?.results ?? [];
+        const result = results.find((r: any) => r.agent_id === peerId);
+        const branch = result?.content?.branch;
+        if (branch) {
+          state.updateTeamPeerBranch(team.team_id, peerId, branch);
+        }
+      } catch {
+        // task may not exist or be reachable; skip
+      }
+    }
+
     const peers = team.agent_ids.filter((id) => id !== team.my_agent_id);
     const connected = peers.filter((id) => id in team.peer_branches);
     const pending = peers.filter((id) => !(id in team.peer_branches));
+
+    // Cross-check against network-visible membership for diagnosis.
+    // Failure here is non-fatal — local state is still authoritative for branches.
+    let networkMembers: string[] = [];
+    let networkUnavailable = false;
+    try {
+      const remote = await net.listAgentsRemote({ team_id: params.team_id });
+      networkMembers = remote.map((a) => a.agent_id);
+    } catch (e) {
+      networkUnavailable = true;
+    }
+    const missingFromNetwork = networkUnavailable
+      ? []
+      : team.agent_ids.filter((id) => !networkMembers.includes(id));
 
     return ok({
       team_id: team.team_id,
@@ -1752,6 +1806,9 @@ server.tool(
       connected,
       pending,
       ready: team.status === "ready",
+      network_members: networkMembers,
+      missing_from_network: missingFromNetwork,
+      network_unavailable: networkUnavailable,
     });
   },
 );
@@ -1924,7 +1981,7 @@ function registerEventCallbacks(): void {
       case "bid_result": {
         const brPayload = event.payload as Record<string, unknown>;
         if ((brPayload as any)?.accepted) {
-          const match = state.findTeamByHandshakeTask(event.task_id);
+          const match = state.findTeamByHandshakeTask(event.task_id, agentId);
           if (match && match.direction === "in") {
             event._handled = true;
             autoHandshakeSubmit(agentId, event).catch((e) => { console.error(`[handshake] autoHandshakeSubmit failed for ${agentId}:`, e); });
@@ -1934,7 +1991,7 @@ function registerEventCallbacks(): void {
       }
 
       case "result_submitted": {
-        const match = state.findTeamByHandshakeTask(event.task_id);
+        const match = state.findTeamByHandshakeTask(event.task_id, agentId);
         if (match && match.direction === "out") {
           event._handled = true;
           autoHandshakeSelect(agentId, event).catch((e) => { console.error(`[handshake] autoHandshakeSelect failed for ${agentId}:`, e); });
@@ -2014,21 +2071,22 @@ async function autoHandshakeRespond(agentId: string, event: import("./src/models
   // Record incoming handshake task
   state.recordAckIn(teamId, agentId, fromAgent, event.task_id);
 
-  // If this agent is the team initiator (called eacn3_team_setup), DON'T auto-respond.
-  // The initiator replies later via replyPendingHandshakes (called by create_task)
-  // so it can include task details in the response.
-  if (team.is_initiator) return;
+  // Publish this peer's membership to the network so the matcher / team queries see them
+  await declareTeamMembership(agentId, teamId, team.is_initiator ? "initiator" : "member");
 
-  // Auto-bid on the incoming task
+  // Auto-bid on the incoming task with price=0 (handshake tasks are budget=0)
   try {
-    await net.submitBid(event.task_id, agentId, 0, 1);
+    await net.submitBid(event.task_id, agentId, 0, 0);
   } catch (e) {
     console.error(`[handshake] auto-bid failed for ${agentId} on task ${event.task_id}:`, e);
     return; // Can't proceed without a bid
   }
 
-  // Create outgoing tasks to peers we haven't ACKed yet
-  await createOutgoingHandshakes(team, agentId);
+  // Non-initiators create outgoing handshakes to peers they haven't ACKed yet.
+  // The initiator already created its outgoing handshakes inside eacn3_team_setup.
+  if (!team.is_initiator) {
+    await createOutgoingHandshakes(team, agentId);
+  }
 }
 
 /**
@@ -2037,7 +2095,7 @@ async function autoHandshakeRespond(agentId: string, event: import("./src/models
  */
 async function autoHandshakeSubmit(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
   const taskId = event.task_id;
-  const match = state.findTeamByHandshakeTask(taskId);
+  const match = state.findTeamByHandshakeTask(taskId, agentId);
   if (!match || match.direction !== "in") return;
 
   try {
@@ -2046,6 +2104,10 @@ async function autoHandshakeSubmit(agentId: string, event: import("./src/models.
       team_id: match.team.team_id,
       branch: match.team.my_branch ?? `agent/${agentId}`,
     });
+    // Mark this incoming handshake as replied so replyPendingHandshakes won't re-submit.
+    if (!match.team.replied_in) match.team.replied_in = {};
+    match.team.replied_in[match.peerId] = true;
+    state.addTeam(match.team);
   } catch (e) {
     console.error(`[handshake] auto-submit failed for ${agentId} on task ${taskId}:`, e);
   }
@@ -2081,12 +2143,33 @@ async function createOutgoingHandshakes(team: import("./src/models.js").TeamInfo
 }
 
 /**
+ * Declare team membership on the network. Idempotent — fetches the current
+ * AgentCard, merges {team_id, role} into `teams`, and PUTs it back. Failure
+ * is logged but non-fatal (local handshake state remains the fallback).
+ */
+async function declareTeamMembership(
+  agentId: string,
+  teamId: string,
+  role?: string,
+): Promise<void> {
+  try {
+    const card = await net.getAgentInfo(agentId);
+    const existing = card.teams ?? [];
+    if (existing.some((t) => t.team_id === teamId)) return;
+    const next = [...existing, role ? { team_id: teamId, role } : { team_id: teamId }];
+    await net.updateAgent(agentId, { teams: next });
+  } catch (e) {
+    console.error(`[team] declareTeamMembership failed for ${agentId} on ${teamId}:`, e);
+  }
+}
+
+/**
  * Auto-select result for handshake tasks when a result is submitted.
  * Only acts on tasks in our ack_out (i.e., tasks we created as initiator).
  */
 async function autoHandshakeSelect(agentId: string, event: import("./src/models.js").PushEvent): Promise<void> {
   const taskId = event.task_id;
-  const match = state.findTeamByHandshakeTask(taskId);
+  const match = state.findTeamByHandshakeTask(taskId, agentId);
   if (!match || match.direction !== "out") return; // Not our outgoing handshake
 
   const payload = event.payload as Record<string, unknown>;
@@ -2140,16 +2223,32 @@ async function replyPendingHandshakes(
   taskSummary: { task_id: string; description: string },
 ): Promise<void> {
   for (const [peerId, taskId] of Object.entries(team.ack_in)) {
-    // Bid on the reverse handshake task
+    // Skip handshakes we already auto-replied to during formation —
+    // the task has a result and submitResult would 400.
+    if (team.replied_in?.[peerId]) {
+      // Still notify the peer about the new team task via direct message,
+      // since the handshake reply slot is no longer available to bundle it.
+      try {
+        const peerCard = await net.getAgentInfo(peerId);
+        await net.relayMessage({
+          to: { network_id: peerCard.network_id, server_id: peerCard.server_id, agent_id: peerId },
+          from: { network_id: "", server_id: "", agent_id: agentId },
+          content: { _team_task: true, team_id: team.team_id, ...taskSummary },
+        });
+      } catch (e) {
+        console.error(`[team] team-task announcement to ${peerId} failed:`, e);
+      }
+      continue;
+    }
+
+    // Otherwise: bid + submit branch + bundle team task in the handshake reply.
     try {
-      await net.submitBid(taskId, agentId, 0, 1);
+      await net.submitBid(taskId, agentId, 0, 0);
     } catch (e) {
       console.error(`[handshake] replyPendingHandshakes bid failed for ${agentId} → ${peerId} (task ${taskId}):`, e);
       continue;
     }
 
-    // Submit result with branch + task details
-    // On a 0-budget invited task, bid is typically auto-accepted
     try {
       await net.submitResult(taskId, agentId, {
         _handshake_ack: true,
@@ -2157,6 +2256,9 @@ async function replyPendingHandshakes(
         branch: team.my_branch ?? `agent/${agentId}`,
         team_task: taskSummary,
       });
+      if (!team.replied_in) team.replied_in = {};
+      team.replied_in[peerId] = true;
+      state.addTeam(team);
     } catch (e) {
       console.error(`[handshake] replyPendingHandshakes submit failed for ${agentId} → ${peerId} (task ${taskId}):`, e);
     }

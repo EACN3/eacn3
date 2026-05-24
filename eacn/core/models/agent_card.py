@@ -24,6 +24,9 @@ class AgentCapabilities(BaseModel):
     max_concurrent_tasks: int = 0  # 0 = unlimited
     concurrent: bool = True
 
+class TeamMembership(BaseModel):
+    team_id: str
+    role: str | None = None
 
 class TeamMembership(BaseModel):
     """Agent's membership in a collaborative team.

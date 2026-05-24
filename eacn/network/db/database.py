@@ -144,6 +144,7 @@ class Database:
                 skills         TEXT NOT NULL,
                 url            TEXT NOT NULL,
                 description    TEXT NOT NULL DEFAULT '',
+                teams          TEXT NOT NULL DEFAULT '[]',
                 status         TEXT NOT NULL DEFAULT 'online',
                 last_fetch_at  TEXT NOT NULL DEFAULT (datetime('now')),
                 created_at     TEXT NOT NULL DEFAULT (datetime('now'))
@@ -233,6 +234,13 @@ class Database:
         try:
             await self.db.execute(
                 "ALTER TABLE agent_cards ADD COLUMN last_fetch_at TEXT NOT NULL DEFAULT (datetime('now'))"
+            )
+            await self.db.commit()
+        except Exception:
+            pass  # column already exists
+        try:
+            await self.db.execute(
+                "ALTER TABLE agent_cards ADD COLUMN teams TEXT NOT NULL DEFAULT '[]'"
             )
             await self.db.commit()
         except Exception:
@@ -565,13 +573,14 @@ class Database:
     async def save_agent_card(self, card: dict[str, Any]) -> None:
         await self._exec_write(
             """INSERT INTO agent_cards
-               (agent_id, server_id, network_id, name, tier, domains, skills, url, description, status, last_fetch_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'online', datetime('now'))
+               (agent_id, server_id, network_id, name, tier, domains, skills, url, description, teams, status, last_fetch_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'online', datetime('now'))
                ON CONFLICT(agent_id) DO UPDATE SET
                  server_id=excluded.server_id, network_id=excluded.network_id,
                  name=excluded.name, tier=excluded.tier,
                  domains=excluded.domains, skills=excluded.skills,
                  url=excluded.url, description=excluded.description,
+                 teams=excluded.teams,
                  status='online', last_fetch_at=datetime('now')""",
             (
                 card["agent_id"],
@@ -583,12 +592,13 @@ class Database:
                 json.dumps(card["skills"]),
                 card["url"],
                 card.get("description", ""),
+                json.dumps(card.get("teams", [])),
             ),
         )
 
     async def get_agent_card(self, agent_id: str) -> dict[str, Any] | None:
         async with self.db.execute(
-            "SELECT agent_id, server_id, network_id, name, tier, domains, skills, url, description, status FROM agent_cards WHERE agent_id = ?",
+            "SELECT agent_id, server_id, network_id, name, tier, domains, skills, url, description, teams, status FROM agent_cards WHERE agent_id = ?",
             (agent_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -604,7 +614,8 @@ class Database:
                 "skills": json.loads(row[6]),
                 "url": row[7],
                 "description": row[8],
-                "status": row[9],
+                "teams": json.loads(row[9]),
+                "status": row[10],
             }
 
     async def touch_agent_fetch(self, agent_id: str) -> None:
@@ -692,7 +703,7 @@ class Database:
     async def query_agent_cards_by_domain(self, domain: str) -> list[dict[str, Any]]:
         # Use json_each for exact matching instead of LIKE to prevent wildcard injection (#63)
         async with self.db.execute(
-            """SELECT agent_id, server_id, network_id, name, tier, domains, skills, url, description
+            """SELECT agent_id, server_id, network_id, name, tier, domains, skills, url, description, teams
                FROM agent_cards
                WHERE EXISTS (
                    SELECT 1 FROM json_each(agent_cards.domains) WHERE json_each.value = ?
@@ -706,6 +717,30 @@ class Database:
                     "name": r[3], "tier": r[4],
                     "domains": json.loads(r[5]), "skills": json.loads(r[6]),
                     "url": r[7], "description": r[8],
+                    "teams": json.loads(r[9]),
+                }
+                for r in rows
+            ]
+
+    async def query_agent_cards_by_team(self, team_id: str) -> list[dict[str, Any]]:
+        """Return agent cards whose `teams` JSON array contains an entry with the given team_id."""
+        async with self.db.execute(
+            """SELECT agent_id, server_id, network_id, name, tier, domains, skills, url, description, teams
+               FROM agent_cards
+               WHERE EXISTS (
+                   SELECT 1 FROM json_each(agent_cards.teams)
+                   WHERE json_extract(json_each.value, '$.team_id') = ?
+               )""",
+            (team_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "agent_id": r[0], "server_id": r[1], "network_id": r[2],
+                    "name": r[3], "tier": r[4],
+                    "domains": json.loads(r[5]), "skills": json.loads(r[6]),
+                    "url": r[7], "description": r[8],
+                    "teams": json.loads(r[9]),
                 }
                 for r in rows
             ]

@@ -281,7 +281,7 @@ export async function getAgentInfo(agentId: string): Promise<AgentCard> {
 
 export async function updateAgent(
   agentId: string,
-  updates: Partial<Pick<AgentCard, "name" | "domains" | "skills" | "url" | "description">>,
+  updates: Partial<Pick<AgentCard, "name" | "domains" | "skills" | "url" | "description" | "teams">>,
 ): Promise<{ ok: boolean; message: string }> {
   return request("PUT", `/api/discovery/agents/${agentId}`, updates);
 }
@@ -304,12 +304,14 @@ export async function discoverAgents(
 export async function listAgentsRemote(opts: {
   domain?: string;
   server_id?: string;
+  team_id?: string;
   limit?: number;
   offset?: number;
 }): Promise<AgentCard[]> {
   const query: Record<string, string> = {};
   if (opts.domain) query.domain = opts.domain;
   if (opts.server_id) query.server_id = opts.server_id;
+  if (opts.team_id) query.team_id = opts.team_id;
   if (opts.limit !== undefined) query.limit = String(opts.limit);
   if (opts.offset !== undefined) query.offset = String(opts.offset);
   return request<AgentCard[]>("GET", "/api/discovery/agents", undefined, query);

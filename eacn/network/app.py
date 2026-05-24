@@ -194,14 +194,21 @@ class Network:
         negotiation_gain = self.reputation.negotiation_gain(agent_id)
         is_adjudication = task.type == TaskType.ADJUDICATION
 
-        # Get agent tier from discovery registry
+        # Get agent tier + team membership from discovery registry
         agent_tier = "general"
+        agent_teams: list[dict] = []
         agent_card = await self.discovery.bootstrap.get_agent_card(agent_id)
         if agent_card:
             agent_tier = agent_card.get("tier", "general")
+            agent_teams = agent_card.get("teams", []) or []
 
         task_level = task.level.value if hasattr(task.level, "value") else str(task.level)
         is_invited = agent_id in task.invited_agent_ids
+
+        task_team_id = task.content.get("team_id") if isinstance(task.content, dict) else None
+        is_teammate = bool(task_team_id) and any(
+            t.get("team_id") == task_team_id for t in agent_teams
+        )
 
         # Fallback: relax gates if task has no active bids and is past half deadline
         has_bids = any(b.status != BidStatus.REJECTED for b in task.bids)
@@ -218,6 +225,7 @@ class Network:
             agent_tier=agent_tier,
             task_level=task_level,
             is_invited=is_invited,
+            is_teammate=is_teammate,
             has_bids=has_bids,
             task_deadline=task.deadline,
             task_created_at=task_created_at,
@@ -689,7 +697,12 @@ class Network:
                 neg_gain = self.reputation.negotiation_gain(bid.agent_id)
                 agent_card = await self.discovery.bootstrap.get_agent_card(bid.agent_id)
                 agent_tier = agent_card.get("tier", "general") if agent_card else "general"
+                agent_teams = (agent_card.get("teams", []) or []) if agent_card else []
                 task_level = task.level.value if hasattr(task.level, "value") else str(task.level)
+                task_team_id = task.content.get("team_id") if isinstance(task.content, dict) else None
+                bid_is_teammate = bool(task_team_id) and any(
+                    t.get("team_id") == task_team_id for t in agent_teams
+                )
                 active_bids = any(b.status != BidStatus.REJECTED for b in task.bids)
                 check = self.matcher.check_bid(
                     agent_id=bid.agent_id,
@@ -702,6 +715,7 @@ class Network:
                     agent_tier=agent_tier,
                     task_level=task_level,
                     is_invited=bid.agent_id in task.invited_agent_ids,
+                    is_teammate=bid_is_teammate,
                     has_bids=active_bids,
                     task_deadline=task.deadline,
                     task_created_at=await self.db.get_task_created_at(task_id) if not active_bids else None,

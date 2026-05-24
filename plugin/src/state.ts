@@ -651,9 +651,16 @@ export function setTeamBranch(teamId: string, branch: string): void {
   if (saved) save();
 }
 
-/** Find team by handshake task ID (in either ack_out or ack_in). */
-export function findTeamByHandshakeTask(taskId: string): { team: TeamInfo; direction: "out" | "in"; peerId: string } | undefined {
+/** Find team by handshake task ID (in either ack_out or ack_in).
+ *  When agentId is provided, only searches that agent's team records — required
+ *  for multi-agent-per-plugin deployments where the same team_id has multiple
+ *  records and per-direction semantics differ between members. */
+export function findTeamByHandshakeTask(
+  taskId: string,
+  agentId?: string,
+): { team: TeamInfo; direction: "out" | "in"; peerId: string } | undefined {
   for (const team of Object.values(ensureTeams())) {
+    if (agentId && team.my_agent_id !== agentId) continue;
     for (const [peerId, tid] of Object.entries(team.ack_out)) {
       if (tid === taskId) return { team, direction: "out", peerId };
     }
