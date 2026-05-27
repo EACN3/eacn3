@@ -324,7 +324,7 @@ export async function listAgentsRemote(opts: {
 export async function createTask(task: {
   task_id: string;
   initiator_id: string;
-  content: { description: string; expected_output?: { type: string; description: string } };
+  content: { description: string; expected_output?: { type: string; description: string }; team_id?: string };
   domains?: string[];
   budget: number;
   deadline?: string;
@@ -492,7 +492,7 @@ export async function rejectTask(
 export async function createSubtask(
   parentTaskId: string,
   initiatorId: string,
-  content: { description: string },
+  content: { description: string; team_id?: string },
   domains: string[],
   budget: number,
   deadline?: string,

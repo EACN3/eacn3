@@ -878,6 +878,7 @@ server.tool(
       content: {
         description: finalDescription,
         expected_output: params.expected_output,
+        team_id: activeTeam?.team_id,
       },
       domains: params.domains,
       budget: params.budget,
@@ -1197,10 +1198,22 @@ server.tool(
   },
   async (params) => {
     const initiatorId = resolveAgentId(params.initiator_id);
+    // Inherit team_id from parent task so the matcher's team-membership boost
+    // continues to apply to delegated work.
+    let parentTeamId: string | undefined;
+    try {
+      const parent = await withAutoReconnect(() => net.getTask(params.parent_task_id));
+      const pc = parent?.content;
+      if (pc && typeof pc === "object" && typeof (pc as { team_id?: unknown }).team_id === "string") {
+        parentTeamId = (pc as { team_id: string }).team_id;
+      }
+    } catch {
+      // best-effort; subtask still proceeds without team boost
+    }
     const task = await withAutoReconnect(() => net.createSubtask(
       params.parent_task_id,
       initiatorId,
-      { description: params.description },
+      parentTeamId ? { description: params.description, team_id: parentTeamId } : { description: params.description },
       params.domains,
       params.budget,
       params.deadline,

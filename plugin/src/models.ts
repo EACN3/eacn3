@@ -121,6 +121,8 @@ export interface TaskContent {
     initiator_id: string;
     messages: Array<{ role: string; message: string }>;
   }>;
+  /** Team ID — set when the task is published as part of a ready team; used by the matcher for team-membership boost. */
+  team_id?: string;
 }
 
 /**

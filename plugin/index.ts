@@ -742,6 +742,7 @@ export default {
       properties: {
         description: { type: "string" },
         budget: { type: "number" },
+        team_id: { type: "string", description: "Team ID to attach team collaboration preamble. Required when the initiator belongs to multiple ready teams. If omitted and the initiator is in exactly one ready team, that team is used automatically." },
         domains: { type: "array", items: { type: "string" } },
         deadline: { type: "string", description: "ISO 8601 deadline" },
         max_concurrent_bidders: { type: "number" },
@@ -776,9 +777,46 @@ export default {
       const matchedLocal = params.domains
         ? localAgents.filter((a: AgentCard) => a.agent_id !== initiatorId && params.domains.some((d: string) => a.domains.includes(d)))
         : [];
+
+      // Auto-inject team collaboration preamble + team_id if initiator is in a ready team
+      let finalDescription: string = params.description;
+      const teams = state.getTeamsForAgent(initiatorId);
+      const readyTeams = teams.filter((t) => t.status === "ready");
+      let activeTeam: typeof readyTeams[number] | undefined;
+      if (params.team_id) {
+        activeTeam = readyTeams.find((t) => t.team_id === params.team_id);
+        if (!activeTeam) {
+          return err(`Team ${params.team_id} not found or not ready. Available ready teams: ${readyTeams.map((t) => t.team_id).join(", ") || "(none)"}`);
+        }
+      } else if (readyTeams.length === 1) {
+        activeTeam = readyTeams[0];
+      } else if (readyTeams.length > 1) {
+        return err(`Initiator belongs to multiple ready teams: ${readyTeams.map((t) => t.team_id).join(", ")}. Please specify team_id.`);
+      }
+      if (activeTeam) {
+        const branchInfo = Object.entries(activeTeam.peer_branches)
+          .map(([id, branch]) => `  - ${id}: ${branch}`)
+          .join("\n");
+        const preamble = [
+          `[TEAM COLLABORATION — ${activeTeam.team_id}]`,
+          `Git repo: ${activeTeam.git_repo}`,
+          `Team members: ${activeTeam.agent_ids.join(", ")}`,
+          branchInfo ? `Branches:\n${branchInfo}` : "",
+          "",
+          "Team rules:",
+          "- We are collaborating as a team on a shared git repo. Coordinate via branches and messages.",
+          "- If any part of this task would be done better by a teammate, create a subtask (budget=0) with invited_agent_ids targeting that teammate.",
+          "- Before submitting your result, pull and check teammates' branches for relevant changes.",
+          "- Communicate progress and blockers via eacn3_send_message to your teammates.",
+          "",
+          "[USER TASK]",
+        ].filter(Boolean).join("\n");
+        finalDescription = `${preamble}\n${params.description}`;
+      }
+
       const task = await net.createTask({
         task_id: taskId, initiator_id: initiatorId,
-        content: { description: params.description, expected_output: params.expected_output },
+        content: { description: finalDescription, expected_output: params.expected_output, team_id: activeTeam?.team_id },
         domains: params.domains, budget: params.budget, deadline: params.deadline,
         max_concurrent_bidders: params.max_concurrent_bidders, max_depth: params.max_depth,
         human_contact: params.human_contact,
@@ -943,7 +981,16 @@ export default {
     },
     async execute(_id: string, params: any) {
       const initiatorId = resolveAgentId(params.initiator_id);
-      const task = await net.createSubtask(params.parent_task_id, initiatorId, { description: params.description }, params.domains, params.budget, params.deadline, params.level);
+      let parentTeamId: string | undefined;
+      try {
+        const parent = await net.getTask(params.parent_task_id);
+        const pc = parent?.content;
+        if (pc && typeof pc === "object" && typeof (pc as { team_id?: unknown }).team_id === "string") {
+          parentTeamId = (pc as { team_id: string }).team_id;
+        }
+      } catch { /* best-effort */ }
+      const subContent = parentTeamId ? { description: params.description, team_id: parentTeamId } : { description: params.description };
+      const task = await net.createSubtask(params.parent_task_id, initiatorId, subContent, params.domains, params.budget, params.deadline, params.level);
       return ok({ subtask_id: task.id, parent_task_id: params.parent_task_id, status: task.status, depth: task.depth });
     },
   });
