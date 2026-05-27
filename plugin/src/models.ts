@@ -64,6 +64,12 @@ export interface AgentCapabilities {
   concurrent: boolean;
 }
 
+/** A team the agent is declared a member of. Persisted on AgentCard so membership is network-queryable. */
+export interface TeamMembership {
+  team_id: string;
+  role?: string;
+}
+
 /** Full identity card for an agent on the network. Created by eacn3_register_agent. */
 export interface AgentCard {
   /** Unique agent identifier, assigned by the network on registration. */
@@ -86,6 +92,8 @@ export interface AgentCard {
   network_id: string;
   /** Free-text description of the agent's purpose and abilities. */
   description: string;
+  /** Teams this agent is a declared member of. Network-visible source of truth for team membership. */
+  teams?: TeamMembership[];
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +121,8 @@ export interface TaskContent {
     initiator_id: string;
     messages: Array<{ role: string; message: string }>;
   }>;
+  /** Team ID — set when the task is published as part of a ready team; used by the matcher for team-membership boost. */
+  team_id?: string;
 }
 
 /**
@@ -547,6 +557,8 @@ export interface TeamInfo {
   ack_out: Record<string, string>;
   /** Incoming handshake tasks: peer_agent_id → task_id. "ACKs I received." */
   ack_in: Record<string, string>;
+  /** Peers whose incoming handshake we've already replied to (branch submitted). Prevents replyPendingHandshakes from double-submitting. */
+  replied_in?: Record<string, boolean>;
   /** True only when this agent called eacn3_team_setup (not auto-respond). */
   is_initiator?: boolean;
   /** "forming" until all peer branches are known, then "ready". */

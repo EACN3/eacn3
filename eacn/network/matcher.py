@@ -32,6 +32,9 @@ class GlobalMatcher:
         self._ability_threshold: float = cfg.ability_threshold
         self._price_tolerance: float = cfg.price_tolerance
         self._target_min_rep: float = cfg.target_min_reputation
+        # Additive boost applied when an agent shares the task's team_id.
+        # Sized to dominate domain/keyword ties without erasing reputation signal.
+        self._team_boost: float = 1.0
 
     # ── Agent matching ───────────────────────────────────────────────
 
@@ -43,20 +46,26 @@ class GlobalMatcher:
     ) -> list[AgentCard]:
         """Stage 1: Static label + keyword matching.
 
-        1. Domain tag intersection
+        1. Domain tag intersection (bypassed for declared teammates)
         2. Description keyword matching (task.content.description ↔ agent.description)
-        3. Sort by reputation score
+        3. Team membership boost (task.content.team_id ↔ agent.teams[].team_id)
+        4. Sort by composite score
         """
         task_domains = set(task.domains)
         task_desc = (task.content.get("description") or "").lower()
         task_keywords = set(task_desc.split()) if task_desc else set()
+        task_team_id = task.content.get("team_id") or None
 
         candidates: list[tuple[float, AgentCard]] = []
 
         for agent in agents:
-            # Domain intersection score
+            is_teammate = bool(task_team_id) and any(
+                t.team_id == task_team_id for t in (agent.teams or [])
+            )
+
+            # Domain intersection score (teammates bypass the gate — humans already chose them)
             domain_overlap = len(set(agent.domains) & task_domains)
-            if domain_overlap == 0:
+            if domain_overlap == 0 and not is_teammate:
                 continue
 
             # Keyword matching score (bonus)
@@ -72,6 +81,8 @@ class GlobalMatcher:
                 + (domain_overlap / max(len(task_domains), 1)) * self._w_domain
                 + keyword_score * self._w_keyword
             )
+            if is_teammate:
+                composite += self._team_boost
             candidates.append((composite, agent))
 
         candidates.sort(key=lambda x: x[0], reverse=True)
@@ -137,6 +148,7 @@ class GlobalMatcher:
         has_bids: bool = True,
         task_deadline: str | None = None,
         task_created_at: str | None = None,
+        is_teammate: bool = False,
     ) -> BidCheckResult:
         """Validate bid: ability gate + price gate.
 
@@ -148,6 +160,10 @@ class GlobalMatcher:
         ability and tier gates are relaxed — better to let someone try
         than to let the task expire with no one.
 
+        Teammate bypass: agents whose AgentCard.teams contains the task's
+        team_id are treated as pre-vetted — same effect as `is_invited`
+        for tier/ability gates. The price gate still applies.
+
         Returns BidCheckResult with pass/fail and reason.
         """
         # Fallback mode: task has no bids AND past half deadline → relax gates
@@ -156,8 +172,11 @@ class GlobalMatcher:
             and self._is_past_half_deadline(task_deadline, task_created_at)
         )
 
-        # Tier eligibility check (skip if invited or fallback)
-        if agent_tier and task_level and not is_invited and not fallback:
+        # Teammates are pre-approved by the human who formed the team
+        bypass_gates = is_invited or is_teammate or fallback
+
+        # Tier eligibility check (skip if invited, teammate, or fallback)
+        if agent_tier and task_level and not bypass_gates:
             if not self.is_tier_eligible(agent_tier, task_level):
                 return BidCheckResult(
                     passed=False,
@@ -172,8 +191,8 @@ class GlobalMatcher:
         reputation = scores.get(agent_id, self._default_rep)
         ability = confidence * reputation
 
-        # Skip ability check if invited or fallback
-        if is_invited or fallback:
+        # Skip ability check if invited, teammate, or fallback
+        if bypass_gates:
             # Still do price check below
             pass
         elif ability < threshold:

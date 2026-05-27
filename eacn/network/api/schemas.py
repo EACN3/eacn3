@@ -195,6 +195,11 @@ class AgentCapabilitiesSchema(BaseModel):
     concurrent: bool = True
 
 
+class TeamMembershipSchema(BaseModel):
+    team_id: str
+    role: str | None = None
+
+
 class RegisterAgentRequest(BaseModel):
     agent_id: str
     name: str
@@ -205,6 +210,7 @@ class RegisterAgentRequest(BaseModel):
     server_id: str
     description: str = ""
     tier: str = "general"
+    teams: list[TeamMembershipSchema] = Field(default_factory=list)
 
 
 class RegisterAgentResponse(BaseModel):
@@ -223,6 +229,7 @@ class AgentCardResponse(BaseModel):
     network_id: str = ""
     description: str = ""
     tier: str = "general"
+    teams: list[TeamMembershipSchema] = Field(default_factory=list)
 
 
 class UpdateAgentRequest(BaseModel):
@@ -232,6 +239,7 @@ class UpdateAgentRequest(BaseModel):
     url: str | None = None
     description: str | None = None
     tier: str | None = None
+    teams: list[TeamMembershipSchema] | None = None
 
 
 # ── Invite ──────────────────────────────────────────────────────────

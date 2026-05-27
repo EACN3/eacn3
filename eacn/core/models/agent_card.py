@@ -24,6 +24,21 @@ class AgentCapabilities(BaseModel):
     max_concurrent_tasks: int = 0  # 0 = unlimited
     concurrent: bool = True
 
+class TeamMembership(BaseModel):
+    team_id: str
+    role: str | None = None
+
+class TeamMembership(BaseModel):
+    """Agent's membership in a collaborative team.
+
+    `role` is an optional free-form label naming what this agent does within
+    the team (e.g. "lead", "critic", "biology_expert"). `None` means plain
+    membership with no declared responsibility. The network does not interpret
+    role values; orchestrators and task creators decide their semantics.
+    """
+    team_id: str
+    role: str | None = None
+
 
 class AgentCard(BaseModel):
     agent_id: str
@@ -36,3 +51,4 @@ class AgentCard(BaseModel):
     network_id: str = ""
     description: str = ""
     tier: AgentTier = AgentTier.GENERAL
+    teams: list[TeamMembership] = Field(default_factory=list)
